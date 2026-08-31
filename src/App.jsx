@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil,
+  Tag, FileText, FileSignature, Pencil, Menu,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -401,6 +401,7 @@ export default function App() {
   const [fotoView, setFotoView] = useState(null);
   const [retiroTarget, setRetiroTarget] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
+  const [navOpen, setNavOpen] = useState(false);
   const [descargandoId, setDescargandoId] = useState(null);
   const [pdfError, setPdfError] = useState("");
 
@@ -773,42 +774,59 @@ export default function App() {
   }
 
   return (
-    <div className="flex w-full" style={{ backgroundColor: BG, minHeight: 560, fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      {/* Sidebar */}
-      <div className="w-56 shrink-0 border-r flex flex-col" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
-        <div className="px-4 py-4 border-b" style={{ borderColor: BORDER }}>
-          <p className="text-sm font-bold tracking-wide" style={{ color: ACCENT }}>AEON</p>
-          <p className="text-xs" style={{ color: MUTED }}>Control de stock</p>
-        </div>
-        <nav className="flex-1 py-2">
-          {NAV.map((n) => {
-            const Icon = n.icon;
-            const active = tab === n.key;
-            return (
-              <button
-                key={n.key}
-                onClick={() => { setTab(n.key); setQuery(""); }}
-                className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
-                style={{
-                  color: active ? ACCENT : INK,
-                  backgroundColor: active ? ACCENT_LIGHT : "transparent",
-                  fontWeight: active ? 600 : 400,
-                  borderRight: active ? `2px solid ${ACCENT}` : "2px solid transparent",
-                }}
-              >
-                <Icon size={16} />
-                {n.label}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="px-4 py-3 border-t" style={{ borderColor: BORDER }}>
-          <SecondaryButton onClick={exportExcel}><Download size={14} /> Exportar Excel</SecondaryButton>
-        </div>
+    <div style={{ backgroundColor: BG, minHeight: "100vh", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+      {/* Mobile top bar */}
+      <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b sticky top-0 z-20" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+        <button onClick={() => setNavOpen(true)} className="p-1 -ml-1 rounded hover:bg-gray-100">
+          <Menu size={20} style={{ color: INK }} />
+        </button>
+        <p className="text-sm font-bold tracking-wide" style={{ color: ACCENT }}>AEON</p>
       </div>
 
+      <div className="flex w-full">
+        {/* Backdrop (mobile only, while nav is open) */}
+        {navOpen && (
+          <div className="fixed inset-0 z-30 md:hidden" style={{ backgroundColor: "rgba(15,23,32,0.4)" }} onClick={() => setNavOpen(false)} />
+        )}
+
+        {/* Sidebar */}
+        <div
+          className={`fixed md:static inset-y-0 left-0 z-40 w-56 shrink-0 border-r flex flex-col transition-transform duration-200 md:translate-x-0 ${navOpen ? "translate-x-0" : "-translate-x-full"}`}
+          style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}
+        >
+          <div className="px-4 py-4 border-b" style={{ borderColor: BORDER }}>
+            <p className="text-sm font-bold tracking-wide" style={{ color: ACCENT }}>AEON</p>
+            <p className="text-xs" style={{ color: MUTED }}>Control de stock</p>
+          </div>
+          <nav className="flex-1 py-2 overflow-y-auto">
+            {NAV.map((n) => {
+              const Icon = n.icon;
+              const active = tab === n.key;
+              return (
+                <button
+                  key={n.key}
+                  onClick={() => { setTab(n.key); setQuery(""); setNavOpen(false); }}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
+                  style={{
+                    color: active ? ACCENT : INK,
+                    backgroundColor: active ? ACCENT_LIGHT : "transparent",
+                    fontWeight: active ? 600 : 400,
+                    borderRight: active ? `2px solid ${ACCENT}` : "2px solid transparent",
+                  }}
+                >
+                  <Icon size={16} />
+                  {n.label}
+                </button>
+              );
+            })}
+          </nav>
+          <div className="px-4 py-3 border-t" style={{ borderColor: BORDER }}>
+            <SecondaryButton onClick={exportExcel}><Download size={14} /> Exportar Excel</SecondaryButton>
+          </div>
+        </div>
+
       {/* Main */}
-      <div className="flex-1 min-w-0 p-6">
+      <div className="flex-1 min-w-0 p-4 md:p-6">
         {tab === "resumen" && (
           <Resumen
             equipos={equipos} proximosServices={proximosServices} alertasContacto={alertasContacto}
@@ -1012,6 +1030,7 @@ export default function App() {
             pdfError={pdfError}
           />
         )}
+        </div>
       </div>
 
       {/* Drawers */}
@@ -1265,14 +1284,14 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
       <p className="text-sm mb-4" style={{ color: MUTED }}>
         "Equipos totales activos" es el stock que todavía cuenta como inventario. Vendidos y retirados, y Dados de baja, ya salieron del circuito — quedan abajo como historial, aparte.
       </p>
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
         {cardsActivos.map((c) => (
           <StatCard key={c.label} label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} />
         ))}
       </div>
 
       <p className="text-xs font-medium mb-2" style={{ color: MUTED }}>Historial (ya no cuenta como stock)</p>
-      <div className="grid grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
         {cardsHistorico.map((c) => (
           <div key={c.label} style={{ opacity: 0.75 }}>
             <StatCard label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} tint="#F1F5F9" />
@@ -1311,7 +1330,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
           <div className="flex items-center gap-2 mb-3">
             <Clock size={15} style={{ color: ACCENT }} />
@@ -1438,7 +1457,7 @@ function PlayaView({ playa, query, onQuery, onNew, onDerivar, onDelete }) {
       {playa.length === 0 ? (
         <EmptyState icon={Inbox} title="Playa vacía" subtitle="Todo lo que llegue sin clasificar va a aparecer acá para decidir su destino." />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {playa.map((item) => (
             <PlayaCard key={item.id} item={item} onDerivar={onDerivar} onDelete={onDelete} />
           ))}
@@ -1469,7 +1488,7 @@ function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpda
       {filtered.length === 0 ? (
         <EmptyState icon={Wrench} title="Banco vacío" subtitle="Los equipos que entren con desperfecto aparecerán acá." />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filtered.map((e) => (
             <div key={e.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
               <div className="flex items-center justify-between mb-2">
@@ -1544,7 +1563,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
       {comprometidas.length === 0 ? (
         <EmptyState icon={Lock} title="No hay ventas comprometidas" subtitle="Cuando reservás mercadería vendida antes del retiro, va a aparecer acá." />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {comprometidas.map((c) => {
             const retirado = Number(c.cantidadRetirada) || 0;
             const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
@@ -2451,7 +2470,7 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
       {productos.length === 0 ? (
         <EmptyState icon={Tag} title="Todavía no hay productos cargados" subtitle="Usá el botón de arriba para cargar el primero." />
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {productos.map((p) => (
             <div key={p.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
               <div className="flex items-start gap-3 mb-2">
@@ -2660,7 +2679,7 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDes
       {cotizaciones.length === 0 ? (
         <EmptyState icon={FileSignature} title="Todavía no hay cotizaciones" subtitle="Usá el botón de arriba para armar la primera." />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {cotizaciones.map((c) => {
             const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
             const totalFinal = subtotal - (Number(c.descuento) || 0) + (Number(c.instalacionMonto) || 0);

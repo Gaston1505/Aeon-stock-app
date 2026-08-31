@@ -350,31 +350,24 @@ export async function generateCotizacionPdf(cotizacion) {
 
   y -= 6;
 
-  // Instalaciones — opcional: solo si se marcó "Incluir instalación". Usa las mismas
-  // columnas que la tabla de productos: Producto="Instalaciones", Descripción=el texto,
-  // TOTAL=el monto, igual que en la planilla real.
+  // Instalaciones — opcional: solo si se marcó "Incluir instalación". Misma
+  // estructura de 3 celdas que la fila de Comentarios (label / texto / monto),
+  // con el monto alineado a la columna TOTAL U$S de la tabla de productos.
   if (incluirInstalacion) {
-    const instLines = wrapText(font, cotizacion.instalacionDescripcion, 6.5, colDescripcion - 6);
-    const instH = Math.max(instLines.length * 8 + 6, 16);
+    const instLabelW = 80;
+    const instDescW = CONTENT_W - instLabelW - colTotal;
+    const instLines = wrapText(font, cotizacion.instalacionDescripcion, 7, instDescW - 8);
+    const instH = Math.max(instLines.length * 9 + 6, 16);
     let cx2 = MARGIN;
-    rect(cx2, y - instH, colCodigo, instH, { border: BORDER });
-    centerText("Instalaciones", cx2, y, colCodigo, instH, { size: 8, bold: true });
-    cx2 += colCodigo;
-    rect(cx2, y - instH, colFoto, instH, { border: BORDER });
-    cx2 += colFoto;
-    rect(cx2, y - instH, colDescripcion, instH, { border: BORDER });
-    const instBlockH = instLines.length * 8;
-    const instDescTop = y - (instH - instBlockH) / 2 - 6;
-    instLines.forEach((line, i) => text(line, cx2 + 3, instDescTop - i * 8, { size: 6.5 }));
-    cx2 += colDescripcion;
-    if (showEspec) { rect(cx2, y - instH, colEspec, instH, { border: BORDER }); cx2 += colEspec; }
-    rect(cx2, y - instH, colCant, instH, { border: BORDER });
-    cx2 += colCant;
-    rect(cx2, y - instH, colPrecio, instH, { border: BORDER });
-    cx2 += colPrecio;
+    rect(cx2, y - instH, instLabelW, instH, { border: BORDER });
+    text("Instalaciones", cx2 + 4, y - 11, { bold: true, size: 7.5 });
+    cx2 += instLabelW;
+    rect(cx2, y - instH, instDescW, instH, { border: BORDER });
+    instLines.forEach((line, i) => text(line, cx2 + 4, y - 11 - i * 9, { size: 7 }));
+    cx2 += instDescW;
     rect(cx2, y - instH, colTotal, instH, { border: BORDER });
     const instStr = instalacionMonto === 0 ? "-" : fmtNum(instalacionMonto);
-    centerText(instStr, cx2, y, colTotal, instH);
+    centerText(instStr, cx2, y, colTotal, instH, { size: 8, bold: true });
     y -= instH;
   }
 

@@ -3,13 +3,14 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText,
+  Tag, FileText, FileSignature,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
+import { downloadCotizacionPdf, downloadFichasTecnicasPdf } from "./pdf";
 
 // ---------- Design tokens ----------
 const INK = "#16202A";
@@ -99,6 +100,7 @@ const COLLECTIONS = {
   playa: "playa",
   ventasComprometidas: "ventasComprometidas",
   productos: "productos",
+  cotizaciones: "cotizaciones",
 };
 
 // ---------- Helpers ----------
@@ -389,11 +391,14 @@ export default function App() {
   const [playa, setPlaya] = useState([]);
   const [comprometidas, setComprometidas] = useState([]);
   const [productos, setProductos] = useState([]);
+  const [cotizaciones, setCotizaciones] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
   const [fotoView, setFotoView] = useState(null);
   const [retiroTarget, setRetiroTarget] = useState(null);
+  const [descargandoId, setDescargandoId] = useState(null);
+  const [pdfError, setPdfError] = useState("");
 
   useEffect(() => {
     const setters = {
@@ -405,6 +410,7 @@ export default function App() {
       [COLLECTIONS.playa]: setPlaya,
       [COLLECTIONS.ventasComprometidas]: setComprometidas,
       [COLLECTIONS.productos]: setProductos,
+      [COLLECTIONS.cotizaciones]: setCotizaciones,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -545,6 +551,34 @@ export default function App() {
   const quitarFichaTecnica = (producto) =>
     updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
 
+  const addCotizacion = (data) => addItem(COLLECTIONS.cotizaciones, data);
+  const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
+
+  const handleDescargarPdf = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":pdf");
+    setPdfError("");
+    try {
+      await downloadCotizacionPdf(cotizacion);
+    } catch (e) {
+      console.error("Error generando PDF", e);
+      setPdfError("No se pudo generar el PDF de la cotización. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleDescargarFichas = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":fichas");
+    setPdfError("");
+    try {
+      const ok = await downloadFichasTecnicasPdf(cotizacion);
+      if (!ok) setPdfError("Ninguno de los productos de esta cotización tiene ficha técnica cargada.");
+    } catch (e) {
+      console.error("Error generando fichas técnicas", e);
+      setPdfError("No se pudo generar el PDF de fichas técnicas. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
 
@@ -666,6 +700,11 @@ export default function App() {
     return productos.filter((p) => !q || [p.nombre, p.categoria].some((v) => (v || "").toLowerCase().includes(q)));
   }, [productos, query]);
 
+  const filteredCotizaciones = useMemo(() => {
+    const q = query.toLowerCase();
+    return cotizaciones.filter((c) => !q || [c.cliente, c.obra, c.categoria].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [cotizaciones, query]);
+
   const filteredComprometidas = useMemo(() => {
     const q = query.toLowerCase();
     return comprometidas.filter((c) => !q || [c.razonSocial, c.obra, c.modelo].some((v) => (v || "").toLowerCase().includes(q)));
@@ -717,6 +756,7 @@ export default function App() {
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "repuestos", label: "Repuestos", icon: Boxes },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
+    { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
   ];
 
   if (loading) {
@@ -954,6 +994,18 @@ export default function App() {
             onQuitarFicha={quitarFichaTecnica}
           />
         )}
+
+        {tab === "cotizaciones" && (
+          <CotizacionesView
+            cotizaciones={filteredCotizaciones} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("cotizacion")}
+            onDelete={deleteCotizacion}
+            onDescargarPdf={handleDescargarPdf}
+            onDescargarFichas={handleDescargarFichas}
+            descargandoId={descargandoId}
+            pdfError={pdfError}
+          />
+        )}
       </div>
 
       {/* Drawers */}
@@ -980,6 +1032,9 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "producto"} onClose={() => setDrawer(null)} title="Nuevo producto">
         <ProductoForm onSave={(d) => { addProducto(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "cotizacion"} onClose={() => setDrawer(null)} title="Nueva cotización">
+        <CotizacionForm productos={productos} onSave={(d) => { addCotizacion(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={!!gestion} onClose={() => setGestion(null)} title={gestion ? `Seguimiento — ${gestion.field === "Service1" ? "Service 1 (12m)" : "Service 2 (24m)"}` : ""}>
         {gestion && (
@@ -2413,6 +2468,188 @@ function CatalogoView({ productos, query, onQuery, onNew, onDelete, onQuitarFich
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Cotizaciones ----------
+const FECHA_ENTREGA_DEFAULT = "Una vez aprobado el presupuesto la entrega se concreta de 150 a 200 dias";
+const OBS_DEFAULT = "Productos a retirar de depósito.";
+
+function CotizacionForm({ productos, onSave }) {
+  const [fecha, setFecha] = useState(todayISO());
+  const [cliente, setCliente] = useState("");
+  const [obra, setObra] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [comentarios, setComentarios] = useState("");
+  const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
+  const [formaPago, setFormaPago] = useState("A conversar");
+  const [obs, setObs] = useState(OBS_DEFAULT);
+  const [lineas, setLineas] = useState([]);
+  const [productoId, setProductoId] = useState("");
+  const [cantidadNueva, setCantidadNueva] = useState(1);
+  const [precioNuevo, setPrecioNuevo] = useState("");
+  const [error, setError] = useState("");
+
+  const productoSel = productos.find((p) => p.id === productoId);
+  const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+
+  const handleProducto = (id) => {
+    setProductoId(id);
+    const p = productos.find((x) => x.id === id);
+    setCantidadNueva(1);
+    setPrecioNuevo(p ? String(Number(p.precioLista) || 0) : "");
+  };
+
+  const agregarLinea = () => {
+    if (!productoSel) {
+      setError("Elegí un producto del catálogo.");
+      return;
+    }
+    setLineas([...lineas, {
+      codigo: productoSel.nombre, descripcion: productoSel.descripcion, foto: productoSel.foto,
+      especLabel: productoSel.especLabel, especValor: productoSel.especValor,
+      fichaTecnicaData: productoSel.fichaTecnicaData || "",
+      cantidad: Number(cantidadNueva) || 1, precioUnit: Number(precioNuevo) || 0,
+    }]);
+    setProductoId("");
+    setCantidadNueva(1);
+    setPrecioNuevo("");
+    setError("");
+  };
+
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  const submit = () => {
+    if (!cliente.trim()) {
+      setError("Ingresá el cliente.");
+      return;
+    }
+    if (lineas.length === 0) {
+      setError("Agregá al menos un producto.");
+      return;
+    }
+    onSave({ fecha, cliente, obra, categoria, comentarios, fechaEntregaEstimada, formaPago, obs, lineas });
+  };
+
+  return (
+    <div>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
+      <Field label="Categoría (título de la cotización)"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: AIRES ACONDICIONADOS" /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <Field label="Producto del catálogo">
+          <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
+            <option value="">Seleccionar...</option>
+            {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </Select>
+        </Field>
+        {productoSel && (
+          <>
+            <div className="flex gap-2">
+              <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
+              <Field label="Precio Unit. U$S"><TextInput type="number" value={precioNuevo} onChange={(e) => setPrecioNuevo(e.target.value)} /></Field>
+            </div>
+            <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar a la cotización</SecondaryButton>
+          </>
+        )}
+      </div>
+
+      {lineas.length > 0 && (
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {lineas.map((l, i) => (
+            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
+                <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.precioUnit).toLocaleString()} = U$S {(l.cantidad * l.precioUnit).toLocaleString()}</span>
+              </div>
+              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+          <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <span>Subtotal</span><span>U$S {subtotal.toLocaleString()}</span>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
+      <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>
+      <Field label="Fecha de entrega estimada"><TextInput value={fechaEntregaEstimada} onChange={(e) => setFechaEntregaEstimada(e.target.value)} /></Field>
+      <Field label="Forma de pago"><TextInput value={formaPago} onChange={(e) => setFormaPago(e.target.value)} /></Field>
+      <Field label="Observaciones"><TextInput value={obs} onChange={(e) => setObs(e.target.value)} /></Field>
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar cotización</PrimaryButton>
+    </div>
+  );
+}
+
+function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDescargarPdf, onDescargarFichas, descargandoId, pdfError }) {
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Cotizaciones</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Armá una cotización con productos del catálogo y descargala en PDF, con tu firma.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <SearchBox value={query} onChange={onQuery} />
+          <PrimaryButton onClick={onNew}><Plus size={15} /> Nueva cotización</PrimaryButton>
+        </div>
+      </div>
+
+      {pdfError && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{pdfError}</div>
+      )}
+
+      {cotizaciones.length === 0 ? (
+        <EmptyState icon={FileSignature} title="Todavía no hay cotizaciones" subtitle="Usá el botón de arriba para armar la primera." />
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          {cotizaciones.map((c) => {
+            const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+            const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
+            return (
+              <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <div className="flex items-start justify-between mb-1">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: INK }}>{c.cliente}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>{c.obra} · {fmtDate(c.fecha)}</p>
+                  </div>
+                  <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
+                    <Trash2 size={13} style={{ color: MUTED }} />
+                  </button>
+                </div>
+                {c.categoria && <CodeTag>{c.categoria}</CodeTag>}
+                <p className="text-sm mt-2" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {subtotal.toLocaleString()}</p>
+                <div className="flex gap-2 mt-3 flex-wrap">
+                  <button
+                    onClick={() => onDescargarPdf(c)}
+                    disabled={descargandoId === `${c.id}:pdf`}
+                    className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
+                    style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargandoId === `${c.id}:pdf` ? 0.6 : 1 }}
+                  >
+                    <Download size={13} /> {descargandoId === `${c.id}:pdf` ? "Generando..." : "Descargar PDF"}
+                  </button>
+                  {tieneFichas && (
+                    <button
+                      onClick={() => onDescargarFichas(c)}
+                      disabled={descargandoId === `${c.id}:fichas`}
+                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                      style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:fichas` ? 0.6 : 1 }}
+                    >
+                      <FileText size={13} /> {descargandoId === `${c.id}:fichas` ? "Generando..." : "Fichas técnicas"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

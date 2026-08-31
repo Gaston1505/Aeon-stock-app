@@ -373,6 +373,7 @@ export default function App() {
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
   const [fotoView, setFotoView] = useState(null);
+  const [retiroTarget, setRetiroTarget] = useState(null);
 
   useEffect(() => {
     const setters = {
@@ -479,27 +480,39 @@ export default function App() {
     deleteItem(COLLECTIONS.ventasComprometidas, id);
   };
 
-  // Retirar: libera la reserva, descuenta stock real, deja el registro de Movimiento y marca la comprometida como cumplida
-  const retirarComprometida = (id, remito, responsable) => {
+  // Retiro parcial: descuenta del saldo comprometido lo que se entrega en esta tanda (con su propia
+  // ficha de remito), deja el registro en Salidas, y marca la reserva "Completada" cuando el saldo
+  // llega a 0 — pero la deja abierta hasta que el usuario la cierre a mano con cerrarComprometida.
+  const retirarParcial = (id, data) => {
     const c = comprometidas.find((x) => x.id === id);
     if (!c) return;
     const equipo = equipos.find((e) => e.id === c.equipoId);
     if (!equipo) return;
 
-    const restante = (Number(equipo.cantidad) || 1) - Number(c.cantidad);
-    const comprometidoRestante = Math.max(0, (Number(equipo.comprometido) || 0) - Number(c.cantidad));
-    if (restante > 0) updateItem(COLLECTIONS.equipos, equipo.id, { cantidad: restante, comprometido: comprometidoRestante });
+    const cantidadEvento = Number(data.cantidad) || 0;
+    const restanteEquipo = (Number(equipo.cantidad) || 1) - cantidadEvento;
+    const comprometidoRestante = Math.max(0, (Number(equipo.comprometido) || 0) - cantidadEvento);
+    if (restanteEquipo > 0) updateItem(COLLECTIONS.equipos, equipo.id, { cantidad: restanteEquipo, comprometido: comprometidoRestante });
     else deleteItem(COLLECTIONS.equipos, equipo.id);
 
     addItem(COLLECTIONS.movimientos, {
-      fecha: todayISO(), categoria: "vendible", categoriaLabel: "Stock vendible",
-      codigo: equipo.codigo, modelo: equipo.modelo, cantidad: c.cantidad, motivo: "Venta",
-      cliente: c.razonSocial, obra: c.obra, monto: c.monto, remito: remito || "", responsable: responsable || "",
-      observaciones: "Retiro de venta comprometida",
+      fecha: data.fecha || todayISO(), categoria: "vendible", categoriaLabel: "Stock vendible",
+      codigo: equipo.codigo, modelo: equipo.modelo, cantidad: cantidadEvento, motivo: "Venta",
+      cliente: c.razonSocial, obra: data.obra || c.obra, monto: 0,
+      remito: data.remito || "", responsable: data.responsable || "",
+      lugarSalida: data.lugarSalida || "", empresaCliente: data.empresaCliente || "", rucCliente: data.rucCliente || "",
+      firmaNombre: data.firmaNombre || "", firmaCedula: data.firmaCedula || "", fotoRemito: data.fotoRemito || "",
+      observaciones: data.observaciones ? `Retiro parcial de venta comprometida — ${data.observaciones}` : "Retiro parcial de venta comprometida",
     });
 
-    updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", fechaRetiro: todayISO() });
+    const cantidadRetirada = (Number(c.cantidadRetirada) || 0) + cantidadEvento;
+    const patch = { cantidadRetirada };
+    if (cantidadRetirada >= Number(c.cantidad)) patch.estado = "Completada";
+    updateItem(COLLECTIONS.ventasComprometidas, id, patch);
   };
+
+  // Cierre manual: el usuario confirma que ya no hay más que retirar de esta reserva.
+  const cerrarComprometida = (id) => updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", fechaCierre: todayISO() });
 
   const addRepuesto = (data) => addItem(COLLECTIONS.repuestos, data);
   const deleteRepuesto = (id) => deleteItem(COLLECTIONS.repuestos, id);
@@ -773,7 +786,8 @@ export default function App() {
             comprometidas={filteredComprometidas} query={query} onQuery={setQuery}
             onNew={() => setDrawer("comprometida")}
             onCancelar={cancelarComprometida}
-            onRetirar={retirarComprometida}
+            onRetirar={(id) => setRetiroTarget(id)}
+            onCerrar={cerrarComprometida}
           />
         )}
 
@@ -927,6 +941,14 @@ export default function App() {
             venta={gestion.venta} field={gestion.field}
             onUpdate={updateVentaEstado}
             onClose={() => setGestion(null)}
+          />
+        )}
+      </Drawer>
+      <Drawer open={!!retiroTarget} onClose={() => setRetiroTarget(null)} title="Registrar retiro">
+        {retiroTarget && (
+          <RetiroParcialForm
+            comprometida={comprometidas.find((c) => c.id === retiroTarget)}
+            onSave={(d) => { retirarParcial(retiroTarget, d); setRetiroTarget(null); }}
           />
         )}
       </Drawer>
@@ -1373,23 +1395,13 @@ function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpda
 }
 
 // ---------- Ventas comprometidas ----------
-function RetirarPopover({ item, onRetirar, onClose }) {
-  const [remito, setRemito] = useState("");
-  const [responsable, setResponsable] = useState("");
-  return (
-    <div className="mt-2 pt-2 border-t space-y-2" style={{ borderColor: BORDER }}>
-      <TextInput value={remito} onChange={(e) => setRemito(e.target.value)} placeholder="N° de remito" />
-      <TextInput value={responsable} onChange={(e) => setResponsable(e.target.value)} placeholder="Responsable" />
-      <div className="flex gap-2">
-        <PrimaryButton onClick={() => onRetirar(item.id, remito, responsable)}>Confirmar retiro</PrimaryButton>
-        <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
-      </div>
-    </div>
-  );
-}
+const COMPROMETIDA_BADGE = {
+  Comprometida: { color: "#B45309", bg: "#FDF1E0" },
+  Completada: { color: "#0D9488", bg: "#E3F5F3" },
+  Retirada: { color: "#15803D", bg: "#E9F7EF" },
+};
 
-function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, onRetirar }) {
-  const [retirando, setRetirando] = useState(null);
+function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, onRetirar, onCerrar }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
   const totalMonto = pendientes.reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
 
@@ -1399,7 +1411,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
         <div>
           <h2 className="text-lg font-semibold" style={{ color: INK }}>Ventas comprometidas</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Mercadería vendida pero todavía en depósito — reserva el stock para que no se use en otra salida.
+            Mercadería vendida pero todavía en depósito — reserva el stock para que no se use en otra salida. Se puede retirar en varias tandas.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1410,7 +1422,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
 
       {pendientes.length > 0 && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-          {pendientes.length} venta(s) comprometida(s) pendiente(s) de retiro — total U$S {totalMonto.toLocaleString()}
+          {pendientes.length} venta(s) comprometida(s) con saldo pendiente — total U$S {totalMonto.toLocaleString()}
         </div>
       )}
 
@@ -1418,43 +1430,50 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
         <EmptyState icon={Lock} title="No hay ventas comprometidas" subtitle="Cuando reservás mercadería vendida antes del retiro, va a aparecer acá." />
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {comprometidas.map((c) => (
-            <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-              <div className="flex items-start justify-between mb-1">
-                <div>
-                  <p className="text-sm font-medium" style={{ color: INK }}>{c.razonSocial}</p>
-                  <p className="text-xs" style={{ color: MUTED }}>{c.obra}</p>
+          {comprometidas.map((c) => {
+            const retirado = Number(c.cantidadRetirada) || 0;
+            const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
+            const badge = COMPROMETIDA_BADGE[c.estado] || COMPROMETIDA_BADGE.Comprometida;
+            return (
+              <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <div className="flex items-start justify-between mb-1">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: INK }}>{c.razonSocial}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>{c.obra}</p>
+                  </div>
+                  <span className="text-xs px-2 py-0.5 rounded" style={{ color: badge.color, backgroundColor: badge.bg }}>
+                    {c.estado}
+                  </span>
                 </div>
-                <span
-                  className="text-xs px-2 py-0.5 rounded"
-                  style={{
-                    color: c.estado === "Retirada" ? "#15803D" : "#B45309",
-                    backgroundColor: c.estado === "Retirada" ? "#E9F7EF" : "#FDF1E0",
-                  }}
-                >
-                  {c.estado}
-                </span>
-              </div>
-              <p className="text-sm mt-2" style={{ color: INK }}>{c.modelo} · cant. {c.cantidad}</p>
-              <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-                Monto: U$S {Number(c.monto || 0).toLocaleString()} · Entrega estimada: {fmtDate(c.fechaEntrega)}
-              </p>
-              {c.estado === "Comprometida" && (
-                retirando === c.id ? (
-                  <RetirarPopover item={c} onRetirar={(id, r, resp) => { onRetirar(id, r, resp); setRetirando(null); }} onClose={() => setRetirando(null)} />
-                ) : (
+                <p className="text-sm mt-2" style={{ color: INK }}>
+                  {c.modelo} · {retirado} de {c.cantidad} retirado{retirado > 0 && c.estado !== "Retirada" ? ` · saldo ${saldo}` : ""}
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+                  Monto: U$S {Number(c.monto || 0).toLocaleString()} · Entrega estimada: {fmtDate(c.fechaEntrega)}
+                </p>
+                {c.estado === "Comprometida" && (
                   <div className="flex gap-2 mt-3">
-                    <button onClick={() => setRetirando(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
-                      Marcar retirado
+                    <button onClick={() => onRetirar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+                      Registrar retiro
                     </button>
-                    <button onClick={() => onCancelar(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
-                      Cancelar
+                    {retirado === 0 && (
+                      <button onClick={() => onCancelar(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
+                )}
+                {c.estado === "Completada" && (
+                  <div className="mt-3">
+                    <p className="text-xs mb-2" style={{ color: "#0D9488" }}>Todo lo comprometido ya se retiró.</p>
+                    <button onClick={() => onCerrar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+                      Cerrar
                     </button>
                   </div>
-                )
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -2011,6 +2030,97 @@ function ComprometidaForm({ equipos, onSave }) {
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar venta comprometida</PrimaryButton>
+    </div>
+  );
+}
+
+function RetiroParcialForm({ comprometida, onSave }) {
+  const retirado = Number(comprometida.cantidadRetirada) || 0;
+  const saldo = Math.max(0, (Number(comprometida.cantidad) || 0) - retirado);
+
+  const [cantidad, setCantidad] = useState(saldo);
+  const [fecha, setFecha] = useState(todayISO());
+  const [lugarSalida, setLugarSalida] = useState("Depósito principal");
+  const [empresaCliente, setEmpresaCliente] = useState(comprometida.razonSocial || "");
+  const [rucCliente, setRucCliente] = useState("");
+  const [obra, setObra] = useState(comprometida.obra || "");
+  const [remito, setRemito] = useState("");
+  const [responsable, setResponsable] = useState("");
+  const [firmaNombre, setFirmaNombre] = useState("");
+  const [firmaCedula, setFirmaCedula] = useState("");
+  const [fotoRemito, setFotoRemito] = useState("");
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [observaciones, setObservaciones] = useState("");
+  const [error, setError] = useState("");
+
+  const handleFoto = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setSubiendoFoto(true);
+    try {
+      const dataUrl = await compressImage(file);
+      setFotoRemito(dataUrl);
+    } catch (err) {
+      setError("No se pudo procesar la foto, probá con otra imagen.");
+    }
+    setSubiendoFoto(false);
+  };
+
+  const submit = () => {
+    const cant = Number(cantidad) || 0;
+    if (cant <= 0 || cant > saldo) {
+      setError(`La cantidad debe ser mayor a 0 y no puede superar el saldo pendiente (${saldo}).`);
+      return;
+    }
+    if (!remito.trim()) {
+      setError("Ingresá el N° de remito.");
+      return;
+    }
+    if (!firmaNombre.trim()) {
+      setError("Falta la aclaración de firma de quien retira/recibe.");
+      return;
+    }
+    onSave({ cantidad: cant, fecha, lugarSalida, empresaCliente, rucCliente, obra, remito, responsable, firmaNombre, firmaCedula, fotoRemito, observaciones });
+  };
+
+  return (
+    <div>
+      <div className="mb-4 p-3 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+        <p className="text-sm font-medium" style={{ color: INK }}>{comprometida.razonSocial} — {comprometida.obra}</p>
+        <p className="text-xs mt-0.5" style={{ color: MUTED }}>{comprometida.modelo} · saldo pendiente: {saldo} de {comprometida.cantidad}</p>
+      </div>
+
+      <Field label={`Cantidad a retirar (saldo: ${saldo})`}>
+        <TextInput type="number" min="1" max={saldo} value={cantidad} onChange={(e) => setCantidad(e.target.value)} />
+      </Field>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
+      <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
+      <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
+      <Field label="N° de remito"><TextInput value={remito} onChange={(e) => setRemito(e.target.value)} /></Field>
+      <Field label="Responsable"><TextInput value={responsable} onChange={(e) => setResponsable(e.target.value)} placeholder="Ej: Gastón" /></Field>
+      <Field label="Firma — Aclaración (quien retira/recibe)"><TextInput value={firmaNombre} onChange={(e) => setFirmaNombre(e.target.value)} /></Field>
+      <Field label="Firma — C.I. N°"><TextInput value={firmaCedula} onChange={(e) => setFirmaCedula(e.target.value)} /></Field>
+
+      <Field label="Foto del remito en papel">
+        <input type="file" accept="image/*" capture="environment" onChange={handleFoto} className="text-xs" />
+      </Field>
+      {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
+      {fotoRemito && (
+        <div className="mb-3 relative inline-block">
+          <img src={fotoRemito} alt="Remito" className="rounded border" style={{ maxWidth: 160, borderColor: BORDER }} />
+          <button onClick={() => setFotoRemito("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
+            <X size={12} color="#FFFFFF" />
+          </button>
+        </div>
+      )}
+
+      <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Opcional" /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Registrar retiro</PrimaryButton>
     </div>
   );
 }

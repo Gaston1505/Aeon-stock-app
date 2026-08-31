@@ -1,0 +1,17 @@
+rules_version = '2';
+
+// AEON Stock App has no login system — anyone with the site link can read
+// and write. These rules scope access to only the collections this app
+// uses (instead of leaving the whole database open) but do not add
+// authentication. See README note in the deploy conversation for context.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /equipos/{docId} { allow read, write: if true; }
+    match /movimientos/{docId} { allow read, write: if true; }
+    match /entradas/{docId} { allow read, write: if true; }
+    match /ventas/{docId} { allow read, write: if true; }
+    match /repuestos/{docId} { allow read, write: if true; }
+    match /playa/{docId} { allow read, write: if true; }
+    match /ventasComprometidas/{docId} { allow read, write: if true; }
+  }
+}

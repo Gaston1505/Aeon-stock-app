@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { db } from "./firebase";
+import {
+  collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
+} from "firebase/firestore";
 
 // ---------- Design tokens ----------
 const INK = "#16202A";
@@ -84,20 +88,18 @@ const MOTIVOS_BAJA = [
 
 const DECISIONES_SERVICE = ["Acepta hacer el service", "Rechaza el service", "Sin respuesta (reintentar)"];
 
-const STORAGE_KEYS = {
-  equipos: "aeon-stock:equipos",
-  movimientos: "aeon-stock:movimientos",
-  entradas: "aeon-stock:entradas",
-  ventas: "aeon-stock:ventas",
-  repuestos: "aeon-stock:repuestos",
-  playa: "aeon-stock:playa",
-  ventasComprometidas: "aeon-stock:ventasComprometidas",
+// Firestore collection names — one collection per data type, one document per item.
+const COLLECTIONS = {
+  equipos: "equipos",
+  movimientos: "movimientos",
+  entradas: "entradas",
+  ventas: "ventas",
+  repuestos: "repuestos",
+  playa: "playa",
+  ventasComprometidas: "ventasComprometidas",
 };
 
 // ---------- Helpers ----------
-function uid() {
-  return Math.random().toString(36).slice(2, 10);
-}
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -148,20 +150,27 @@ function compressImage(file, maxDim = 1280, quality = 0.72) {
     reader.readAsDataURL(file);
   });
 }
-async function loadCollection(key) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
-  }
+// Subscribes to a Firestore collection in real time — every client sharing
+// the same Firebase project sees updates from everyone else immediately.
+function subscribeCollection(name, onData) {
+  const q = query(collection(db, name), orderBy("createdAt", "desc"));
+  return onSnapshot(q, (snap) => {
+    onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  }, (err) => {
+    console.error("Firestore subscribe error", name, err);
+  });
 }
-async function saveCollection(key, data) {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch (e) {
-    console.error("Storage error", key, e);
-  }
+function addItem(name, data) {
+  return addDoc(collection(db, name), { ...data, createdAt: Date.now() })
+    .catch((e) => console.error("Firestore add error", name, e));
+}
+function updateItem(name, id, patch) {
+  return updateDoc(doc(db, name, id), patch)
+    .catch((e) => console.error("Firestore update error", name, id, e));
+}
+function deleteItem(name, id) {
+  return deleteDoc(doc(db, name, id))
+    .catch((e) => console.error("Firestore delete error", name, id, e));
 }
 
 // ---------- Small UI atoms ----------
@@ -366,128 +375,108 @@ export default function App() {
   const [fotoView, setFotoView] = useState(null);
 
   useEffect(() => {
-    (async () => {
-      const [eq, mv, en, vt, rp, pl, cm] = await Promise.all([
-        loadCollection(STORAGE_KEYS.equipos),
-        loadCollection(STORAGE_KEYS.movimientos),
-        loadCollection(STORAGE_KEYS.entradas),
-        loadCollection(STORAGE_KEYS.ventas),
-        loadCollection(STORAGE_KEYS.repuestos),
-        loadCollection(STORAGE_KEYS.playa),
-        loadCollection(STORAGE_KEYS.ventasComprometidas),
-      ]);
-      setEquipos(eq);
-      setMovimientos(mv);
-      setEntradas(en);
-      setVentas(vt);
-      setRepuestos(rp);
-      setPlaya(pl);
-      setComprometidas(cm);
-      setLoading(false);
-    })();
+    const setters = {
+      [COLLECTIONS.equipos]: setEquipos,
+      [COLLECTIONS.movimientos]: setMovimientos,
+      [COLLECTIONS.entradas]: setEntradas,
+      [COLLECTIONS.ventas]: setVentas,
+      [COLLECTIONS.repuestos]: setRepuestos,
+      [COLLECTIONS.playa]: setPlaya,
+      [COLLECTIONS.ventasComprometidas]: setComprometidas,
+    };
+    const names = Object.keys(setters);
+    const pending = new Set(names);
+    const unsubscribers = names.map((name) =>
+      subscribeCollection(name, (items) => {
+        setters[name](items);
+        pending.delete(name);
+        if (pending.size === 0) setLoading(false);
+      })
+    );
+    return () => unsubscribers.forEach((unsub) => unsub());
   }, []);
 
-  const persist = useCallback((key, setter, updater) => {
-    setter((prev) => {
-      const next = updater(prev);
-      saveCollection(key, next);
-      return next;
-    });
-  }, []);
-
-  const addEquipo = (data) => persist(STORAGE_KEYS.equipos, setEquipos, (prev) => [{ id: uid(), ...data }, ...prev]);
-  const updateEquipoEstado = (id, estado) => persist(STORAGE_KEYS.equipos, setEquipos, (prev) => prev.map((e) => (e.id === id ? { ...e, estado } : e)));
-  const updateEquipoField = (id, field, value) => persist(STORAGE_KEYS.equipos, setEquipos, (prev) => prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)));
-  const deleteEquipo = (id) => persist(STORAGE_KEYS.equipos, setEquipos, (prev) => prev.filter((e) => e.id !== id));
+  const addEquipo = (data) => addItem(COLLECTIONS.equipos, data);
+  const updateEquipoEstado = (id, estado) => updateItem(COLLECTIONS.equipos, id, { estado });
+  const updateEquipoField = (id, field, value) => updateItem(COLLECTIONS.equipos, id, { [field]: value });
+  const deleteEquipo = (id) => deleteItem(COLLECTIONS.equipos, id);
 
   const addMovimiento = (data) => {
     // data: { fecha, categoria, sourceId, codigo, modelo, cantidad, motivo, cliente, remito, responsable, observaciones }
-    persist(STORAGE_KEYS.movimientos, setMovimientos, (prev) => [{ id: uid(), ...data }, ...prev]);
+    addItem(COLLECTIONS.movimientos, data);
 
     const cat = CATEGORIAS_ORIGEN.find((c) => c.value === data.categoria);
     if (!cat) return;
     const cantidadRetirada = Number(data.cantidad) || 1;
 
     if (cat.type === "equipo") {
-      persist(STORAGE_KEYS.equipos, setEquipos, (prev) => {
-        const next = [];
-        for (const e of prev) {
-          if (e.id === data.sourceId) {
-            const restante = (Number(e.cantidad) || 1) - cantidadRetirada;
-            if (restante > 0) next.push({ ...e, cantidad: restante });
-          } else {
-            next.push(e);
-          }
-        }
-        return next;
-      });
+      const source = equipos.find((e) => e.id === data.sourceId);
+      if (source) {
+        const restante = (Number(source.cantidad) || 1) - cantidadRetirada;
+        if (restante > 0) updateItem(COLLECTIONS.equipos, source.id, { cantidad: restante });
+        else deleteItem(COLLECTIONS.equipos, source.id);
+      }
       const motivo = MOTIVOS_SALIDA.find((m) => m.value === data.motivo);
       if (motivo && motivo.trackea) {
         // El equipo sigue siendo un activo a rastrear (préstamo, sustitución, reparación): se le crea una nueva fila con nuevo código
-        persist(STORAGE_KEYS.equipos, setEquipos, (prev) => [{
-          id: uid(), codigo: nextCodigo(prev), serie: "", modelo: data.modelo,
+        addItem(COLLECTIONS.equipos, {
+          codigo: nextCodigo(equipos), serie: "", modelo: data.modelo,
           fechaIngreso: data.fecha, estado: motivo.estado,
           ubicacion: `Fuera de depósito (${data.cliente || "cliente"})`,
           cantidad: cantidadRetirada, notas: data.observaciones || "",
-        }, ...prev]);
+        });
       }
     } else if (cat.type === "playa") {
-      persist(STORAGE_KEYS.playa, setPlaya, (prev) => {
-        const next = [];
-        for (const p of prev) {
-          if (p.id === data.sourceId) {
-            const restante = (Number(p.cantidad) || 1) - cantidadRetirada;
-            if (restante > 0) next.push({ ...p, cantidad: restante });
-          } else next.push(p);
-        }
-        return next;
-      });
+      const source = playa.find((p) => p.id === data.sourceId);
+      if (source) {
+        const restante = (Number(source.cantidad) || 1) - cantidadRetirada;
+        if (restante > 0) updateItem(COLLECTIONS.playa, source.id, { cantidad: restante });
+        else deleteItem(COLLECTIONS.playa, source.id);
+      }
     } else if (cat.type === "repuesto") {
-      persist(STORAGE_KEYS.repuestos, setRepuestos, (prev) => {
-        const next = [];
-        for (const r of prev) {
-          if (r.id === data.sourceId) {
-            const restante = (Number(r.cantidad) || 1) - cantidadRetirada;
-            if (restante > 0) next.push({ ...r, cantidad: restante });
-          } else next.push(r);
-        }
-        return next;
-      });
+      const source = repuestos.find((r) => r.id === data.sourceId);
+      if (source) {
+        const restante = (Number(source.cantidad) || 1) - cantidadRetirada;
+        if (restante > 0) updateItem(COLLECTIONS.repuestos, source.id, { cantidad: restante });
+        else deleteItem(COLLECTIONS.repuestos, source.id);
+      }
     }
   };
-  const deleteMovimiento = (id) => persist(STORAGE_KEYS.movimientos, setMovimientos, (prev) => prev.filter((m) => m.id !== id));
+  const deleteMovimiento = (id) => deleteItem(COLLECTIONS.movimientos, id);
 
   const addEntrada = (data) => {
-    persist(STORAGE_KEYS.entradas, setEntradas, (prev) => [{ id: uid(), ...data }, ...prev]);
+    addItem(COLLECTIONS.entradas, data);
     if (data.codigo && data.estadoResultante) updateEquipoEstadoByCodigo(data.codigo, data.estadoResultante);
   };
-  const deleteEntrada = (id) => persist(STORAGE_KEYS.entradas, setEntradas, (prev) => prev.filter((e) => e.id !== id));
+  const deleteEntrada = (id) => deleteItem(COLLECTIONS.entradas, id);
 
   function updateEquipoEstadoByCodigo(codigo, estado) {
-    persist(STORAGE_KEYS.equipos, setEquipos, (prev) => prev.map((e) => (e.codigo === codigo ? { ...e, estado } : e)));
+    equipos.filter((e) => e.codigo === codigo).forEach((e) => updateItem(COLLECTIONS.equipos, e.id, { estado }));
   }
 
-  const addVenta = (data) => persist(STORAGE_KEYS.ventas, setVentas, (prev) => [{ id: uid(), ...data }, ...prev]);
-  const updateVentaEstado = (id, field, value) => persist(STORAGE_KEYS.ventas, setVentas, (prev) => prev.map((v) => (v.id === id ? { ...v, [field]: value } : v)));
-  const deleteVenta = (id) => persist(STORAGE_KEYS.ventas, setVentas, (prev) => prev.filter((v) => v.id !== id));
+  const addVenta = (data) => addItem(COLLECTIONS.ventas, data);
+  const updateVentaEstado = (id, field, value) => updateItem(COLLECTIONS.ventas, id, { [field]: value });
+  const deleteVenta = (id) => deleteItem(COLLECTIONS.ventas, id);
 
   // Venta comprometida: reserva stock (queda físicamente en depósito, pero no disponible para otra salida)
   const addComprometida = (data) => {
-    persist(STORAGE_KEYS.equipos, setEquipos, (prev) => prev.map((e) => (
-      e.id === data.equipoId ? { ...e, comprometido: (Number(e.comprometido) || 0) + Number(data.cantidad) } : e
-    )));
-    persist(STORAGE_KEYS.ventasComprometidas, setComprometidas, (prev) => [{ id: uid(), estado: "Comprometida", ...data }, ...prev]);
+    const equipo = equipos.find((e) => e.id === data.equipoId);
+    if (equipo) {
+      updateItem(COLLECTIONS.equipos, equipo.id, { comprometido: (Number(equipo.comprometido) || 0) + Number(data.cantidad) });
+    }
+    addItem(COLLECTIONS.ventasComprometidas, { estado: "Comprometida", ...data });
   };
 
   const cancelarComprometida = (id) => {
     const c = comprometidas.find((x) => x.id === id);
     if (!c) return;
     if (c.estado === "Comprometida") {
-      persist(STORAGE_KEYS.equipos, setEquipos, (prev) => prev.map((e) => (
-        e.id === c.equipoId ? { ...e, comprometido: Math.max(0, (Number(e.comprometido) || 0) - Number(c.cantidad)) } : e
-      )));
+      const equipo = equipos.find((e) => e.id === c.equipoId);
+      if (equipo) {
+        updateItem(COLLECTIONS.equipos, equipo.id, { comprometido: Math.max(0, (Number(equipo.comprometido) || 0) - Number(c.cantidad)) });
+      }
     }
-    persist(STORAGE_KEYS.ventasComprometidas, setComprometidas, (prev) => prev.filter((x) => x.id !== id));
+    deleteItem(COLLECTIONS.ventasComprometidas, id);
   };
 
   // Retirar: libera la reserva, descuenta stock real, deja el registro de Movimiento y marca la comprometida como cumplida
@@ -497,35 +486,26 @@ export default function App() {
     const equipo = equipos.find((e) => e.id === c.equipoId);
     if (!equipo) return;
 
-    persist(STORAGE_KEYS.equipos, setEquipos, (prev) => {
-      const next = [];
-      for (const e of prev) {
-        if (e.id === c.equipoId) {
-          const restante = (Number(e.cantidad) || 1) - Number(c.cantidad);
-          const comprometidoRestante = Math.max(0, (Number(e.comprometido) || 0) - Number(c.cantidad));
-          if (restante > 0) next.push({ ...e, cantidad: restante, comprometido: comprometidoRestante });
-        } else next.push(e);
-      }
-      return next;
-    });
+    const restante = (Number(equipo.cantidad) || 1) - Number(c.cantidad);
+    const comprometidoRestante = Math.max(0, (Number(equipo.comprometido) || 0) - Number(c.cantidad));
+    if (restante > 0) updateItem(COLLECTIONS.equipos, equipo.id, { cantidad: restante, comprometido: comprometidoRestante });
+    else deleteItem(COLLECTIONS.equipos, equipo.id);
 
-    persist(STORAGE_KEYS.movimientos, setMovimientos, (prev) => [{
-      id: uid(), fecha: todayISO(), categoria: "vendible", categoriaLabel: "Stock vendible",
+    addItem(COLLECTIONS.movimientos, {
+      fecha: todayISO(), categoria: "vendible", categoriaLabel: "Stock vendible",
       codigo: equipo.codigo, modelo: equipo.modelo, cantidad: c.cantidad, motivo: "Venta",
       cliente: c.razonSocial, obra: c.obra, monto: c.monto, remito: remito || "", responsable: responsable || "",
       observaciones: "Retiro de venta comprometida",
-    }, ...prev]);
+    });
 
-    persist(STORAGE_KEYS.ventasComprometidas, setComprometidas, (prev) => prev.map((x) => (
-      x.id === id ? { ...x, estado: "Retirada", fechaRetiro: todayISO() } : x
-    )));
+    updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", fechaRetiro: todayISO() });
   };
 
-  const addRepuesto = (data) => persist(STORAGE_KEYS.repuestos, setRepuestos, (prev) => [{ id: uid(), ...data }, ...prev]);
-  const deleteRepuesto = (id) => persist(STORAGE_KEYS.repuestos, setRepuestos, (prev) => prev.filter((r) => r.id !== id));
+  const addRepuesto = (data) => addItem(COLLECTIONS.repuestos, data);
+  const deleteRepuesto = (id) => deleteItem(COLLECTIONS.repuestos, id);
 
-  const addPlaya = (data) => persist(STORAGE_KEYS.playa, setPlaya, (prev) => [{ id: uid(), estado: "En playa", ...data }, ...prev]);
-  const deletePlaya = (id) => persist(STORAGE_KEYS.playa, setPlaya, (prev) => prev.filter((p) => p.id !== id));
+  const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
+  const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
 
   const derivarPlaya = (item, destinoValue, extra) => {
     const destino = DESTINOS_PLAYA.find((d) => d.value === destinoValue);
@@ -539,20 +519,20 @@ export default function App() {
       });
     } else {
       const codigo = nextCodigo(equipos);
-      persist(STORAGE_KEYS.equipos, setEquipos, (prev) => [{
-        id: uid(), codigo, serie: "", modelo: item.descripcion,
+      addItem(COLLECTIONS.equipos, {
+        codigo, serie: "", modelo: item.descripcion,
         fechaIngreso: item.fecha, estado: destino.estado,
         ubicacion: "Depósito principal",
         cantidad: (extra && extra.cantidad) || item.cantidad || 1,
         notas: (extra && extra.notas) || item.notas || "",
-      }, ...prev]);
-      persist(STORAGE_KEYS.entradas, setEntradas, (prev) => [{
-        id: uid(), fecha: todayISO(), codigo,
+      });
+      addItem(COLLECTIONS.entradas, {
+        fecha: todayISO(), codigo,
         tipo: "Retorno de reparación propia", origen: `Zona de playa (${item.origen})`,
         motivo: `Derivado desde playa: ${item.descripcion}`,
         estadoResultante: destino.estado,
         responsable: "",
-      }, ...prev]);
+      });
     }
     deletePlaya(item.id);
   };

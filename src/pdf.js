@@ -161,6 +161,23 @@ export async function generateCotizacionPdf(cotizacion) {
   function rect(x, yy, w, h, opts = {}) {
     page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
   }
+  // Centers a single line of text both horizontally and vertically inside a
+  // table cell whose top-left-ish corner is (cellX, cellTopY) with cellTopY
+  // being the current "y" cursor (top of the row) — matches how rows are drawn.
+  function centerText(str, cellX, cellTopY, cellW, cellH, size = 6.5) {
+    const w = font.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size });
+  }
+  // Scales the image to fit entirely inside the cell (preserving aspect
+  // ratio, like CSS object-fit: contain) and centers it — never distorts it.
+  function drawImageContained(img, cellX, cellTopY, cellW, cellH, pad = 4) {
+    const maxW = cellW - pad * 2;
+    const maxH = cellH - pad * 2;
+    const scale = Math.min(maxW / img.width, maxH / img.height);
+    const iw = img.width * scale;
+    const ih = img.height * scale;
+    page.drawImage(img, { x: cellX + cellW / 2 - iw / 2, y: cellTopY - cellH / 2 - ih / 2, width: iw, height: ih });
+  }
 
   // Header
   if (logoImg) {
@@ -245,9 +262,7 @@ export async function generateCotizacionPdf(cotizacion) {
 
     let cx = MARGIN;
     rect(cx, y - rowH2, colCodigo, rowH2, { border: BORDER });
-    const codigoStr = linea.codigo || "";
-    const codigoW = font.widthOfTextAtSize(codigoStr, 6.5);
-    text(codigoStr, cx + colCodigo / 2 - codigoW / 2, y - rowH2 / 2 - 3, { size: 6.5 });
+    centerText(linea.codigo || "", cx, y, colCodigo, rowH2);
     cx += colCodigo;
 
     rect(cx, y - rowH2, colFoto, rowH2, { border: BORDER });
@@ -255,38 +270,33 @@ export async function generateCotizacionPdf(cotizacion) {
       try {
         const imgBytes = dataUrlToBytes(linea.foto);
         const img = await pdf.embedJpg(imgBytes);
-        const iw = colFoto - 8;
-        const ih = (img.height / img.width) * iw;
-        page.drawImage(img, { x: cx + 4, y: y - rowH2 / 2 - ih / 2, width: iw, height: Math.min(ih, rowH2 - 6) });
+        drawImageContained(img, cx, y, colFoto, rowH2, 4);
       } catch (e) { /* skip broken image */ }
     }
     cx += colFoto;
 
     rect(cx, y - rowH2, colDescripcion, rowH2, { border: BORDER });
-    descLines.forEach((line, i) => text(line, cx + 3, y - 9 - i * 8, { size: 6.5 }));
+    const descBlockH = descLines.length * 8;
+    const descTop = y - (rowH2 - descBlockH) / 2 - 6;
+    descLines.forEach((line, i) => text(line, cx + 3, descTop - i * 8, { size: 6.5 }));
     cx += colDescripcion;
 
     if (showEspec) {
       rect(cx, y - rowH2, colEspec, rowH2, { border: BORDER });
-      const ev = linea.especValor || "";
-      const ew = font.widthOfTextAtSize(ev, 6.5);
-      text(ev, cx + colEspec / 2 - ew / 2, y - rowH2 / 2 - 3, { size: 6.5 });
+      centerText(linea.especValor || "", cx, y, colEspec, rowH2);
       cx += colEspec;
     }
 
     rect(cx, y - rowH2, colCant, rowH2, { border: BORDER });
-    const cantStr = String(cant);
-    text(cantStr, cx + colCant / 2 - font.widthOfTextAtSize(cantStr, 6.5) / 2, y - rowH2 / 2 - 3, { size: 6.5 });
+    centerText(String(cant), cx, y, colCant, rowH2);
     cx += colCant;
 
     rect(cx, y - rowH2, colPrecio, rowH2, { border: BORDER });
-    const precioStr = fmtNum(precio);
-    text(precioStr, cx + colPrecio - 4 - font.widthOfTextAtSize(precioStr, 6.5), y - rowH2 / 2 - 3, { size: 6.5 });
+    centerText(fmtNum(precio), cx, y, colPrecio, rowH2);
     cx += colPrecio;
 
     rect(cx, y - rowH2, colTotal, rowH2, { border: BORDER });
-    const totalStr = fmtNum(total);
-    text(totalStr, cx + colTotal - 4 - font.widthOfTextAtSize(totalStr, 6.5), y - rowH2 / 2 - 3, { size: 6.5 });
+    centerText(fmtNum(total), cx, y, colTotal, rowH2);
 
     y -= rowH2;
   }
@@ -346,13 +356,14 @@ export async function generateCotizacionPdf(cotizacion) {
     const instH = Math.max(instLines.length * 8 + 6, 16);
     let cx2 = MARGIN;
     rect(cx2, y - instH, colCodigo, instH, { border: BORDER });
-    const instLabelW = font.widthOfTextAtSize("Instalaciones", 6.5);
-    text("Instalaciones", cx2 + colCodigo / 2 - instLabelW / 2, y - instH / 2 - 3, { size: 6.5 });
+    centerText("Instalaciones", cx2, y, colCodigo, instH);
     cx2 += colCodigo;
     rect(cx2, y - instH, colFoto, instH, { border: BORDER });
     cx2 += colFoto;
     rect(cx2, y - instH, colDescripcion, instH, { border: BORDER });
-    instLines.forEach((line, i) => text(line, cx2 + 3, y - 9 - i * 8, { size: 6.5 }));
+    const instBlockH = instLines.length * 8;
+    const instDescTop = y - (instH - instBlockH) / 2 - 6;
+    instLines.forEach((line, i) => text(line, cx2 + 3, instDescTop - i * 8, { size: 6.5 }));
     cx2 += colDescripcion;
     if (showEspec) { rect(cx2, y - instH, colEspec, instH, { border: BORDER }); cx2 += colEspec; }
     rect(cx2, y - instH, colCant, instH, { border: BORDER });
@@ -361,7 +372,7 @@ export async function generateCotizacionPdf(cotizacion) {
     cx2 += colPrecio;
     rect(cx2, y - instH, colTotal, instH, { border: BORDER });
     const instStr = instalacionMonto === 0 ? "-" : fmtNum(instalacionMonto);
-    text(instStr, cx2 + colTotal - 4 - font.widthOfTextAtSize(instStr, 6.5), y - instH / 2 - 3, { size: 6.5 });
+    centerText(instStr, cx2, y, colTotal, instH);
     y -= instH;
   }
 

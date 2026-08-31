@@ -150,15 +150,15 @@ function compressImage(file, maxDim = 1280, quality = 0.72) {
 }
 async function loadCollection(key) {
   try {
-    const res = await window.storage.get(key, true);
-    return res && res.value ? JSON.parse(res.value) : [];
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
   }
 }
 async function saveCollection(key, data) {
   try {
-    await window.storage.set(key, JSON.stringify(data), true);
+    localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
     console.error("Storage error", key, e);
   }

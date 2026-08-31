@@ -161,7 +161,10 @@ function subscribeCollection(name, onData) {
   return onSnapshot(q, (snap) => {
     onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
   }, (err) => {
+    // A permission error (or any other) on one collection shouldn't leave the
+    // whole app stuck on the loading screen — fall back to empty.
     console.error("Firestore subscribe error", name, err);
+    onData([]);
   });
 }
 function addItem(name, data) {

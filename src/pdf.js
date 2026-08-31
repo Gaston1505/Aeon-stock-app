@@ -307,8 +307,10 @@ export async function generateCotizacionPdf(cotizacion) {
 
   const incluirDescuento = !!cotizacion.incluirDescuento;
   const incluirInstalacion = !!cotizacion.incluirInstalacion;
-  const descuento = incluirDescuento ? Number(cotizacion.descuento) || 0 : 0;
-  const totalConDescuento = subtotal - descuento;
+  const descuentoValor = incluirDescuento ? Number(cotizacion.descuento) || 0 : 0;
+  const descuentoEsPorcentaje = !!cotizacion.descuentoEsPorcentaje;
+  const descuentoMonto = descuentoEsPorcentaje ? subtotal * descuentoValor / 100 : descuentoValor;
+  const totalConDescuento = subtotal - descuentoMonto;
   const instalacionMonto = incluirInstalacion ? Number(cotizacion.instalacionMonto) || 0 : 0;
   const totalFinal = totalConDescuento + instalacionMonto;
 
@@ -325,7 +327,7 @@ export async function generateCotizacionPdf(cotizacion) {
     rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
     text("Descuento", MARGIN + 4, y - 11, { bold: true, size: 8 });
     rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
-    const descStr = descuento === 0 ? "-" : fmtNum(descuento);
+    const descStr = descuentoValor === 0 ? "-" : (descuentoEsPorcentaje ? `${fmtNum(descuentoValor)}%` : fmtNum(descuentoValor));
     text(descStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(descStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
     y -= 16;
 

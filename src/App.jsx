@@ -2585,7 +2585,7 @@ function CotizacionForm({ productos, onSave }) {
     }
     onSave({
       fecha, cliente, obra, categoria, comentarios, lineas,
-      incluirDescuento, descuento: Number(descuento) || 0,
+      incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
       incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
       fechaEntregaEstimada, formaPago, obs,
     });
@@ -2639,7 +2639,7 @@ function CotizacionForm({ productos, onSave }) {
         Incluir descuento
       </label>
       {incluirDescuento && (
-        <Field label="Descuento U$S"><TextInput type="number" value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder="0" /></Field>
+        <Field label="Descuento %"><TextInput type="number" value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder="Ej: 10" /></Field>
       )}
 
       <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
@@ -2655,7 +2655,7 @@ function CotizacionForm({ productos, onSave }) {
       {lineas.length > 0 && (
         <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
           <span>Total final</span>
-          <span>U$S {(subtotal - (incluirDescuento ? Number(descuento) || 0 : 0) + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
+          <span>U$S {(subtotal - (incluirDescuento ? subtotal * (Number(descuento) || 0) / 100 : 0) + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
         </div>
       )}
 
@@ -2695,7 +2695,10 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDes
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {cotizaciones.map((c) => {
             const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
-            const totalFinal = subtotal - (c.incluirDescuento ? Number(c.descuento) || 0 : 0) + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
+            const descuentoMonto = c.incluirDescuento
+              ? (c.descuentoEsPorcentaje ? subtotal * (Number(c.descuento) || 0) / 100 : Number(c.descuento) || 0)
+              : 0;
+            const totalFinal = subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
             const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
             return (
               <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>

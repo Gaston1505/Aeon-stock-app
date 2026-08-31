@@ -289,7 +289,7 @@ export async function generateCotizacionPdf(cotizacion) {
     y -= rowH2;
   }
 
-  ensureSpace(140);
+  ensureSpace(170);
 
   const descuento = Number(cotizacion.descuento) || 0;
   const totalConDescuento = subtotal - descuento;
@@ -333,19 +333,35 @@ export async function generateCotizacionPdf(cotizacion) {
 
   y -= 6;
 
-  // Instalaciones (línea opcional, solo si se cargó una descripción)
+  // Instalaciones (línea opcional, solo si se cargó una descripción) — usa las mismas
+  // columnas que la tabla de productos: Producto="Instalaciones", Descripción=el texto,
+  // TOTAL=el monto, igual que en la planilla real.
   if (cotizacion.instalacionDescripcion) {
-    rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
-    text(`Instalaciones — ${cotizacion.instalacionDescripcion}`, MARGIN + 4, y - 11, { size: 7.5 });
-    rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
+    const instLines = wrapText(font, cotizacion.instalacionDescripcion, 6.5, colDescripcion - 6);
+    const instH = Math.max(instLines.length * 8 + 6, 16);
+    let cx2 = MARGIN;
+    rect(cx2, y - instH, colCodigo, instH, { border: BORDER });
+    text("Instalaciones", cx2 + 3, y - 11, { size: 6.5 });
+    cx2 += colCodigo;
+    rect(cx2, y - instH, colFoto, instH, { border: BORDER });
+    cx2 += colFoto;
+    rect(cx2, y - instH, colDescripcion, instH, { border: BORDER });
+    instLines.forEach((line, i) => text(line, cx2 + 3, y - 9 - i * 8, { size: 6.5 }));
+    cx2 += colDescripcion;
+    if (showEspec) { rect(cx2, y - instH, colEspec, instH, { border: BORDER }); cx2 += colEspec; }
+    rect(cx2, y - instH, colCant, instH, { border: BORDER });
+    cx2 += colCant;
+    rect(cx2, y - instH, colPrecio, instH, { border: BORDER });
+    cx2 += colPrecio;
+    rect(cx2, y - instH, colTotal, instH, { border: BORDER });
     const instStr = instalacionMonto === 0 ? "-" : fmtNum(instalacionMonto);
-    text(instStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(instStr, 8), y - 11, { size: 8 });
-    y -= 16;
+    text(instStr, cx2 + colTotal - 4 - font.widthOfTextAtSize(instStr, 6.5), y - instH / 2 - 3, { size: 6.5 });
+    y -= instH;
   }
 
   // Total IVA incluido + Dólares
   rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
-  text("Total Iva Incluido", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text("TOTAL IVA INCLUIDO", MARGIN + 4, y - 11, { bold: true, size: 8 });
   rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { fill: ACCENT_LIGHT });
   const totalStr = fmtNum(totalFinal);
   text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });

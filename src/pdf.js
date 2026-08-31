@@ -245,7 +245,9 @@ export async function generateCotizacionPdf(cotizacion) {
 
     let cx = MARGIN;
     rect(cx, y - rowH2, colCodigo, rowH2, { border: BORDER });
-    text(linea.codigo || "", cx + 3, y - 11, { size: 6.5 });
+    const codigoStr = linea.codigo || "";
+    const codigoW = font.widthOfTextAtSize(codigoStr, 6.5);
+    text(codigoStr, cx + colCodigo / 2 - codigoW / 2, y - rowH2 / 2 - 3, { size: 6.5 });
     cx += colCodigo;
 
     rect(cx, y - rowH2, colFoto, rowH2, { border: BORDER });
@@ -291,9 +293,11 @@ export async function generateCotizacionPdf(cotizacion) {
 
   ensureSpace(170);
 
-  const descuento = Number(cotizacion.descuento) || 0;
+  const incluirDescuento = !!cotizacion.incluirDescuento;
+  const incluirInstalacion = !!cotizacion.incluirInstalacion;
+  const descuento = incluirDescuento ? Number(cotizacion.descuento) || 0 : 0;
   const totalConDescuento = subtotal - descuento;
-  const instalacionMonto = Number(cotizacion.instalacionMonto) || 0;
+  const instalacionMonto = incluirInstalacion ? Number(cotizacion.instalacionMonto) || 0 : 0;
   const totalFinal = totalConDescuento + instalacionMonto;
 
   // Sub-total
@@ -304,21 +308,22 @@ export async function generateCotizacionPdf(cotizacion) {
   text(subStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
   y -= 16;
 
-  // Descuento (siempre visible, como en la planilla real — "-" cuando es 0)
-  rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
-  text("Descuento", MARGIN + 4, y - 11, { bold: true, size: 8 });
-  rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
-  const descStr = descuento === 0 ? "-" : fmtNum(descuento);
-  text(descStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(descStr, 8), y - 11, { size: 8 });
-  y -= 16;
+  // Descuento + Total Descuento Incluido — opcionales: solo si se marcó "Incluir descuento".
+  if (incluirDescuento) {
+    rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
+    text("Descuento", MARGIN + 4, y - 11, { bold: true, size: 8 });
+    rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
+    const descStr = descuento === 0 ? "-" : fmtNum(descuento);
+    text(descStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(descStr, 8), y - 11, { size: 8 });
+    y -= 16;
 
-  // Total Descuento Incluido
-  rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { fill: ACCENT_LIGHT });
-  text("Total Descuento Incluido", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
-  rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { fill: ACCENT_LIGHT });
-  const totalDescStr = fmtNum(totalConDescuento);
-  text(totalDescStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalDescStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
-  y -= 16;
+    rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { fill: ACCENT_LIGHT });
+    text("Total Descuento Incluido", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
+    rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { fill: ACCENT_LIGHT });
+    const totalDescStr = fmtNum(totalConDescuento);
+    text(totalDescStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalDescStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+    y -= 16;
+  }
 
   // Comentarios
   if (cotizacion.comentarios) {
@@ -333,15 +338,16 @@ export async function generateCotizacionPdf(cotizacion) {
 
   y -= 6;
 
-  // Instalaciones (línea opcional, solo si se cargó una descripción) — usa las mismas
+  // Instalaciones — opcional: solo si se marcó "Incluir instalación". Usa las mismas
   // columnas que la tabla de productos: Producto="Instalaciones", Descripción=el texto,
   // TOTAL=el monto, igual que en la planilla real.
-  if (cotizacion.instalacionDescripcion) {
+  if (incluirInstalacion) {
     const instLines = wrapText(font, cotizacion.instalacionDescripcion, 6.5, colDescripcion - 6);
     const instH = Math.max(instLines.length * 8 + 6, 16);
     let cx2 = MARGIN;
     rect(cx2, y - instH, colCodigo, instH, { border: BORDER });
-    text("Instalaciones", cx2 + 3, y - 11, { size: 6.5 });
+    const instLabelW = font.widthOfTextAtSize("Instalaciones", 6.5);
+    text("Instalaciones", cx2 + colCodigo / 2 - instLabelW / 2, y - instH / 2 - 3, { size: 6.5 });
     cx2 += colCodigo;
     rect(cx2, y - instH, colFoto, instH, { border: BORDER });
     cx2 += colFoto;

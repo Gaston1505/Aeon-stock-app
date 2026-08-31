@@ -2531,8 +2531,10 @@ function CotizacionForm({ productos, onSave }) {
   const [obra, setObra] = useState("");
   const [categoria, setCategoria] = useState("");
   const [comentarios, setComentarios] = useState("");
+  const [incluirDescuento, setIncluirDescuento] = useState(false);
   const [descuento, setDescuento] = useState("");
-  const [instalacionDescripcion, setInstalacionDescripcion] = useState("");
+  const [incluirInstalacion, setIncluirInstalacion] = useState(false);
+  const [instalacionDescripcion, setInstalacionDescripcion] = useState("Instalación de equipos");
   const [instalacionMonto, setInstalacionMonto] = useState("");
   const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
   const [formaPago, setFormaPago] = useState("A conversar");
@@ -2583,8 +2585,8 @@ function CotizacionForm({ productos, onSave }) {
     }
     onSave({
       fecha, cliente, obra, categoria, comentarios, lineas,
-      descuento: Number(descuento) || 0,
-      instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
+      incluirDescuento, descuento: Number(descuento) || 0,
+      incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
       fechaEntregaEstimada, formaPago, obs,
     });
   };
@@ -2632,17 +2634,28 @@ function CotizacionForm({ productos, onSave }) {
         </div>
       )}
 
-      <div className="flex gap-2">
-        <Field label="Descuento U$S (opcional)"><TextInput type="number" value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder="0" /></Field>
-      </div>
-      <div className="flex gap-2">
-        <Field label="Instalación — descripción (opcional)"><TextInput value={instalacionDescripcion} onChange={(e) => setInstalacionDescripcion(e.target.value)} placeholder="Ej: Instalación de equipos" /></Field>
-        <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
-      </div>
+      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+        <input type="checkbox" checked={incluirDescuento} onChange={(e) => setIncluirDescuento(e.target.checked)} />
+        Incluir descuento
+      </label>
+      {incluirDescuento && (
+        <Field label="Descuento U$S"><TextInput type="number" value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder="0" /></Field>
+      )}
+
+      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+        <input type="checkbox" checked={incluirInstalacion} onChange={(e) => setIncluirInstalacion(e.target.checked)} />
+        Incluir instalación
+      </label>
+      {incluirInstalacion && (
+        <div className="flex gap-2">
+          <Field label="Instalación — descripción"><TextInput value={instalacionDescripcion} onChange={(e) => setInstalacionDescripcion(e.target.value)} placeholder="Ej: Instalación de equipos" /></Field>
+          <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
+        </div>
+      )}
       {lineas.length > 0 && (
         <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
           <span>Total final</span>
-          <span>U$S {(subtotal - (Number(descuento) || 0) + (Number(instalacionMonto) || 0)).toLocaleString()}</span>
+          <span>U$S {(subtotal - (incluirDescuento ? Number(descuento) || 0 : 0) + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
         </div>
       )}
 
@@ -2682,7 +2695,7 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDes
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {cotizaciones.map((c) => {
             const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
-            const totalFinal = subtotal - (Number(c.descuento) || 0) + (Number(c.instalacionMonto) || 0);
+            const totalFinal = subtotal - (c.incluirDescuento ? Number(c.descuento) || 0 : 0) + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
             const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
             return (
               <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>

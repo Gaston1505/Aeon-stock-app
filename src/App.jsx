@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature,
+  Tag, FileText, FileSignature, Pencil,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -400,6 +400,7 @@ export default function App() {
   const [gestion, setGestion] = useState(null);
   const [fotoView, setFotoView] = useState(null);
   const [retiroTarget, setRetiroTarget] = useState(null);
+  const [productoEditando, setProductoEditando] = useState(null);
   const [descargandoId, setDescargandoId] = useState(null);
   const [pdfError, setPdfError] = useState("");
 
@@ -550,6 +551,7 @@ export default function App() {
   // Catálogo de productos: precio de lista y ficha técnica de cada modelo — de acá salen
   // el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
   const addProducto = (data) => addItem(COLLECTIONS.productos, data);
+  const updateProducto = (id, data) => updateItem(COLLECTIONS.productos, id, data);
   const deleteProducto = (p) => deleteItem(COLLECTIONS.productos, p.id);
   const quitarFichaTecnica = (producto) =>
     updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
@@ -992,7 +994,8 @@ export default function App() {
         {tab === "catalogo" && (
           <CatalogoView
             productos={filteredProductos} query={query} onQuery={setQuery}
-            onNew={() => setDrawer("producto")}
+            onNew={() => { setProductoEditando(null); setDrawer("producto"); }}
+            onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
             onDelete={deleteProducto}
             onQuitarFicha={quitarFichaTecnica}
           />
@@ -1033,8 +1036,16 @@ export default function App() {
       <Drawer open={drawer === "repuesto"} onClose={() => setDrawer(null)} title="Nuevo repuesto">
         <RepuestoForm onSave={(d) => { addRepuesto(d); setDrawer(null); }} />
       </Drawer>
-      <Drawer open={drawer === "producto"} onClose={() => setDrawer(null)} title="Nuevo producto">
-        <ProductoForm onSave={(d) => { addProducto(d); setDrawer(null); }} />
+      <Drawer open={drawer === "producto"} onClose={() => setDrawer(null)} title={productoEditando ? "Editar producto" : "Nuevo producto"}>
+        <ProductoForm
+          producto={productoEditando}
+          onSave={(d) => {
+            if (productoEditando) updateProducto(productoEditando.id, d);
+            else addProducto(d);
+            setDrawer(null);
+            setProductoEditando(null);
+          }}
+        />
       </Drawer>
       <Drawer open={drawer === "cotizacion"} onClose={() => setDrawer(null)} title="Nueva cotización">
         <CotizacionForm productos={productos} onSave={(d) => { addCotizacion(d); setDrawer(null); }} />
@@ -2316,14 +2327,14 @@ function RepuestoForm({ onSave }) {
 }
 
 // ---------- Catálogo de productos ----------
-function ProductoForm({ onSave }) {
-  const [nombre, setNombre] = useState("");
-  const [categoria, setCategoria] = useState("");
-  const [descripcion, setDescripcion] = useState("");
-  const [especLabel, setEspecLabel] = useState("");
-  const [especValor, setEspecValor] = useState("");
-  const [precioLista, setPrecioLista] = useState("");
-  const [foto, setFoto] = useState("");
+function ProductoForm({ producto, onSave }) {
+  const [nombre, setNombre] = useState(producto?.nombre || "");
+  const [categoria, setCategoria] = useState(producto?.categoria || "");
+  const [descripcion, setDescripcion] = useState(producto?.descripcion || "");
+  const [especLabel, setEspecLabel] = useState(producto?.especLabel || "");
+  const [especValor, setEspecValor] = useState(producto?.especValor || "");
+  const [precioLista, setPrecioLista] = useState(producto ? String(producto.precioLista ?? "") : "");
+  const [foto, setFoto] = useState(producto?.foto || "");
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
   const [error, setError] = useState("");
@@ -2366,6 +2377,9 @@ function ProductoForm({ onSave }) {
       if (fichaFile) {
         const fichaTecnicaData = await readFileAsDataUrl(fichaFile);
         ficha = { fichaTecnicaData, fichaTecnicaNombre: fichaFile.name };
+      } else if (producto) {
+        // conservar la ficha técnica existente si no se subió una nueva
+        ficha = { fichaTecnicaData: producto.fichaTecnicaData || "", fichaTecnicaNombre: producto.fichaTecnicaNombre || "" };
       }
       onSave({
         nombre, categoria, descripcion, especLabel, especValor,
@@ -2406,13 +2420,19 @@ function ProductoForm({ onSave }) {
       </Field>
       {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name} ({(fichaFile.size / 1024).toFixed(0)}KB)</p>}
 
+      {producto?.fichaTecnicaNombre && !fichaFile && (
+        <p className="text-xs mb-2" style={{ color: MUTED }}>Ficha técnica actual: {producto.fichaTecnicaNombre} (se conserva si no subís una nueva)</p>
+      )}
+
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit} disabled={guardando}>{guardando ? "Guardando..." : "Guardar producto"}</PrimaryButton>
+      <PrimaryButton onClick={submit} disabled={guardando}>
+        {guardando ? "Guardando..." : producto ? "Guardar cambios" : "Guardar producto"}
+      </PrimaryButton>
     </div>
   );
 }
 
-function CatalogoView({ productos, query, onQuery, onNew, onDelete, onQuitarFicha }) {
+function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -2445,9 +2465,14 @@ function CatalogoView({ productos, query, onQuery, onNew, onDelete, onQuitarFich
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <CodeTag>{p.nombre}</CodeTag>
-                    <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100 shrink-0">
-                      <Trash2 size={13} style={{ color: MUTED }} />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => onEdit(p)} className="p-1 rounded hover:bg-gray-100" title="Editar producto">
+                        <Pencil size={13} style={{ color: MUTED }} />
+                      </button>
+                      <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100" title="Eliminar producto">
+                        <Trash2 size={13} style={{ color: MUTED }} />
+                      </button>
+                    </div>
                   </div>
                   {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
                 </div>

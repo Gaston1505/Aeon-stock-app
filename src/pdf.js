@@ -164,9 +164,11 @@ export async function generateCotizacionPdf(cotizacion) {
   // Centers a single line of text both horizontally and vertically inside a
   // table cell whose top-left-ish corner is (cellX, cellTopY) with cellTopY
   // being the current "y" cursor (top of the row) — matches how rows are drawn.
-  function centerText(str, cellX, cellTopY, cellW, cellH, size = 6.5) {
-    const w = font.widthOfTextAtSize(str, size);
-    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size });
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 6.5, bold: isBold = false } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold });
   }
   // Scales the image to fit entirely inside the cell (preserving aspect
   // ratio, like CSS object-fit: contain) and centers it — never distorts it.
@@ -324,7 +326,7 @@ export async function generateCotizacionPdf(cotizacion) {
     text("Descuento", MARGIN + 4, y - 11, { bold: true, size: 8 });
     rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
     const descStr = descuento === 0 ? "-" : fmtNum(descuento);
-    text(descStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(descStr, 8), y - 11, { size: 8 });
+    text(descStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(descStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
     y -= 16;
 
     rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { fill: ACCENT_LIGHT });
@@ -356,7 +358,7 @@ export async function generateCotizacionPdf(cotizacion) {
     const instH = Math.max(instLines.length * 8 + 6, 16);
     let cx2 = MARGIN;
     rect(cx2, y - instH, colCodigo, instH, { border: BORDER });
-    centerText("Instalaciones", cx2, y, colCodigo, instH);
+    centerText("Instalaciones", cx2, y, colCodigo, instH, { size: 8, bold: true });
     cx2 += colCodigo;
     rect(cx2, y - instH, colFoto, instH, { border: BORDER });
     cx2 += colFoto;

@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Same no-login model as firestore.rules — scoped to the one folder this
+// app writes to (ficha técnica PDFs), not the whole bucket.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /fichas-tecnicas/{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}

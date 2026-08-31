@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 // These values are safe to expose in client-side code — Firebase's web
 // config is not a secret. Access is controlled by Firestore security rules,
@@ -18,3 +19,8 @@ const app = initializeApp(firebaseConfig);
 // ignoreUndefinedProperties guards against accidental `undefined` fields
 // (Firestore rejects writes containing them, unlike localStorage/JSON).
 export const db = initializeFirestore(app, { ignoreUndefinedProperties: true });
+
+// Used only for ficha técnica PDFs — those can be bigger than the 1MB
+// Firestore document limit, unlike the small compressed photos we keep
+// as base64 in Firestore documents (equipos, remitos, etc.).
+export const storage = getStorage(app);

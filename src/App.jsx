@@ -2,13 +2,15 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
-  CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera
+  CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
+  Tag, FileText, Upload,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { db } from "./firebase";
+import { db, storage } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ---------- Design tokens ----------
 const INK = "#16202A";
@@ -97,6 +99,7 @@ const COLLECTIONS = {
   repuestos: "repuestos",
   playa: "playa",
   ventasComprometidas: "ventasComprometidas",
+  productos: "productos",
 };
 
 // ---------- Helpers ----------
@@ -173,6 +176,26 @@ function deleteItem(name, id) {
     .catch((e) => console.error("Firestore delete error", name, id, e));
 }
 
+// Random id for a Storage path, used before the Firestore doc (which has
+// its own auto id) exists yet.
+function uidTemp() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Ficha técnica PDFs live in Firebase Storage (not Firestore) since they can
+// be bigger than the 1MB document limit.
+async function uploadFichaTecnica(productoId, file) {
+  const path = `fichas-tecnicas/${productoId}/${file.name}`;
+  const storageRef = ref(storage, path);
+  await uploadBytes(storageRef, file);
+  const url = await getDownloadURL(storageRef);
+  return { url, path, nombre: file.name };
+}
+function deleteFichaTecnica(path) {
+  if (!path) return;
+  return deleteObject(ref(storage, path)).catch((e) => console.error("Storage delete error", path, e));
+}
+
 // ---------- Small UI atoms ----------
 function StatusBadge({ estado }) {
   const s = STATUS[estado] || { color: MUTED, bg: "#F1F5F9" };
@@ -227,14 +250,18 @@ function TextInput(props) {
 function Select({ children, ...props }) {
   return <select {...props} className={inputClass} style={inputStyle}>{children}</select>;
 }
+function Textarea(props) {
+  return <textarea rows={3} {...props} className={inputClass} style={inputStyle} />;
+}
 
-function PrimaryButton({ children, onClick, type = "button" }) {
+function PrimaryButton({ children, onClick, type = "button", disabled = false }) {
   return (
     <button
       type={type}
       onClick={onClick}
+      disabled={disabled}
       className="inline-flex items-center gap-1.5 text-sm font-medium px-3.5 py-2 rounded-md text-white"
-      style={{ backgroundColor: ACCENT }}
+      style={{ backgroundColor: ACCENT, opacity: disabled ? 0.6 : 1, cursor: disabled ? "default" : "pointer" }}
     >
       {children}
     </button>
@@ -369,6 +396,7 @@ export default function App() {
   const [repuestos, setRepuestos] = useState([]);
   const [playa, setPlaya] = useState([]);
   const [comprometidas, setComprometidas] = useState([]);
+  const [productos, setProductos] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -384,6 +412,7 @@ export default function App() {
       [COLLECTIONS.repuestos]: setRepuestos,
       [COLLECTIONS.playa]: setPlaya,
       [COLLECTIONS.ventasComprometidas]: setComprometidas,
+      [COLLECTIONS.productos]: setProductos,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -517,6 +546,18 @@ export default function App() {
   const addRepuesto = (data) => addItem(COLLECTIONS.repuestos, data);
   const deleteRepuesto = (id) => deleteItem(COLLECTIONS.repuestos, id);
 
+  // Catálogo de productos: precio de lista y ficha técnica de cada modelo — de acá salen
+  // el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
+  const addProducto = (data) => addItem(COLLECTIONS.productos, data);
+  const deleteProducto = (p) => {
+    if (p.fichaTecnicaPath) deleteFichaTecnica(p.fichaTecnicaPath);
+    deleteItem(COLLECTIONS.productos, p.id);
+  };
+  const quitarFichaTecnica = (producto) => {
+    if (producto.fichaTecnicaPath) deleteFichaTecnica(producto.fichaTecnicaPath);
+    updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaUrl: "", fichaTecnicaPath: "", fichaTecnicaNombre: "" });
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
 
@@ -633,6 +674,11 @@ export default function App() {
     return playa.filter((p) => !q || [p.descripcion, p.origen].some((v) => (v || "").toLowerCase().includes(q)));
   }, [playa, query]);
 
+  const filteredProductos = useMemo(() => {
+    const q = query.toLowerCase();
+    return productos.filter((p) => !q || [p.nombre, p.categoria].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [productos, query]);
+
   const filteredComprometidas = useMemo(() => {
     const q = query.toLowerCase();
     return comprometidas.filter((c) => !q || [c.razonSocial, c.obra, c.modelo].some((v) => (v || "").toLowerCase().includes(q)));
@@ -683,6 +729,7 @@ export default function App() {
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "repuestos", label: "Repuestos", icon: Boxes },
+    { key: "catalogo", label: "Catálogo de productos", icon: Tag },
   ];
 
   if (loading) {
@@ -911,6 +958,15 @@ export default function App() {
             />
           </Section>
         )}
+
+        {tab === "catalogo" && (
+          <CatalogoView
+            productos={filteredProductos} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("producto")}
+            onDelete={deleteProducto}
+            onQuitarFicha={quitarFichaTecnica}
+          />
+        )}
       </div>
 
       {/* Drawers */}
@@ -927,13 +983,16 @@ export default function App() {
         <VentaForm equipos={equipos} onSave={(d) => { addVenta(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "comprometida"} onClose={() => setDrawer(null)} title="Nueva venta comprometida">
-        <ComprometidaForm equipos={equipos} onSave={(d) => { addComprometida(d); setDrawer(null); }} />
+        <ComprometidaForm equipos={equipos} productos={productos} onSave={(d) => { addComprometida(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "playa"} onClose={() => setDrawer(null)} title="Nuevo ingreso a playa">
         <PlayaForm onSave={(d) => { addPlaya(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "repuesto"} onClose={() => setDrawer(null)} title="Nuevo repuesto">
         <RepuestoForm onSave={(d) => { addRepuesto(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "producto"} onClose={() => setDrawer(null)} title="Nuevo producto">
+        <ProductoForm onSave={(d) => { addProducto(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={!!gestion} onClose={() => setGestion(null)} title={gestion ? `Seguimiento — ${gestion.field === "Service1" ? "Service 1 (12m)" : "Service 2 (24m)"}` : ""}>
         {gestion && (
@@ -1974,19 +2033,39 @@ function GestionServiceForm({ venta, field, onUpdate, onClose }) {
   );
 }
 
-function ComprometidaForm({ equipos, onSave }) {
+function ComprometidaForm({ equipos, productos, onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [razonSocial, setRazonSocial] = useState("");
   const [obra, setObra] = useState("");
   const [equipoId, setEquipoId] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [monto, setMonto] = useState("");
+  const [montoTocado, setMontoTocado] = useState(false);
   const [fechaEntrega, setFechaEntrega] = useState("");
   const [error, setError] = useState("");
 
   const vendibles = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta" || e.estado === "Apto para venta con descuento");
   const equipo = vendibles.find((e) => e.id === equipoId);
   const disponible = equipo ? Math.max(0, (Number(equipo.cantidad) || 1) - (Number(equipo.comprometido) || 0)) : 0;
+  const productoCatalogo = equipo ? (productos || []).find((p) => p.nombre === equipo.modelo) : null;
+
+  const sugerirMonto = (cant, prod) => {
+    if (montoTocado || !prod) return;
+    setMonto(String((Number(prod.precioLista) || 0) * cant));
+  };
+
+  const handleEquipo = (id) => {
+    setEquipoId(id);
+    setCantidad(1);
+    const eq = vendibles.find((e) => e.id === id);
+    const prod = eq ? (productos || []).find((p) => p.nombre === eq.modelo) : null;
+    sugerirMonto(1, prod);
+  };
+
+  const handleCantidad = (v) => {
+    setCantidad(v);
+    sugerirMonto(Number(v) || 0, productoCatalogo);
+  };
 
   const submit = () => {
     if (!razonSocial.trim() || !equipo) {
@@ -2010,7 +2089,7 @@ function ComprometidaForm({ equipos, onSave }) {
       <Field label="Razón social"><TextInput value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label="Producto">
-        <Select value={equipoId} onChange={(e) => { setEquipoId(e.target.value); setCantidad(1); }}>
+        <Select value={equipoId} onChange={(e) => handleEquipo(e.target.value)}>
           <option value="">Seleccionar equipo...</option>
           {vendibles.map((eq) => {
             const libres = Math.max(0, (Number(eq.cantidad) || 1) - (Number(eq.comprometido) || 0));
@@ -2018,12 +2097,17 @@ function ComprometidaForm({ equipos, onSave }) {
           })}
         </Select>
       </Field>
+      {equipo && productoCatalogo && (
+        <p className="text-xs mb-3" style={{ color: MUTED }}>
+          Precio de lista: U$S {Number(productoCatalogo.precioLista || 0).toLocaleString()} — el monto se sugiere solo, pero se puede editar libremente si se negoció otro precio.
+        </p>
+      )}
       {equipo && (
         <Field label={`Cantidad a comprometer (disponible: ${disponible})`}>
-          <TextInput type="number" min="1" max={disponible} value={cantidad} onChange={(e) => setCantidad(e.target.value)} />
+          <TextInput type="number" min="1" max={disponible} value={cantidad} onChange={(e) => handleCantidad(e.target.value)} />
         </Field>
       )}
-      <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></Field>
+      <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => { setMonto(e.target.value); setMontoTocado(true); }} /></Field>
       <Field label="Fecha estimada de entrega"><TextInput type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} /></Field>
       <p className="text-xs mb-3" style={{ color: MUTED }}>
         Esta cantidad queda reservada: no se va a poder retirar del depósito para otra salida hasta que la marques como retirada.
@@ -2182,6 +2266,157 @@ function RepuestoForm({ onSave }) {
       <Field label="Precio U$S"><TextInput type="number" value={precio} onChange={(e) => setPrecio(e.target.value)} /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar repuesto</PrimaryButton>
+    </div>
+  );
+}
+
+// ---------- Catálogo de productos ----------
+function ProductoForm({ onSave }) {
+  const [nombre, setNombre] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [especLabel, setEspecLabel] = useState("");
+  const [especValor, setEspecValor] = useState("");
+  const [precioLista, setPrecioLista] = useState("");
+  const [foto, setFoto] = useState("");
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [fichaFile, setFichaFile] = useState(null);
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const handleFoto = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setSubiendoFoto(true);
+    try {
+      const dataUrl = await compressImage(file, 480, 0.75);
+      setFoto(dataUrl);
+    } catch (err) {
+      setError("No se pudo procesar la foto, probá con otra imagen.");
+    }
+    setSubiendoFoto(false);
+  };
+
+  const submit = async () => {
+    if (!nombre.trim()) {
+      setError("Ingresá el nombre/código del producto.");
+      return;
+    }
+    setGuardando(true);
+    setError("");
+    try {
+      let ficha = {};
+      if (fichaFile) {
+        const tempId = uidTemp();
+        const { url, path, nombre: fname } = await uploadFichaTecnica(tempId, fichaFile);
+        ficha = { fichaTecnicaUrl: url, fichaTecnicaPath: path, fichaTecnicaNombre: fname };
+      }
+      onSave({
+        nombre, categoria, descripcion, especLabel, especValor,
+        precioLista: Number(precioLista) || 0, foto, ...ficha,
+      });
+    } catch (err) {
+      setError("No se pudo subir la ficha técnica. Probá de nuevo.");
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div>
+      <Field label="Nombre / código del producto"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Categoría"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: Electrodomésticos, Aires acondicionados..." /></Field>
+      <Field label="Descripción (aparece en la cotización)"><Textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Descripción técnica completa del producto" /></Field>
+      <div className="flex gap-2">
+        <Field label="Especificación — etiqueta"><TextInput value={especLabel} onChange={(e) => setEspecLabel(e.target.value)} placeholder="Ej: Capacidad BTU" /></Field>
+        <Field label="Especificación — valor"><TextInput value={especValor} onChange={(e) => setEspecValor(e.target.value)} placeholder="Ej: 12.000" /></Field>
+      </div>
+      <Field label="Precio de lista U$S"><TextInput type="number" value={precioLista} onChange={(e) => setPrecioLista(e.target.value)} /></Field>
+
+      <Field label="Foto de referencia">
+        <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />
+      </Field>
+      {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
+      {foto && (
+        <div className="mb-3 relative inline-block">
+          <img src={foto} alt="Producto" className="rounded border" style={{ maxWidth: 140, borderColor: BORDER }} />
+          <button onClick={() => setFoto("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
+            <X size={12} color="#FFFFFF" />
+          </button>
+        </div>
+      )}
+
+      <Field label="Ficha técnica (PDF)">
+        <input type="file" accept="application/pdf" onChange={(e) => setFichaFile(e.target.files?.[0] || null)} className="text-xs" />
+      </Field>
+      {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name}</p>}
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit} disabled={guardando}>{guardando ? "Guardando..." : "Guardar producto"}</PrimaryButton>
+    </div>
+  );
+}
+
+function CatalogoView({ productos, query, onQuery, onNew, onDelete, onQuitarFicha }) {
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Catálogo de productos</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            Precio de lista y ficha técnica de cada modelo — de acá sale el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <SearchBox value={query} onChange={onQuery} />
+          <PrimaryButton onClick={onNew}><Plus size={15} /> Nuevo producto</PrimaryButton>
+        </div>
+      </div>
+
+      {productos.length === 0 ? (
+        <EmptyState icon={Tag} title="Todavía no hay productos cargados" subtitle="Usá el botón de arriba para cargar el primero." />
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          {productos.map((p) => (
+            <div key={p.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+              <div className="flex items-start gap-3 mb-2">
+                {p.foto ? (
+                  <img src={p.foto} alt={p.nombre} className="rounded border shrink-0" style={{ width: 56, height: 56, objectFit: "cover", borderColor: BORDER }} />
+                ) : (
+                  <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 56, height: 56, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+                    <Tag size={20} style={{ color: MUTED }} />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <CodeTag>{p.nombre}</CodeTag>
+                    <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                      <Trash2 size={13} style={{ color: MUTED }} />
+                    </button>
+                  </div>
+                  {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
+                </div>
+              </div>
+              <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
+              {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
+              {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
+              <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
+                {p.fichaTecnicaUrl ? (
+                  <div className="flex items-center gap-1.5">
+                    <a href={p.fichaTecnicaUrl} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
+                      <FileText size={13} /> Ficha técnica
+                    </a>
+                    <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">
+                      <X size={12} style={{ color: MUTED }} />
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-xs" style={{ color: MUTED }}>Sin ficha técnica</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

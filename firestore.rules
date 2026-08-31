@@ -13,5 +13,6 @@ service cloud.firestore {
     match /repuestos/{docId} { allow read, write: if true; }
     match /playa/{docId} { allow read, write: if true; }
     match /ventasComprometidas/{docId} { allow read, write: if true; }
+    match /productos/{docId} { allow read, write: if true; }
   }
 }

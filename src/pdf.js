@@ -289,7 +289,12 @@ export async function generateCotizacionPdf(cotizacion) {
     y -= rowH2;
   }
 
-  ensureSpace(90);
+  ensureSpace(140);
+
+  const descuento = Number(cotizacion.descuento) || 0;
+  const totalConDescuento = subtotal - descuento;
+  const instalacionMonto = Number(cotizacion.instalacionMonto) || 0;
+  const totalFinal = totalConDescuento + instalacionMonto;
 
   // Sub-total
   rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { fill: ACCENT_LIGHT });
@@ -297,6 +302,22 @@ export async function generateCotizacionPdf(cotizacion) {
   rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { fill: ACCENT_LIGHT });
   const subStr = fmtNum(subtotal);
   text(subStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+  y -= 16;
+
+  // Descuento (siempre visible, como en la planilla real — "-" cuando es 0)
+  rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
+  text("Descuento", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
+  const descStr = descuento === 0 ? "-" : fmtNum(descuento);
+  text(descStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(descStr, 8), y - 11, { size: 8 });
+  y -= 16;
+
+  // Total Descuento Incluido
+  rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { fill: ACCENT_LIGHT });
+  text("Total Descuento Incluido", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
+  rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { fill: ACCENT_LIGHT });
+  const totalDescStr = fmtNum(totalConDescuento);
+  text(totalDescStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalDescStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
   y -= 16;
 
   // Comentarios
@@ -312,16 +333,27 @@ export async function generateCotizacionPdf(cotizacion) {
 
   y -= 6;
 
+  // Instalaciones (línea opcional, solo si se cargó una descripción)
+  if (cotizacion.instalacionDescripcion) {
+    rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
+    text(`Instalaciones — ${cotizacion.instalacionDescripcion}`, MARGIN + 4, y - 11, { size: 7.5 });
+    rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { border: BORDER });
+    const instStr = instalacionMonto === 0 ? "-" : fmtNum(instalacionMonto);
+    text(instStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(instStr, 8), y - 11, { size: 8 });
+    y -= 16;
+  }
+
   // Total IVA incluido + Dólares
   rect(MARGIN, y - 16, CONTENT_W - colTotal, 16, { border: BORDER });
   text("Total Iva Incluido", MARGIN + 4, y - 11, { bold: true, size: 8 });
   rect(MARGIN + CONTENT_W - colTotal, y - 16, colTotal, 16, { fill: ACCENT_LIGHT });
-  text(subStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+  const totalStr = fmtNum(totalFinal);
+  text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
   y -= 16;
 
   rect(MARGIN, y - 16, CONTENT_W, 16, { border: BORDER });
   text("Dólares Americanos:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
-  text(montoEnLetras(subtotal), MARGIN + 110, y - 11, { size: 7.5 });
+  text(montoEnLetras(totalFinal), MARGIN + 110, y - 11, { size: 7.5 });
   y -= 24;
 
   // Fecha entrega estimada

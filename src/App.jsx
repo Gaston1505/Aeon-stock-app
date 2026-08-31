@@ -2487,6 +2487,9 @@ function CotizacionForm({ productos, onSave }) {
   const [obra, setObra] = useState("");
   const [categoria, setCategoria] = useState("");
   const [comentarios, setComentarios] = useState("");
+  const [descuento, setDescuento] = useState("");
+  const [instalacionDescripcion, setInstalacionDescripcion] = useState("");
+  const [instalacionMonto, setInstalacionMonto] = useState("");
   const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
   const [formaPago, setFormaPago] = useState("A conversar");
   const [obs, setObs] = useState(OBS_DEFAULT);
@@ -2534,7 +2537,12 @@ function CotizacionForm({ productos, onSave }) {
       setError("Agregá al menos un producto.");
       return;
     }
-    onSave({ fecha, cliente, obra, categoria, comentarios, fechaEntregaEstimada, formaPago, obs, lineas });
+    onSave({
+      fecha, cliente, obra, categoria, comentarios, lineas,
+      descuento: Number(descuento) || 0,
+      instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
+      fechaEntregaEstimada, formaPago, obs,
+    });
   };
 
   return (
@@ -2580,6 +2588,20 @@ function CotizacionForm({ productos, onSave }) {
         </div>
       )}
 
+      <div className="flex gap-2">
+        <Field label="Descuento U$S (opcional)"><TextInput type="number" value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder="0" /></Field>
+      </div>
+      <div className="flex gap-2">
+        <Field label="Instalación — descripción (opcional)"><TextInput value={instalacionDescripcion} onChange={(e) => setInstalacionDescripcion(e.target.value)} placeholder="Ej: Instalación de equipos" /></Field>
+        <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
+      </div>
+      {lineas.length > 0 && (
+        <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+          <span>Total final</span>
+          <span>U$S {(subtotal - (Number(descuento) || 0) + (Number(instalacionMonto) || 0)).toLocaleString()}</span>
+        </div>
+      )}
+
       <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
       <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>
       <Field label="Fecha de entrega estimada"><TextInput value={fechaEntregaEstimada} onChange={(e) => setFechaEntregaEstimada(e.target.value)} /></Field>
@@ -2616,6 +2638,7 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDes
         <div className="grid grid-cols-2 gap-3">
           {cotizaciones.map((c) => {
             const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+            const totalFinal = subtotal - (Number(c.descuento) || 0) + (Number(c.instalacionMonto) || 0);
             const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
             return (
               <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -2629,7 +2652,7 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDes
                   </button>
                 </div>
                 {c.categoria && <CodeTag>{c.categoria}</CodeTag>}
-                <p className="text-sm mt-2" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {subtotal.toLocaleString()}</p>
+                <p className="text-sm mt-2" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {totalFinal.toLocaleString()}</p>
                 <div className="flex gap-2 mt-3 flex-wrap">
                   <button
                     onClick={() => onDescargarPdf(c)}

@@ -206,7 +206,7 @@ export async function generateCotizacionPdf(cotizacion) {
 
   // Title bar
   rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
-  const title = `COTIZACIÓN ${(cotizacion.categoria || "").toUpperCase()}`.trim();
+  const title = "COTIZACIÓN ELECTRODOMÉSTICOS";
   const titleW = bold.widthOfTextAtSize(title, 10);
   text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
   y -= 18;

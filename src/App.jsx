@@ -3,14 +3,13 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, Upload,
+  Tag, FileText,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { db, storage } from "./firebase";
+import { db } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ---------- Design tokens ----------
 const INK = "#16202A";
@@ -176,24 +175,17 @@ function deleteItem(name, id) {
     .catch((e) => console.error("Firestore delete error", name, id, e));
 }
 
-// Random id for a Storage path, used before the Firestore doc (which has
-// its own auto id) exists yet.
-function uidTemp() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-// Ficha técnica PDFs live in Firebase Storage (not Firestore) since they can
-// be bigger than the 1MB document limit.
-async function uploadFichaTecnica(productoId, file) {
-  const path = `fichas-tecnicas/${productoId}/${file.name}`;
-  const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, file);
-  const url = await getDownloadURL(storageRef);
-  return { url, path, nombre: file.name };
-}
-function deleteFichaTecnica(path) {
-  if (!path) return;
-  return deleteObject(ref(storage, path)).catch((e) => console.error("Storage delete error", path, e));
+// Ficha técnica PDFs are stored as base64 directly on the producto document,
+// so they have to stay well under Firestore's 1MB document limit (base64
+// adds ~33% overhead on top of the raw file size).
+const MAX_FICHA_BYTES = 650 * 1024;
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 // ---------- Small UI atoms ----------
@@ -549,14 +541,9 @@ export default function App() {
   // Catálogo de productos: precio de lista y ficha técnica de cada modelo — de acá salen
   // el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
   const addProducto = (data) => addItem(COLLECTIONS.productos, data);
-  const deleteProducto = (p) => {
-    if (p.fichaTecnicaPath) deleteFichaTecnica(p.fichaTecnicaPath);
-    deleteItem(COLLECTIONS.productos, p.id);
-  };
-  const quitarFichaTecnica = (producto) => {
-    if (producto.fichaTecnicaPath) deleteFichaTecnica(producto.fichaTecnicaPath);
-    updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaUrl: "", fichaTecnicaPath: "", fichaTecnicaNombre: "" });
-  };
+  const deleteProducto = (p) => deleteItem(COLLECTIONS.productos, p.id);
+  const quitarFichaTecnica = (producto) =>
+    updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
 
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -2297,6 +2284,18 @@ function ProductoForm({ onSave }) {
     setSubiendoFoto(false);
   };
 
+  const handleFicha = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (file.size > MAX_FICHA_BYTES) {
+      setError(`Ese PDF pesa ${(file.size / 1024).toFixed(0)}KB — el máximo es ${(MAX_FICHA_BYTES / 1024).toFixed(0)}KB. Probá comprimirlo o recortar imágenes pesadas.`);
+      e.target.value = "";
+      return;
+    }
+    setError("");
+    setFichaFile(file);
+  };
+
   const submit = async () => {
     if (!nombre.trim()) {
       setError("Ingresá el nombre/código del producto.");
@@ -2307,16 +2306,15 @@ function ProductoForm({ onSave }) {
     try {
       let ficha = {};
       if (fichaFile) {
-        const tempId = uidTemp();
-        const { url, path, nombre: fname } = await uploadFichaTecnica(tempId, fichaFile);
-        ficha = { fichaTecnicaUrl: url, fichaTecnicaPath: path, fichaTecnicaNombre: fname };
+        const fichaTecnicaData = await readFileAsDataUrl(fichaFile);
+        ficha = { fichaTecnicaData, fichaTecnicaNombre: fichaFile.name };
       }
       onSave({
         nombre, categoria, descripcion, especLabel, especValor,
         precioLista: Number(precioLista) || 0, foto, ...ficha,
       });
     } catch (err) {
-      setError("No se pudo subir la ficha técnica. Probá de nuevo.");
+      setError("No se pudo leer la ficha técnica. Probá de nuevo.");
       setGuardando(false);
     }
   };
@@ -2345,10 +2343,10 @@ function ProductoForm({ onSave }) {
         </div>
       )}
 
-      <Field label="Ficha técnica (PDF)">
-        <input type="file" accept="application/pdf" onChange={(e) => setFichaFile(e.target.files?.[0] || null)} className="text-xs" />
+      <Field label={`Ficha técnica (PDF, máx. ${(MAX_FICHA_BYTES / 1024).toFixed(0)}KB)`}>
+        <input type="file" accept="application/pdf" onChange={handleFicha} className="text-xs" />
       </Field>
-      {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name}</p>}
+      {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name} ({(fichaFile.size / 1024).toFixed(0)}KB)</p>}
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit} disabled={guardando}>{guardando ? "Guardando..." : "Guardar producto"}</PrimaryButton>
@@ -2400,9 +2398,9 @@ function CatalogoView({ productos, query, onQuery, onNew, onDelete, onQuitarFich
               {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
               {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
               <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
-                {p.fichaTecnicaUrl ? (
+                {p.fichaTecnicaData ? (
                   <div className="flex items-center gap-1.5">
-                    <a href={p.fichaTecnicaUrl} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
+                    <a href={p.fichaTecnicaData} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
                       <FileText size={13} /> Ficha técnica
                     </a>
                     <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">

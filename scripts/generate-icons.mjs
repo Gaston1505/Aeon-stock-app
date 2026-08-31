@@ -1,28 +1,27 @@
 // Builds the PWA/home-screen icons from the AEON logo at build time, so no
 // binary assets have to be committed. Crops just the "AEON" wordmark out of
-// the wider "AEON HOME TECH" lockup (rows 45-87 of the 300x152 source,
-// found by scanning row brightness — see the deploy conversation), trims
-// the residual whitespace, then centers it on a white square with padding.
+// the wider "AEON HOME TECH" lockup — bounds (x: 22-274, y: 43-90 of the
+// 300x152 source) found by scanning row/column pixel brightness, see the
+// deploy conversation — then centers it on a white square with padding.
+// (Uses an explicit crop box rather than sharp's .trim(), which threw
+// "bad extract area" against this image in the Linux CI runner.)
 import sharp from "sharp";
 import { mkdirSync, existsSync } from "fs";
 
 mkdirSync("public/icons", { recursive: true });
 
 const LOGO = "public/aeon-logo.jpg";
+const LOGO_CROP = { left: 22, top: 43, width: 252, height: 47 };
 const MASTER_SIZE = 1024;
 const LOGO_WIDTH_RATIO = 0.72; // fraction of the square the wordmark occupies
 
 async function buildMaster() {
-  const trimmed = await sharp(LOGO)
-    .extract({ left: 0, top: 38, width: 300, height: 56 }) // just the "AEON" line
-    .trim({ threshold: 10 })
-    .png()
-    .toBuffer();
-  const meta = await sharp(trimmed).metadata();
+  const cropped = await sharp(LOGO).extract(LOGO_CROP).png().toBuffer();
+  const meta = await sharp(cropped).metadata();
 
   const targetW = Math.round(MASTER_SIZE * LOGO_WIDTH_RATIO);
   const targetH = Math.round(meta.height * (targetW / meta.width));
-  const resizedLogo = await sharp(trimmed).resize(targetW, targetH).toBuffer();
+  const resizedLogo = await sharp(cropped).resize(targetW, targetH).toBuffer();
 
   return sharp({
     create: { width: MASTER_SIZE, height: MASTER_SIZE, channels: 4, background: "#ffffff" },

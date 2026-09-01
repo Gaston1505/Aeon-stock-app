@@ -945,8 +945,7 @@ export default function App() {
           style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}
         >
           <div className="px-4 py-4 border-b" style={{ borderColor: BORDER }}>
-            <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-14 w-auto mb-1" />
-            <p className="text-xs" style={{ color: MUTED }}>Control de stock</p>
+            <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-16 w-auto" />
           </div>
           <nav className="flex-1 py-2 overflow-y-auto">
             {NAV.map((n) => {

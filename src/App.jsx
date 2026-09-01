@@ -273,6 +273,7 @@ const CAMPOS_IMPORT_CATALOGO = [
   { campo: "costoPy", alias: ["costo puesto en py u$s", "costo puesto en py", "costo py"] },
   { campo: "contenedorTipo", alias: ["contenedor tipo", "contenedor (tipo)"] },
   { campo: "contenedorCantidad", alias: ["contenedor cantidad", "cantidad por contenedor"] },
+  { campo: "stockDisponible", alias: ["stock disponible", "stock", "cantidad en stock"] },
 ];
 function parseCatalogoExcel(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
@@ -308,6 +309,7 @@ function parseCatalogoExcel(arrayBuffer) {
       costoPy: Number(item.costoPy) || 0,
       contenedorTipo: String(item.contenedorTipo || "").trim(),
       contenedorCantidad: Number(item.contenedorCantidad) || 0,
+      stockDisponible: item.stockDisponible === "" || item.stockDisponible == null ? null : Number(item.stockDisponible) || 0,
       foto: "", fichaTecnicaData: "", fichaTecnicaNombre: "",
     });
   });
@@ -322,7 +324,7 @@ function descargarPlantillaCatalogo() {
     "Descripción": "Anafe vitrocerámica de 2 quemadores, Voltaje 220-240V, 50~60Hz, Potencia nominal: 3000W",
     "Especificación - etiqueta": "Potencia nominal", "Especificación - valor": "3000W",
     "Precio de lista U$S": 99, "Costo de origen U$S": 55, "Costo puesto en PY U$S": 70,
-    "Contenedor tipo": "40HQ", "Contenedor cantidad": 420,
+    "Contenedor tipo": "40HQ", "Contenedor cantidad": 420, "Stock disponible": 5,
   }]);
   XLSX.utils.book_append_sheet(wb, ws, "Catálogo");
   XLSX.writeFile(wb, "Plantilla_Catalogo_AEON.xlsx");
@@ -2815,6 +2817,7 @@ function ProductoForm({ producto, onSave }) {
   const [costoPy, setCostoPy] = useState(producto ? String(producto.costoPy ?? "") : "");
   const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
+  const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
@@ -2869,6 +2872,7 @@ function ProductoForm({ producto, onSave }) {
         precioLista: Number(precioLista) || 0,
         costoOrigen: Number(costoOrigen) || 0, costoPy: Number(costoPy) || 0,
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
+        stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         foto, ...ficha,
       });
     } catch (err) {
@@ -2910,6 +2914,7 @@ function ProductoForm({ producto, onSave }) {
         <Field label="Contenedor (tipo)"><TextInput value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)} placeholder="Ej: 40HQ" /></Field>
         <Field label="Cantidad por contenedor"><TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} /></Field>
       </div>
+      <Field label="Stock disponible (unidades en depósito)"><TextInput type="number" value={stockDisponible} onChange={(e) => setStockDisponible(e.target.value)} /></Field>
 
       <Field label="Foto de referencia">
         <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />
@@ -2968,7 +2973,14 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
           {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
         </div>
       </div>
-      <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
+        {p.stockDisponible != null && (
+          <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: p.stockDisponible > 0 ? "#E9F7EF" : "#FBEAEA", color: p.stockDisponible > 0 ? "#15803D" : "#B91C1C" }}>
+            Stock: {p.stockDisponible}
+          </span>
+        )}
+      </div>
       {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
       {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
 

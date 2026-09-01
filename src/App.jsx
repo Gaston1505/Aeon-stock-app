@@ -176,6 +176,7 @@ function updateItem(name, id, patch) {
     .catch((e) => console.error("Firestore update error", name, id, e));
 }
 function deleteItem(name, id) {
+  if (!window.confirm("¿Eliminar este registro? Esta acción no se puede deshacer.")) return;
   return deleteDoc(doc(db, name, id))
     .catch((e) => console.error("Firestore delete error", name, id, e));
 }

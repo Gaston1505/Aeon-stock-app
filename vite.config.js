@@ -13,8 +13,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["icons/apple-touch-icon.png"],
       manifest: {
-        name: "AEON — Control de stock",
-        short_name: "AEON Stock",
+        name: "AEON",
+        short_name: "AEON",
         description: "Control de stock e inventario AEON",
         start_url: BASE,
         scope: BASE,

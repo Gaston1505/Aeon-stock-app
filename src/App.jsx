@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
-  Wrench, Plus, Download, Search, X, Trash2, MessageCircle, AlertTriangle,
+  Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu,
 } from "lucide-react";
@@ -192,6 +192,62 @@ function readFileAsDataUrl(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// ---------- Importación masiva de catálogo por Excel ----------
+// La foto y la ficha técnica (PDF) no vienen del Excel — se cargan después,
+// a mano, editando cada producto.
+function normalizarHeader(h) {
+  return String(h || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
+}
+const CAMPOS_IMPORT_CATALOGO = [
+  { campo: "nombre", alias: ["nombre", "nombre / codigo", "nombre / codigo del producto", "codigo"] },
+  { campo: "categoria", alias: ["categoria"] },
+  { campo: "descripcion", alias: ["descripcion", "descripcion (aparece en la cotizacion)"] },
+  { campo: "especLabel", alias: ["especificacion - etiqueta", "espec. etiqueta", "especificacion etiqueta"] },
+  { campo: "especValor", alias: ["especificacion - valor", "espec. valor", "especificacion valor"] },
+  { campo: "precioLista", alias: ["precio de lista u$s", "precio de lista", "precio u$s", "precio"] },
+];
+function parseCatalogoExcel(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  const productos = [];
+  const errores = [];
+  rows.forEach((row, i) => {
+    const item = {};
+    for (const key in row) {
+      const norm = normalizarHeader(key);
+      const match = CAMPOS_IMPORT_CATALOGO.find((c) => c.alias.includes(norm));
+      if (match) item[match.campo] = row[key];
+    }
+    const nombre = String(item.nombre || "").trim();
+    if (!nombre) {
+      errores.push(`Fila ${i + 2}: sin nombre/código, se omitió.`);
+      return;
+    }
+    productos.push({
+      nombre,
+      categoria: String(item.categoria || "").trim(),
+      descripcion: String(item.descripcion || "").trim(),
+      especLabel: String(item.especLabel || "").trim(),
+      especValor: String(item.especValor || "").trim(),
+      precioLista: Number(item.precioLista) || 0,
+      foto: "", fichaTecnicaData: "", fichaTecnicaNombre: "",
+    });
+  });
+  return { productos, errores };
+}
+function descargarPlantillaCatalogo() {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet([{
+    "Nombre / código": "AE-AC-2T-30-ON", "Categoría": "Cocina",
+    "Descripción": "Anafe vitrocerámica de 2 quemadores, Voltaje 220-240V, 50~60Hz, Potencia nominal: 3000W",
+    "Especificación - etiqueta": "Potencia nominal", "Especificación - valor": "3000W",
+    "Precio de lista U$S": 99,
+  }]);
+  XLSX.utils.book_append_sheet(wb, ws, "Catálogo");
+  XLSX.writeFile(wb, "Plantilla_Catalogo_AEON.xlsx");
 }
 
 // ---------- Small UI atoms ----------
@@ -406,6 +462,8 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [descargandoId, setDescargandoId] = useState(null);
   const [pdfError, setPdfError] = useState("");
+  const [importandoCatalogo, setImportandoCatalogo] = useState(false);
+  const [importResultado, setImportResultado] = useState("");
 
   useEffect(() => {
     const setters = {
@@ -633,6 +691,23 @@ export default function App() {
       });
     }
     deletePlaya(item.id);
+  };
+
+  const handleImportarCatalogo = async (file) => {
+    setImportandoCatalogo(true);
+    setImportResultado("");
+    try {
+      const buffer = await file.arrayBuffer();
+      const { productos: nuevos, errores } = parseCatalogoExcel(buffer);
+      for (const p of nuevos) await addItem(COLLECTIONS.productos, p);
+      let msg = `${nuevos.length} producto(s) importado(s).`;
+      if (errores.length) msg += ` ${errores.length} fila(s) omitida(s) por no tener nombre/código.`;
+      setImportResultado(msg);
+    } catch (e) {
+      console.error("Error importando catálogo", e);
+      setImportResultado("No se pudo leer el archivo. Verificá que sea un .xlsx válido.");
+    }
+    setImportandoCatalogo(false);
   };
 
   const exportExcel = () => {
@@ -1034,6 +1109,9 @@ export default function App() {
             onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
             onDelete={deleteProducto}
             onQuitarFicha={quitarFichaTecnica}
+            onImportar={handleImportarCatalogo}
+            importando={importandoCatalogo}
+            importResultado={importResultado}
           />
         )}
 
@@ -2550,7 +2628,15 @@ function ProductoForm({ producto, onSave }) {
   );
 }
 
-function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha }) {
+function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado }) {
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (file) onImportar(file);
+  };
+
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -2560,11 +2646,20 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
             Precio de lista y ficha técnica de cada modelo — de acá sale el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
+          <SecondaryButton onClick={descargarPlantillaCatalogo}><Download size={14} /> Plantilla</SecondaryButton>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="hidden" />
+          <SecondaryButton onClick={() => fileInputRef.current?.click()}>
+            <Upload size={14} /> {importando ? "Importando..." : "Importar Excel"}
+          </SecondaryButton>
           <PrimaryButton onClick={onNew}><Plus size={15} /> Nuevo producto</PrimaryButton>
         </div>
       </div>
+
+      {importResultado && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultado}</div>
+      )}
 
       {productos.length === 0 ? (
         <EmptyState icon={Tag} title="Todavía no hay productos cargados" subtitle="Usá el botón de arriba para cargar el primero." />

@@ -260,10 +260,19 @@ function normalizarHeader(h) {
 const CAMPOS_IMPORT_CATALOGO = [
   { campo: "nombre", alias: ["nombre", "nombre / codigo", "nombre / codigo del producto", "codigo"] },
   { campo: "categoria", alias: ["categoria"] },
+  { campo: "categoriaPrincipal", alias: ["categoria principal"] },
+  { campo: "subcategoria", alias: ["subcategoria"] },
+  { campo: "subcategoria2", alias: ["subcategoria 2"] },
+  { campo: "subcategoria3", alias: ["subcategoria 3"] },
+  { campo: "ordenNumerico", alias: ["orden", "orden (numero)", "orden dentro del grupo"] },
   { campo: "descripcion", alias: ["descripcion", "descripcion (aparece en la cotizacion)"] },
   { campo: "especLabel", alias: ["especificacion - etiqueta", "espec. etiqueta", "especificacion etiqueta"] },
   { campo: "especValor", alias: ["especificacion - valor", "espec. valor", "especificacion valor"] },
-  { campo: "precioLista", alias: ["precio de lista u$s", "precio de lista", "precio u$s", "precio"] },
+  { campo: "precioLista", alias: ["precio de lista u$s", "precio de lista", "precio u$s", "precio", "precio de venta u$s"] },
+  { campo: "costoOrigen", alias: ["costo de origen u$s", "costo de origen", "costo origen"] },
+  { campo: "costoPy", alias: ["costo puesto en py u$s", "costo puesto en py", "costo py"] },
+  { campo: "contenedorTipo", alias: ["contenedor tipo", "contenedor (tipo)"] },
+  { campo: "contenedorCantidad", alias: ["contenedor cantidad", "cantidad por contenedor"] },
 ];
 function parseCatalogoExcel(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
@@ -286,10 +295,19 @@ function parseCatalogoExcel(arrayBuffer) {
     productos.push({
       nombre,
       categoria: String(item.categoria || "").trim(),
+      categoriaPrincipal: String(item.categoriaPrincipal || "").trim(),
+      subcategoria: String(item.subcategoria || "").trim(),
+      subcategoria2: String(item.subcategoria2 || "").trim(),
+      subcategoria3: String(item.subcategoria3 || "").trim(),
+      ordenNumerico: item.ordenNumerico === "" || item.ordenNumerico == null ? null : Number(item.ordenNumerico) || 0,
       descripcion: String(item.descripcion || "").trim(),
       especLabel: String(item.especLabel || "").trim(),
       especValor: String(item.especValor || "").trim(),
       precioLista: Number(item.precioLista) || 0,
+      costoOrigen: Number(item.costoOrigen) || 0,
+      costoPy: Number(item.costoPy) || 0,
+      contenedorTipo: String(item.contenedorTipo || "").trim(),
+      contenedorCantidad: Number(item.contenedorCantidad) || 0,
       foto: "", fichaTecnicaData: "", fichaTecnicaNombre: "",
     });
   });
@@ -298,10 +316,13 @@ function parseCatalogoExcel(arrayBuffer) {
 function descargarPlantillaCatalogo() {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet([{
-    "Nombre / código": "AE-AC-2T-30-ON", "Categoría": "Cocina",
+    "Nombre / código": "AE-AC-2T-30-ON",
+    "Categoría principal": "Cocina", "Subcategoría": "Anafe", "Subcategoría 2": "Vitrocerámica", "Subcategoría 3": "2",
+    "Orden (número)": 2,
     "Descripción": "Anafe vitrocerámica de 2 quemadores, Voltaje 220-240V, 50~60Hz, Potencia nominal: 3000W",
     "Especificación - etiqueta": "Potencia nominal", "Especificación - valor": "3000W",
-    "Precio de lista U$S": 99,
+    "Precio de lista U$S": 99, "Costo de origen U$S": 55, "Costo puesto en PY U$S": 70,
+    "Contenedor tipo": "40HQ", "Contenedor cantidad": 420,
   }]);
   XLSX.utils.book_append_sheet(wb, ws, "Catálogo");
   XLSX.writeFile(wb, "Plantilla_Catalogo_AEON.xlsx");
@@ -2584,10 +2605,19 @@ function RepuestoForm({ onSave }) {
 function ProductoForm({ producto, onSave }) {
   const [nombre, setNombre] = useState(producto?.nombre || "");
   const [categoria, setCategoria] = useState(producto?.categoria || "");
+  const [categoriaPrincipal, setCategoriaPrincipal] = useState(producto?.categoriaPrincipal || "");
+  const [subcategoria, setSubcategoria] = useState(producto?.subcategoria || "");
+  const [subcategoria2, setSubcategoria2] = useState(producto?.subcategoria2 || "");
+  const [subcategoria3, setSubcategoria3] = useState(producto?.subcategoria3 || "");
+  const [ordenNumerico, setOrdenNumerico] = useState(producto ? String(producto.ordenNumerico ?? "") : "");
   const [descripcion, setDescripcion] = useState(producto?.descripcion || "");
   const [especLabel, setEspecLabel] = useState(producto?.especLabel || "");
   const [especValor, setEspecValor] = useState(producto?.especValor || "");
   const [precioLista, setPrecioLista] = useState(producto ? String(producto.precioLista ?? "") : "");
+  const [costoOrigen, setCostoOrigen] = useState(producto ? String(producto.costoOrigen ?? "") : "");
+  const [costoPy, setCostoPy] = useState(producto ? String(producto.costoPy ?? "") : "");
+  const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "");
+  const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
@@ -2637,7 +2667,12 @@ function ProductoForm({ producto, onSave }) {
       }
       onSave({
         nombre, categoria, descripcion, especLabel, especValor,
-        precioLista: Number(precioLista) || 0, foto, ...ficha,
+        categoriaPrincipal, subcategoria, subcategoria2, subcategoria3,
+        ordenNumerico: ordenNumerico === "" ? null : Number(ordenNumerico) || 0,
+        precioLista: Number(precioLista) || 0,
+        costoOrigen: Number(costoOrigen) || 0, costoPy: Number(costoPy) || 0,
+        contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
+        foto, ...ficha,
       });
     } catch (err) {
       setError("No se pudo leer la ficha técnica. Probá de nuevo.");
@@ -2654,7 +2689,30 @@ function ProductoForm({ producto, onSave }) {
         <Field label="Especificación — etiqueta"><TextInput value={especLabel} onChange={(e) => setEspecLabel(e.target.value)} placeholder="Ej: Capacidad BTU" /></Field>
         <Field label="Especificación — valor"><TextInput value={especValor} onChange={(e) => setEspecValor(e.target.value)} placeholder="Ej: 12.000" /></Field>
       </div>
-      <Field label="Precio de lista U$S"><TextInput type="number" value={precioLista} onChange={(e) => setPrecioLista(e.target.value)} /></Field>
+      <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => setPrecioLista(e.target.value)} /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Categorización (para agrupar y ordenar el catálogo)</p>
+      <div className="flex gap-2">
+        <Field label="Categoría principal"><TextInput value={categoriaPrincipal} onChange={(e) => setCategoriaPrincipal(e.target.value)} placeholder="Ej: Cocina" /></Field>
+        <Field label="Subcategoría"><TextInput value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)} placeholder="Ej: Campana" /></Field>
+      </div>
+      <div className="flex gap-2">
+        <Field label="Subcategoría 2"><TextInput value={subcategoria2} onChange={(e) => setSubcategoria2(e.target.value)} placeholder="Ej: Pared" /></Field>
+        <Field label="Subcategoría 3"><TextInput value={subcategoria3} onChange={(e) => setSubcategoria3(e.target.value)} placeholder="Ej: Telescópica" /></Field>
+      </div>
+      <Field label="Orden dentro del grupo (número — ej. potencia, litraje, hornallas)">
+        <TextInput type="number" value={ordenNumerico} onChange={(e) => setOrdenNumerico(e.target.value)} placeholder="Ej: 700" />
+      </Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos de costo (no aparecen en la cotización)</p>
+      <div className="flex gap-2">
+        <Field label="Costo de origen U$S"><TextInput type="number" value={costoOrigen} onChange={(e) => setCostoOrigen(e.target.value)} /></Field>
+        <Field label="Costo puesto en PY U$S"><TextInput type="number" value={costoPy} onChange={(e) => setCostoPy(e.target.value)} /></Field>
+      </div>
+      <div className="flex gap-2">
+        <Field label="Contenedor (tipo)"><TextInput value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)} placeholder="Ej: 40HQ" /></Field>
+        <Field label="Cantidad por contenedor"><TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} /></Field>
+      </div>
 
       <Field label="Foto de referencia">
         <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />
@@ -2686,8 +2744,138 @@ function ProductoForm({ producto, onSave }) {
   );
 }
 
+function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
+  const tieneCosto = p.costoOrigen || p.costoPy;
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start gap-3 mb-2">
+        {p.foto ? (
+          <img src={p.foto} alt={p.nombre} className="rounded border shrink-0" style={{ width: 56, height: 56, objectFit: "cover", borderColor: BORDER }} />
+        ) : (
+          <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 56, height: 56, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+            <Tag size={20} style={{ color: MUTED }} />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <CodeTag>{p.nombre}</CodeTag>
+            <div className="flex items-center gap-1 shrink-0">
+              <button onClick={() => onEdit(p)} className="p-1 rounded hover:bg-gray-100" title="Editar producto">
+                <Pencil size={13} style={{ color: MUTED }} />
+              </button>
+              <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100" title="Eliminar producto">
+                <Trash2 size={13} style={{ color: MUTED }} />
+              </button>
+            </div>
+          </div>
+          {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
+        </div>
+      </div>
+      <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
+      {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
+      {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
+
+      {(tieneCosto || p.contenedorTipo) && (
+        <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Info interna — no aparece en la cotización</p>
+          {tieneCosto && (
+            <p className="text-xs" style={{ color: MUTED }}>
+              Origen U$S {Number(p.costoOrigen || 0).toLocaleString()} · Puesto en PY U$S {Number(p.costoPy || 0).toLocaleString()}
+            </p>
+          )}
+          {p.contenedorTipo && (
+            <p className="text-xs" style={{ color: MUTED }}>
+              Contenedor {p.contenedorTipo}{p.contenedorCantidad ? ` · ${p.contenedorCantidad} un.` : ""}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
+        {p.fichaTecnicaData ? (
+          <div className="flex items-center gap-1.5">
+            <a href={p.fichaTecnicaData} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
+              <FileText size={13} /> Ficha técnica
+            </a>
+            <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">
+              <X size={12} style={{ color: MUTED }} />
+            </button>
+          </div>
+        ) : (
+          <span className="text-xs" style={{ color: MUTED }}>Sin ficha técnica</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ordenarProductos(productos) {
+  return [...productos].sort((a, b) => {
+    const oa = a.ordenNumerico, ob = b.ordenNumerico;
+    if (oa != null && ob != null && oa !== ob) return oa - ob;
+    if (oa != null && ob == null) return -1;
+    if (oa == null && ob != null) return 1;
+    return (a.nombre || "").localeCompare(b.nombre || "");
+  });
+}
+
+const NIVELES_CATEGORIA_PRODUCTO = [
+  (p) => p.categoriaPrincipal,
+  (p) => p.subcategoria,
+  (p) => p.subcategoria2,
+  (p) => p.subcategoria3,
+];
+
+// Árbol de categorías: cada nodo tiene `productos` (hoja, ya ordenados) o `hijos` (subgrupos).
+// Productos sin valor en un nivel quedan agrupados como "Otros" en ese mismo nivel, en vez de
+// perderse — así un catálogo cargado a medias sigue siendo navegable.
+function construirArbolCategorias(productos, nivel = 0) {
+  if (nivel >= NIVELES_CATEGORIA_PRODUCTO.length) return { productos: ordenarProductos(productos), hijos: null };
+  const get = NIVELES_CATEGORIA_PRODUCTO[nivel];
+  const grupos = new Map();
+  const sinValor = [];
+  for (const p of productos) {
+    const key = (get(p) || "").trim();
+    if (!key) { sinValor.push(p); continue; }
+    if (!grupos.has(key)) grupos.set(key, []);
+    grupos.get(key).push(p);
+  }
+  if (grupos.size === 0) return { productos: ordenarProductos(productos), hijos: null };
+  const claves = [...grupos.keys()].sort((a, b) => a.localeCompare(b));
+  const hijos = claves.map((valor) => ({ valor, ...construirArbolCategorias(grupos.get(valor), nivel + 1) }));
+  if (sinValor.length > 0) hijos.push({ valor: "Otros", ...construirArbolCategorias(sinValor, NIVELES_CATEGORIA_PRODUCTO.length) });
+  return { productos: null, hijos };
+}
+
+const CATEGORIA_TITULO_CLASE = ["text-base font-semibold", "text-sm font-semibold", "text-xs font-semibold", "text-xs font-medium"];
+
+function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
+  if (nodo.productos) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {nodo.productos.map((p) => (
+          <ProductoCard key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className={nivel === 0 ? "space-y-5" : "space-y-3 pl-3 border-l-2"} style={nivel === 0 ? {} : { borderColor: BORDER }}>
+      {nodo.hijos.map((hijo) => (
+        <div key={hijo.valor}>
+          <p className={CATEGORIA_TITULO_CLASE[Math.min(nivel, 3)]} style={{ color: nivel === 0 ? INK : MUTED }}>{hijo.valor}</p>
+          <div className="mt-2">
+            <CategoriaNodo nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado }) {
   const fileInputRef = useRef(null);
+  const arbol = useMemo(() => construirArbolCategorias(productos), [productos]);
 
   const handleFileChange = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -2722,52 +2910,7 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
       {productos.length === 0 ? (
         <EmptyState icon={Tag} title="Todavía no hay productos cargados" subtitle="Usá el botón de arriba para cargar el primero." />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {productos.map((p) => (
-            <div key={p.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-              <div className="flex items-start gap-3 mb-2">
-                {p.foto ? (
-                  <img src={p.foto} alt={p.nombre} className="rounded border shrink-0" style={{ width: 56, height: 56, objectFit: "cover", borderColor: BORDER }} />
-                ) : (
-                  <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 56, height: 56, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
-                    <Tag size={20} style={{ color: MUTED }} />
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <CodeTag>{p.nombre}</CodeTag>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => onEdit(p)} className="p-1 rounded hover:bg-gray-100" title="Editar producto">
-                        <Pencil size={13} style={{ color: MUTED }} />
-                      </button>
-                      <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100" title="Eliminar producto">
-                        <Trash2 size={13} style={{ color: MUTED }} />
-                      </button>
-                    </div>
-                  </div>
-                  {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
-                </div>
-              </div>
-              <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
-              {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
-              {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
-              <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
-                {p.fichaTecnicaData ? (
-                  <div className="flex items-center gap-1.5">
-                    <a href={p.fichaTecnicaData} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
-                      <FileText size={13} /> Ficha técnica
-                    </a>
-                    <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">
-                      <X size={12} style={{ color: MUTED }} />
-                    </button>
-                  </div>
-                ) : (
-                  <span className="text-xs" style={{ color: MUTED }}>Sin ficha técnica</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+        <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
       )}
     </div>
   );
@@ -2800,6 +2943,19 @@ function CotizacionForm({ productos, onSave }) {
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+
+  // Agrupa el selector de productos por categoría (categoriaPrincipal > subcategoria > ...)
+  // para que un catálogo grande siga siendo navegable en vez de una lista plana larguísima.
+  const productosPorGrupo = useMemo(() => {
+    const grupos = new Map();
+    for (const p of productos) {
+      const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
+      const key = path || "Otros";
+      if (!grupos.has(key)) grupos.set(key, []);
+      grupos.get(key).push(p);
+    }
+    return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [productos]);
 
   const handleProducto = (id) => {
     setProductoId(id);
@@ -2860,7 +3016,11 @@ function CotizacionForm({ productos, onSave }) {
         <Field label="Producto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
             <option value="">Seleccionar...</option>
-            {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            {productosPorGrupo.map(([grupo, items]) => (
+              <optgroup key={grupo} label={grupo}>
+                {items.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </optgroup>
+            ))}
           </Select>
         </Field>
         {productoSel && (

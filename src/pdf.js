@@ -369,7 +369,7 @@ export async function generateCotizacionPdf(cotizacion) {
     cx2 += instDescW;
     rect(cx2, y - instH, colTotal, instH, { border: BORDER });
     const instStr = instalacionMonto === 0 ? "-" : fmtNum(instalacionMonto);
-    centerText(instStr, cx2, y, colTotal, instH, { size: 8, bold: true, color: ACCENT });
+    text(instStr, cx2 + colTotal - 4 - bold.widthOfTextAtSize(instStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
     y -= instH;
   }
 

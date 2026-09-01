@@ -3,14 +3,14 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
-import { downloadCotizacionPdf, downloadFichasTecnicasPdf } from "./pdf";
+import { downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf } from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
 const INK = "#1C1E20";
@@ -101,6 +101,7 @@ const COLLECTIONS = {
   ventasComprometidas: "ventasComprometidas",
   productos: "productos",
   cotizaciones: "cotizaciones",
+  presupuestosReparacion: "presupuestosReparacion",
 };
 
 // ---------- Helpers ----------
@@ -532,6 +533,7 @@ export default function App() {
   const [comprometidas, setComprometidas] = useState([]);
   const [productos, setProductos] = useState([]);
   const [cotizaciones, setCotizaciones] = useState([]);
+  const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -556,6 +558,7 @@ export default function App() {
       [COLLECTIONS.ventasComprometidas]: setComprometidas,
       [COLLECTIONS.productos]: setProductos,
       [COLLECTIONS.cotizaciones]: setCotizaciones,
+      [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -741,6 +744,21 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const addPresupuestoReparacion = (data) => addItem(COLLECTIONS.presupuestosReparacion, data);
+  const deletePresupuestoReparacion = (id) => deleteItem(COLLECTIONS.presupuestosReparacion, id);
+
+  const handleDescargarPresupuestoPdf = async (presupuesto) => {
+    setDescargandoId(presupuesto.id + ":reparacion");
+    setPdfError("");
+    try {
+      await downloadPresupuestoReparacionPdf(presupuesto);
+    } catch (e) {
+      console.error("Error generando PDF de presupuesto de reparación", e);
+      setPdfError("No se pudo generar el PDF del presupuesto. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
 
@@ -895,6 +913,11 @@ export default function App() {
     return cotizaciones.filter((c) => !q || [c.cliente, c.obra, c.categoria].some((v) => (v || "").toLowerCase().includes(q)));
   }, [cotizaciones, query]);
 
+  const filteredPresupuestosReparacion = useMemo(() => {
+    const q = query.toLowerCase();
+    return presupuestosReparacion.filter((p) => !q || [p.cliente, p.obra, p.equipoAfectado].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [presupuestosReparacion, query]);
+
   const filteredComprometidas = useMemo(() => {
     const q = query.toLowerCase();
     return comprometidas.filter((c) => !q || [c.razonSocial, c.obra, c.modelo].some((v) => (v || "").toLowerCase().includes(q)));
@@ -948,6 +971,7 @@ export default function App() {
     { key: "repuestos", label: "Repuestos", icon: Boxes },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
+    { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
   ];
 
   if (loading) {
@@ -1223,6 +1247,17 @@ export default function App() {
             pdfError={pdfError}
           />
         )}
+
+        {tab === "presupuestos-reparacion" && (
+          <PresupuestosReparacionView
+            presupuestos={filteredPresupuestosReparacion} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("presupuesto-reparacion")}
+            onDelete={deletePresupuestoReparacion}
+            onDescargarPdf={handleDescargarPresupuestoPdf}
+            descargandoId={descargandoId}
+            pdfError={pdfError}
+          />
+        )}
         </div>
       </div>
 
@@ -1261,6 +1296,12 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "cotizacion"} onClose={() => setDrawer(null)} title="Nueva cotización">
         <CotizacionForm productos={productos} onSave={(d) => { addCotizacion(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "presupuesto-reparacion"} onClose={() => setDrawer(null)} title="Nuevo presupuesto de reparación">
+        <PresupuestoReparacionForm
+          productos={productos.filter((p) => p.categoriaPrincipal === "Repuestos")}
+          onSave={(d) => { addPresupuestoReparacion(d); setDrawer(null); }}
+        />
       </Drawer>
       <Drawer open={!!gestion} onClose={() => setGestion(null)} title={gestion ? `Seguimiento — ${gestion.field === "Service1" ? "Service 1 (12m)" : "Service 2 (24m)"}` : ""}>
         {gestion && (
@@ -3511,6 +3552,204 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpd
             ))}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Presupuestos de reparación / repuestos ----------
+// Vía totalmente separada de Cotizaciones: se arma con productos de la carpeta
+// "Repuestos" del catálogo y genera un PDF con el modelo "Presupuesto de Reparación".
+function PresupuestoReparacionForm({ productos, onSave }) {
+  const [fecha, setFecha] = useState(todayISO());
+  const [cliente, setCliente] = useState("");
+  const [obra, setObra] = useState("");
+  const [equipoAfectado, setEquipoAfectado] = useState("");
+  const [fallaReportada, setFallaReportada] = useState("");
+  const [lineas, setLineas] = useState([]);
+  const [productoId, setProductoId] = useState("");
+  const [cantidadNueva, setCantidadNueva] = useState(1);
+  const [costoNuevo, setCostoNuevo] = useState("");
+  const [incluirInstalacion, setIncluirInstalacion] = useState(false);
+  const [instalacionMonto, setInstalacionMonto] = useState("");
+  const [plazoEstimado, setPlazoEstimado] = useState("A confirmar según disponibilidad de repuesto y agenda del técnico.");
+  const [error, setError] = useState("");
+
+  const productoSel = productos.find((p) => p.id === productoId);
+  const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.costoUnitario) || 0), 0);
+
+  const productosPorGrupo = useMemo(() => {
+    const grupos = new Map();
+    for (const p of productos) {
+      const key = p.subcategoria || "Otros";
+      if (!grupos.has(key)) grupos.set(key, []);
+      grupos.get(key).push(p);
+    }
+    return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [productos]);
+
+  const handleProducto = (id) => {
+    setProductoId(id);
+    const p = productos.find((x) => x.id === id);
+    setCantidadNueva(1);
+    setCostoNuevo(p ? String(Number(p.precioLista) || 0) : "");
+  };
+
+  const agregarLinea = () => {
+    if (!productoSel) {
+      setError("Elegí un repuesto del catálogo.");
+      return;
+    }
+    setLineas([...lineas, {
+      item: productoSel.descripcion || productoSel.nombre,
+      descripcion: productoSel.descripcion || "",
+      modeloEquipo: productoSel.subcategoria2 || "",
+      cantidad: Number(cantidadNueva) || 1, costoUnitario: Number(costoNuevo) || 0,
+    }]);
+    setProductoId("");
+    setCantidadNueva(1);
+    setCostoNuevo("");
+    setError("");
+  };
+
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  const submit = () => {
+    if (!cliente.trim()) {
+      setError("Ingresá el cliente.");
+      return;
+    }
+    if (lineas.length === 0) {
+      setError("Agregá al menos un repuesto.");
+      return;
+    }
+    onSave({
+      fecha, cliente, obra, equipoAfectado, fallaReportada, lineas,
+      incluirInstalacion, instalacionMonto: Number(instalacionMonto) || 0,
+      plazoEstimado,
+    });
+  };
+
+  return (
+    <div>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
+      <Field label="Equipo / Producto afectado"><TextInput value={equipoAfectado} onChange={(e) => setEquipoAfectado(e.target.value)} placeholder="Ej: Horno AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Falla reportada"><Textarea value={fallaReportada} onChange={(e) => setFallaReportada(e.target.value)} placeholder="Descripción de la falla que reportó el cliente" /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Repuestos</p>
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <Field label="Repuesto del catálogo">
+          <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
+            <option value="">Seleccionar...</option>
+            {productosPorGrupo.map(([grupo, items]) => (
+              <optgroup key={grupo} label={grupo}>
+                {items.map((p) => <option key={p.id} value={p.id}>{p.descripcion || p.nombre} — {p.subcategoria2}</option>)}
+              </optgroup>
+            ))}
+          </Select>
+        </Field>
+        {productoSel && (
+          <>
+            <div className="flex gap-2">
+              <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
+              <Field label="Costo x unidad U$S"><TextInput type="number" value={costoNuevo} onChange={(e) => setCostoNuevo(e.target.value)} /></Field>
+            </div>
+            <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar al presupuesto</SecondaryButton>
+          </>
+        )}
+      </div>
+
+      {lineas.length > 0 && (
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {lineas.map((l, i) => (
+            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{l.item}</span>
+                <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.costoUnitario).toLocaleString()} = U$S {(l.cantidad * l.costoUnitario).toLocaleString()}</span>
+              </div>
+              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+          <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <span>Subtotal</span><span>U$S {subtotal.toLocaleString()}</span>
+          </div>
+        </div>
+      )}
+
+      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+        <input type="checkbox" checked={incluirInstalacion} onChange={(e) => setIncluirInstalacion(e.target.checked)} />
+        Incluir instalación
+      </label>
+      {incluirInstalacion && (
+        <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
+      )}
+      {lineas.length > 0 && (
+        <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+          <span>Total final</span>
+          <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
+        </div>
+      )}
+
+      <Field label="Plazo estimado"><TextInput value={plazoEstimado} onChange={(e) => setPlazoEstimado(e.target.value)} /></Field>
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar presupuesto</PrimaryButton>
+    </div>
+  );
+}
+
+function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, descargandoId, pdfError }) {
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Presupuestos de reparación</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Para fallas fuera de garantía, con repuestos del catálogo — vía separada de las cotizaciones de venta.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <SearchBox value={query} onChange={onQuery} />
+          <PrimaryButton onClick={onNew}><Plus size={15} /> Nuevo presupuesto</PrimaryButton>
+        </div>
+      </div>
+
+      {pdfError && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{pdfError}</div>
+      )}
+
+      {presupuestos.length === 0 ? (
+        <EmptyState icon={Hammer} title="Todavía no hay presupuestos de reparación" subtitle="Usá el botón de arriba para armar el primero." />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {presupuestos.map((p) => {
+            const subtotal = (p.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.costoUnitario) || 0), 0);
+            const total = subtotal + (p.incluirInstalacion ? Number(p.instalacionMonto) || 0 : 0);
+            return (
+              <div key={p.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <div className="flex items-start justify-between mb-1">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: INK }}>{p.cliente}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>{p.obra} · {fmtDate(p.fecha)}</p>
+                  </div>
+                  <button onClick={() => onDelete(p.id)} className="p-1 rounded hover:bg-gray-100">
+                    <Trash2 size={13} style={{ color: MUTED }} />
+                  </button>
+                </div>
+                {p.equipoAfectado && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.equipoAfectado}</p>}
+                <p className="text-sm mt-2" style={{ color: INK }}>{(p.lineas || []).length} repuesto(s) · U$S {total.toLocaleString()}</p>
+                <button
+                  onClick={() => onDescargarPdf(p)}
+                  disabled={descargandoId === `${p.id}:reparacion`}
+                  className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1 mt-3"
+                  style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargandoId === `${p.id}:reparacion` ? 0.6 : 1 }}
+                >
+                  <Download size={13} /> {descargandoId === `${p.id}:reparacion` ? "Generando..." : "Descargar PDF"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

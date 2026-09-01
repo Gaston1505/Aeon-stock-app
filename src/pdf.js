@@ -477,3 +477,249 @@ export async function downloadFichasTecnicasPdf(cotizacion) {
   downloadBlob(bytes, nombre, "application/pdf");
   return true;
 }
+
+// ---------- Presupuesto de Reparación / Repuestos (vía separada de Cotizaciones) ----------
+const LEGAL_TEXT_REPARACION =
+  "Este presupuesto corresponde a una falla NO cubierta por la garantía de fábrica Aeon (ej. golpes, uso indebido, " +
+  "desgaste, u otras causas ajenas a defectos de fabricación). El trabajo se realizará únicamente una vez confirmada " +
+  "la aceptación de este presupuesto por parte del cliente. Todos los precios son en dólares e IVA incluido. " +
+  "Presupuesto válido por 15 días desde la fecha de emisión. La instalación es opcional y no siempre está a cargo " +
+  "de Aeon; de no incluirse, el repuesto se entrega para su instalación por terceros. Forma de pago sugerida: " +
+  "contado contra confirmación del trabajo realizado.";
+
+export async function generatePresupuestoReparacionPdf(presupuesto) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const lineas = presupuesto.lineas || [];
+
+  const colItem = 85;
+  const colModelo = 105;
+  const colCant = 35;
+  const colCosto = 75;
+  const colDescripcion = CONTENT_W - colItem - colModelo - colCant - colCosto;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 6.5, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+
+  // Header
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+
+  const fechaLabel = "Fecha:";
+  const fechaVal = fmtFecha(presupuesto.fecha);
+  text(fechaLabel, PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
+  text(fechaVal, PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+
+  y -= 14;
+
+  // Title bar
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const title = "PRESUPUESTO DE REPARACIÓN / REPUESTOS";
+  const titleW = bold.widthOfTextAtSize(title, 9.5);
+  text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
+  y -= 18;
+
+  // Cliente / Obra / Equipo afectado
+  const rowH = 16;
+  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+  text("Cliente:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text(presupuesto.cliente || "", MARGIN + 60, y - 11, { size: 8 });
+  y -= rowH;
+  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+  text("Obra:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text(presupuesto.obra || "", MARGIN + 60, y - 11, { size: 8 });
+  y -= rowH;
+  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+  text("Equipo / Producto afectado:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text(presupuesto.equipoAfectado || "", MARGIN + 155, y - 11, { size: 8 });
+  y -= rowH;
+
+  // Falla reportada (alto dinámico según el texto)
+  const fallaLines = wrapText(font, presupuesto.fallaReportada || "", 7, CONTENT_W - 90);
+  const fallaH = Math.max(fallaLines.length * 9 + 6, 16);
+  rect(MARGIN, y - fallaH, 80, fallaH, { border: BORDER });
+  text("Falla reportada:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
+  rect(MARGIN + 80, y - fallaH, CONTENT_W - 80, fallaH, { border: BORDER });
+  fallaLines.forEach((line, i) => text(line, MARGIN + 84, y - 11 - i * 9, { size: 7 }));
+  y -= fallaH;
+
+  y -= 6;
+
+  // Tabla: Ítem | Descripción | Modelo del equipo | Cant. | Costo x Unidad U$S
+  function drawTableHeader() {
+    const startX = MARGIN;
+    rect(startX, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+    let cx = startX;
+    const headers = [
+      ["Ítem", colItem], ["Descripción", colDescripcion], ["Modelo del equipo", colModelo],
+      ["Cant.", colCant], ["Costo x Unidad U$S", colCosto],
+    ];
+    headers.forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += w;
+    });
+    y -= 20;
+  }
+  drawTableHeader();
+
+  let subtotal = 0;
+  for (const linea of lineas) {
+    const cant = Number(linea.cantidad) || 0;
+    const costo = Number(linea.costoUnitario) || 0;
+    subtotal += cant * costo;
+
+    const descLines = wrapText(font, linea.descripcion, 6.5, colDescripcion - 6);
+    const rowH2 = Math.max(descLines.length * 8 + 6, 22);
+    ensureSpace(rowH2 + 20);
+    if (y === PAGE_H - MARGIN) drawTableHeader();
+
+    let cx = MARGIN;
+    rect(cx, y - rowH2, colItem, rowH2, { border: BORDER });
+    centerText(linea.item || "", cx, y, colItem, rowH2);
+    cx += colItem;
+
+    rect(cx, y - rowH2, colDescripcion, rowH2, { border: BORDER });
+    const descBlockH = descLines.length * 8;
+    const descTop = y - (rowH2 - descBlockH) / 2 - 6;
+    descLines.forEach((line, i) => text(line, cx + 3, descTop - i * 8, { size: 6.5 }));
+    cx += colDescripcion;
+
+    rect(cx, y - rowH2, colModelo, rowH2, { border: BORDER });
+    centerText(linea.modeloEquipo || "", cx, y, colModelo, rowH2);
+    cx += colModelo;
+
+    rect(cx, y - rowH2, colCant, rowH2, { border: BORDER });
+    centerText(String(cant), cx, y, colCant, rowH2);
+    cx += colCant;
+
+    rect(cx, y - rowH2, colCosto, rowH2, { border: BORDER });
+    centerText(fmtNum(costo), cx, y, colCosto, rowH2);
+
+    y -= rowH2;
+  }
+
+  ensureSpace(150);
+
+  const incluirInstalacion = !!presupuesto.incluirInstalacion;
+  const instalacionMonto = incluirInstalacion ? Number(presupuesto.instalacionMonto) || 0 : 0;
+  const totalFinal = subtotal + instalacionMonto;
+
+  // Sub-total
+  const colTotalLedger = colCosto;
+  rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { fill: ACCENT_LIGHT });
+  text("Sub-total", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
+  rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { fill: ACCENT_LIGHT });
+  const subStr = fmtNum(subtotal);
+  text(subStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+  y -= 16;
+
+  // Instalación (opcional)
+  if (incluirInstalacion) {
+    rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { border: BORDER });
+    text("Instalación (opcional)", MARGIN + 4, y - 11, { size: 8 });
+    rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { border: BORDER });
+    const instStr = fmtNum(instalacionMonto);
+    text(instStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(instStr, 8), y - 11, { size: 8 });
+    y -= 16;
+  }
+
+  // Total IVA incluido + Dólares
+  rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { border: BORDER });
+  text("TOTAL IVA INCLUIDO", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { fill: ACCENT_LIGHT });
+  const totalStr = fmtNum(totalFinal);
+  text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+  y -= 16;
+
+  rect(MARGIN, y - 16, CONTENT_W, 16, { border: BORDER });
+  text("Dólares Americanos:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
+  text(montoEnLetras(totalFinal), MARGIN + 110, y - 11, { size: 7.5 });
+  y -= 24;
+
+  // Plazo estimado
+  const plazoLines = wrapText(font, presupuesto.plazoEstimado || "", 8, CONTENT_W - 90);
+  const plazoH = Math.max(plazoLines.length * 10 + 6, 20);
+  rect(MARGIN, y - plazoH, CONTENT_W, plazoH, { border: BORDER });
+  text("Plazo estimado:", MARGIN + 4, y - 13, { bold: true, size: 8 });
+  plazoLines.forEach((line, i) => text(line, MARGIN + 90, y - 13 - i * 10, { size: 8 }));
+  y -= plazoH + 10;
+
+  // Texto legal
+  ensureSpace(60);
+  const legalLines = wrapText(font, LEGAL_TEXT_REPARACION, 6.5, CONTENT_W - 10);
+  const legalH = legalLines.length * 8 + 8;
+  rect(MARGIN, y - legalH, CONTENT_W, legalH, { border: BORDER });
+  legalLines.forEach((line, i) => text(line, MARGIN + 4, y - 10 - i * 8, { size: 6.5 }));
+  y -= legalH + 24;
+
+  // Aceptación del cliente
+  ensureSpace(80);
+  text("ACEPTACIÓN DEL CLIENTE", MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text("(confirmar antes de iniciar el trabajo)", MARGIN, y, { size: 7, color: MUTED });
+  y -= 36;
+
+  const clienteLineX = MARGIN;
+  const aeonLineX = PAGE_W - MARGIN - 160;
+  page.drawLine({ start: { x: clienteLineX, y }, end: { x: clienteLineX + 200, y }, thickness: 0.5, color: MUTED });
+  page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
+  y -= 11;
+  text("Firma / Aclaración / C.I. N°", clienteLineX, y, { size: 7.5 });
+  const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
+  text(COMPANY.firmante, aeonLineX + 80 - nameW / 2, y, { size: 8 });
+  y -= 12;
+  text("Fecha: ___/___/______", clienteLineX, y, { size: 7.5 });
+  const razW = font.widthOfTextAtSize(COMPANY.razonSocial, 7.5);
+  text(COMPANY.razonSocial, aeonLineX + 80 - razW / 2, y, { size: 7.5 });
+  y -= 9;
+  const rucW = font.widthOfTextAtSize(COMPANY.ruc, 7.5);
+  text(COMPANY.ruc, aeonLineX + 80 - rucW / 2, y, { size: 7.5 });
+
+  return pdf.save();
+}
+
+export async function downloadPresupuestoReparacionPdf(presupuesto) {
+  const bytes = await generatePresupuestoReparacionPdf(presupuesto);
+  const nombre = `Presupuesto_Reparacion_${(presupuesto.cliente || "cliente").replace(/\s+/g, "_")}_${presupuesto.fecha || ""}.pdf`;
+  downloadBlob(bytes, nombre, "application/pdf");
+}

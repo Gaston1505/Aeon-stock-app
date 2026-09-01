@@ -165,10 +165,10 @@ export async function generateCotizacionPdf(cotizacion) {
   // table cell whose top-left-ish corner is (cellX, cellTopY) with cellTopY
   // being the current "y" cursor (top of the row) — matches how rows are drawn.
   function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
-    const { size = 6.5, bold: isBold = false } = opts;
+    const { size = 6.5, bold: isBold = false, color } = opts;
     const f = isBold ? bold : font;
     const w = f.widthOfTextAtSize(str, size);
-    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold });
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
   }
   // Scales the image to fit entirely inside the cell (preserving aspect
   // ratio, like CSS object-fit: contain) and centers it — never distorts it.
@@ -369,7 +369,7 @@ export async function generateCotizacionPdf(cotizacion) {
     cx2 += instDescW;
     rect(cx2, y - instH, colTotal, instH, { border: BORDER });
     const instStr = instalacionMonto === 0 ? "-" : fmtNum(instalacionMonto);
-    centerText(instStr, cx2, y, colTotal, instH, { size: 8, bold: true });
+    centerText(instStr, cx2, y, colTotal, instH, { size: 8, bold: true, color: ACCENT });
     y -= instH;
   }
 

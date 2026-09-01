@@ -12,12 +12,12 @@ import {
 } from "firebase/firestore";
 import { downloadCotizacionPdf, downloadFichasTecnicasPdf } from "./pdf";
 
-// ---------- Design tokens ----------
-const INK = "#16202A";
-const MUTED = "#64748B";
-const ACCENT = "#1F3A5F";
-const ACCENT_LIGHT = "#E8EEF5";
-const BORDER = "#E2E6EB";
+// ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
+const INK = "#1C1E20";
+const MUTED = "#686D73";
+const ACCENT = "#565A5F";
+const ACCENT_LIGHT = "#EBEBEC";
+const BORDER = "#E4E5E5";
 const BG = "#F5F6F8";
 
 const STATUS = {

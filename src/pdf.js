@@ -16,11 +16,12 @@ const LEGAL_TEXT =
   "Garantía 1 año por daños de fábrica desde su instalación, extendible a 36 meses, siempre y cuando se realice " +
   "servicio de mantenimiento oficial antes de los 12 y 24 meses respectivamente desde su instalacion.";
 
-const ACCENT = rgb(0x1f / 255, 0x3a / 255, 0x5f / 255);
-const ACCENT_LIGHT = rgb(0xe8 / 255, 0xee / 255, 0xf5 / 255);
-const BORDER = rgb(0xe2 / 255, 0xe6 / 255, 0xeb / 255);
-const INK = rgb(0x16 / 255, 0x20 / 255, 0x2a / 255);
-const MUTED = rgb(0x64 / 255, 0x74 / 255, 0x8b / 255);
+// Paleta derivada del gris del logo AEON (#686D73), igual que en la app.
+const ACCENT = rgb(0x56 / 255, 0x5a / 255, 0x5f / 255);
+const ACCENT_LIGHT = rgb(0xeb / 255, 0xeb / 255, 0xec / 255);
+const BORDER = rgb(0xe4 / 255, 0xe5 / 255, 0xe5 / 255);
+const INK = rgb(0x1c / 255, 0x1e / 255, 0x20 / 255);
+const MUTED = rgb(0x68 / 255, 0x6d / 255, 0x73 / 255);
 const WHITE = rgb(1, 1, 1);
 
 // ---------- Número a letras (Español) ----------

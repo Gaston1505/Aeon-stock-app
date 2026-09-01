@@ -2750,7 +2750,7 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start gap-3 mb-2">
         {p.foto ? (
-          <img src={p.foto} alt={p.nombre} className="rounded border shrink-0" style={{ width: 56, height: 56, objectFit: "cover", borderColor: BORDER }} />
+          <img src={p.foto} alt={p.nombre} className="rounded border shrink-0" style={{ width: 56, height: 56, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
         ) : (
           <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 56, height: 56, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
             <Tag size={20} style={{ color: MUTED }} />

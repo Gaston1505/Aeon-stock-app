@@ -780,8 +780,19 @@ export default function App() {
     try {
       const buffer = await file.arrayBuffer();
       const { productos: nuevos, errores } = parseCatalogoExcel(buffer);
-      for (const p of nuevos) await addItem(COLLECTIONS.productos, p);
-      let msg = `${nuevos.length} producto(s) importado(s).`;
+      let ok = 0;
+      const fallidos = [];
+      for (const p of nuevos) {
+        try {
+          await addDoc(collection(db, COLLECTIONS.productos), { ...p, createdAt: Date.now() });
+          ok++;
+        } catch (e) {
+          console.error("Firestore add error", COLLECTIONS.productos, e);
+          fallidos.push(p.nombre);
+        }
+      }
+      let msg = `${ok} de ${nuevos.length} producto(s) importado(s).`;
+      if (fallidos.length) msg += ` Fallaron: ${fallidos.join(", ")} — probá de nuevo con esos.`;
       if (errores.length) msg += ` ${errores.length} fila(s) omitida(s) por no tener nombre/código.`;
       setImportResultado(msg);
     } catch (e) {

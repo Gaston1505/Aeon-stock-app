@@ -930,7 +930,7 @@ export default function App() {
         <button onClick={() => setNavOpen(true)} className="p-1 -ml-1 rounded hover:bg-gray-100">
           <Menu size={20} style={{ color: INK }} />
         </button>
-        <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-6 w-auto" />
+        <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-8 w-auto" />
       </div>
 
       <div className="flex w-full">
@@ -945,7 +945,7 @@ export default function App() {
           style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}
         >
           <div className="px-4 py-4 border-b" style={{ borderColor: BORDER }}>
-            <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-9 w-auto mb-1" />
+            <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-14 w-auto mb-1" />
             <p className="text-xs" style={{ color: MUTED }}>Control de stock</p>
           </div>
           <nav className="flex-1 py-2 overflow-y-auto">

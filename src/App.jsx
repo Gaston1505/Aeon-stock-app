@@ -3095,7 +3095,19 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
 
 function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado }) {
   const fileInputRef = useRef(null);
-  const arbol = useMemo(() => construirArbolCategorias(productos), [productos]);
+  const [modo, setModo] = useState("productos"); // "productos" | "repuestos" — carpetas totalmente separadas
+
+  const productosFiltrados = useMemo(
+    () => productos.filter((p) => (p.categoriaPrincipal === "Repuestos") === (modo === "repuestos")),
+    [productos, modo]
+  );
+  const arbol = useMemo(() => {
+    const a = construirArbolCategorias(productosFiltrados);
+    // En modo repuestos todos comparten categoriaPrincipal="Repuestos" — ese nivel es redundante
+    // con el selector de arriba, así que se muestra directamente su contenido.
+    if (modo === "repuestos" && a.hijos && a.hijos.length === 1 && a.hijos[0].valor === "Repuestos") return a.hijos[0];
+    return a;
+  }, [productosFiltrados, modo]);
 
   const handleFileChange = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -3123,12 +3135,31 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
         </div>
       </div>
 
+      <div className="flex gap-2 mb-4">
+        {[{ key: "productos", label: "Productos" }, { key: "repuestos", label: "Repuestos" }].map((op) => (
+          <button
+            key={op.key}
+            onClick={() => setModo(op.key)}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={modo === op.key
+              ? { backgroundColor: ACCENT, color: "#FFFFFF" }
+              : { backgroundColor: "#FFFFFF", color: MUTED, border: `0.5px solid ${BORDER}` }}
+          >
+            {op.label}
+          </button>
+        ))}
+      </div>
+
       {importResultado && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultado}</div>
       )}
 
-      {productos.length === 0 ? (
-        <EmptyState icon={Tag} title="Todavía no hay productos cargados" subtitle="Usá el botón de arriba para cargar el primero." />
+      {productosFiltrados.length === 0 ? (
+        <EmptyState
+          icon={Tag}
+          title={modo === "repuestos" ? "Todavía no hay repuestos cargados" : "Todavía no hay productos cargados"}
+          subtitle="Usá el botón de arriba para cargar el primero."
+        />
       ) : (
         <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
       )}

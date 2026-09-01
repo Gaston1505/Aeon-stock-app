@@ -923,6 +923,7 @@ export default function App() {
 
   const NAV = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
+    { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
     { key: "playa", label: "Zona de playa", icon: Inbox },
     { key: "equipos", label: "Maestro de equipos", icon: Package },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
@@ -1004,6 +1005,10 @@ export default function App() {
             playa={playa} muestras={muestras} repuestos={repuestos} ventasCerradas={ventasCerradas}
             onNavigate={setTab}
           />
+        )}
+
+        {tab === "panel" && (
+          <PanelView ventasCerradas={ventasCerradas} cotizaciones={cotizaciones} comprometidas={comprometidas} />
         )}
 
         {tab === "playa" && (
@@ -1567,6 +1572,198 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
       </div>
 
       <VentasCerradasPanel ventasCerradas={ventasCerradas} />
+    </div>
+  );
+}
+
+// ---------- Panel de indicadores ----------
+const MESES_LABEL = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+function mesPrefijo(fecha) {
+  return fecha ? fecha.slice(0, 7) : ""; // "YYYY-MM"
+}
+function sumarMonto(fechaDesdeIncl, fechaHastaExcl, lista) {
+  return lista.reduce((acc, x) => {
+    if (!x.fecha || x.fecha < fechaDesdeIncl || x.fecha >= fechaHastaExcl) return acc;
+    return acc + (Number(x.monto) || 0);
+  }, 0);
+}
+
+function IndicadorCard({ label, value, sub, subColor }) {
+  return (
+    <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <p className="text-xs" style={{ color: MUTED }}>{label}</p>
+      <p className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</p>
+      {sub && <p className="text-xs mt-0.5" style={{ color: subColor || MUTED }}>{sub}</p>}
+    </div>
+  );
+}
+
+function GraficoEstacionalidad({ ventasCerradas }) {
+  const anios = useMemo(() => {
+    const set = new Set(ventasCerradas.map((v) => Number(mesPrefijo(v.fecha).slice(0, 4))).filter(Boolean));
+    if (set.size === 0) set.add(new Date().getFullYear());
+    return [...set].sort((a, b) => b - a);
+  }, [ventasCerradas]);
+  const [anio, setAnio] = useState(anios[0]);
+  const [codigo, setCodigo] = useState("");
+
+  const codigos = useMemo(() => {
+    const set = new Set(ventasCerradas.map((v) => v.codigo).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [ventasCerradas]);
+
+  const datos = useMemo(() => {
+    const meses = Array(12).fill(0);
+    for (const v of ventasCerradas) {
+      if (!v.fecha) continue;
+      const [y, m] = v.fecha.split("-");
+      if (Number(y) !== anio) continue;
+      if (codigo && v.codigo !== codigo) continue;
+      meses[Number(m) - 1] += Number(v.cantidad) || 0;
+    }
+    return meses;
+  }, [ventasCerradas, anio, codigo]);
+
+  const max = Math.max(1, ...datos);
+  const mesPico = datos.indexOf(Math.max(...datos));
+  const hayVentas = datos.some((v) => v > 0);
+
+  return (
+    <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <p className="text-sm font-semibold" style={{ color: INK }}>Estacionalidad de ventas</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Unidades vendidas por mes — para detectar la época fuerte de cada producto.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div style={{ width: 90 }}>
+            <Select value={anio} onChange={(e) => setAnio(Number(e.target.value))}>
+              {anios.map((a) => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </div>
+          <div style={{ width: 180 }}>
+            <Select value={codigo} onChange={(e) => setCodigo(e.target.value)}>
+              <option value="">Todos los productos</option>
+              {codigos.map((c) => <option key={c} value={c}>{c}</option>)}
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      {!hayVentas ? (
+        <p className="text-sm py-6 text-center" style={{ color: MUTED }}>Sin ventas registradas para {anio}{codigo ? ` de ${codigo}` : ""}.</p>
+      ) : (
+        <>
+          <div className="flex items-end gap-1.5" style={{ height: 140 }}>
+            {datos.map((v, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                <div
+                  className="w-full rounded-t"
+                  style={{ height: `${Math.max(2, (v / max) * 100)}%`, backgroundColor: i === mesPico && v > 0 ? ACCENT : ACCENT_LIGHT }}
+                  title={`${MESES_LABEL[i]}: ${v} unidad(es)`}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1.5 mt-1.5">
+            {MESES_LABEL.map((m, i) => (
+              <p key={m} className="flex-1 text-center text-[10px]" style={{ color: i === mesPico && datos[i] > 0 ? ACCENT : MUTED, fontWeight: i === mesPico ? 600 : 400 }}>{m}</p>
+            ))}
+          </div>
+          {datos[mesPico] > 0 && (
+            <p className="text-xs mt-3" style={{ color: ACCENT }}>
+              Mes con más ventas: <strong>{MESES_LABEL[mesPico]}</strong> ({datos[mesPico]} unidad(es)) — buen momento para reforzar stock y campañas con anticipación.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PanelView({ ventasCerradas, cotizaciones, comprometidas }) {
+  const hoy = todayISO();
+  const mesActual = mesPrefijo(hoy);
+  const [yActual, mActual] = mesActual.split("-").map(Number);
+  const mesAnteriorDate = new Date(yActual, mActual - 2, 1);
+  const mesAnterior = `${mesAnteriorDate.getFullYear()}-${String(mesAnteriorDate.getMonth() + 1).padStart(2, "0")}`;
+  const inicioMesActual = `${mesActual}-01`;
+  const inicioMesSiguiente = new Date(yActual, mActual, 1);
+  const finMesActual = `${inicioMesSiguiente.getFullYear()}-${String(inicioMesSiguiente.getMonth() + 1).padStart(2, "0")}-01`;
+  const inicioMesAnterior = `${mesAnterior}-01`;
+
+  const ventasDirectas = ventasCerradas.filter((v) => Number(v.monto) > 0);
+  const ventasMes = sumarMonto(inicioMesActual, finMesActual, ventasDirectas) + sumarMonto(inicioMesActual, finMesActual, comprometidas);
+  const ventasMesAnt = sumarMonto(inicioMesAnterior, inicioMesActual, ventasDirectas) + sumarMonto(inicioMesAnterior, inicioMesActual, comprometidas);
+  const variacion = ventasMesAnt > 0 ? ((ventasMes - ventasMesAnt) / ventasMesAnt) * 100 : null;
+
+  const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
+  const resumenCot = useMemo(() => resumirCotizaciones(grupos), [grupos]);
+  const totalGanadaPerdida = resumenCot.Ganada.n + resumenCot.Perdida.n;
+  const tasaConversion = totalGanadaPerdida > 0 ? (resumenCot.Ganada.n / totalGanadaPerdida) * 100 : null;
+
+  const hace90 = new Date(Date.parse(hoy) - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const topProductos = useMemo(() => {
+    const map = new Map();
+    for (const v of ventasCerradas) {
+      if (!v.fecha || v.fecha < hace90) continue;
+      const key = v.codigo || v.modelo || "—";
+      map.set(key, (map.get(key) || 0) + (Number(v.cantidad) || 0));
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [ventasCerradas, hace90]);
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>Panel de indicadores</h2>
+      <p className="text-sm mb-4" style={{ color: MUTED }}>
+        Un vistazo rápido del negocio. "Ventas del mes" suma salidas directas con monto cargado + el valor total de las ventas comprometidas del mes.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <IndicadorCard
+          label="Ventas del mes"
+          value={`U$S ${ventasMes.toLocaleString()}`}
+          sub={variacion === null ? "Sin datos del mes anterior" : `${variacion >= 0 ? "▲" : "▼"} ${Math.abs(variacion).toFixed(0)}% vs. mes anterior`}
+          subColor={variacion === null ? MUTED : variacion >= 0 ? "#15803D" : "#B91C1C"}
+        />
+        <IndicadorCard
+          label="Conversión de cotizaciones"
+          value={tasaConversion === null ? "—" : `${tasaConversion.toFixed(0)}%`}
+          sub={`${resumenCot.Ganada.n} ganada(s) · ${resumenCot.Perdida.n} perdida(s)`}
+        />
+        <IndicadorCard
+          label="Cotizaciones en juego"
+          value={resumenCot.Pendiente.n}
+          sub={`U$S ${resumenCot.Pendiente.total.toLocaleString()} pendientes de definir`}
+        />
+        <IndicadorCard
+          label="Producto más vendido (90 días)"
+          value={topProductos[0] ? topProductos[0][0] : "—"}
+          sub={topProductos[0] ? `${topProductos[0][1]} unidad(es)` : "Sin ventas registradas"}
+        />
+      </div>
+
+      {topProductos.length > 0 && (
+        <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <p className="text-sm font-semibold mb-3" style={{ color: INK }}>Top 5 productos — últimos 90 días</p>
+          <div className="space-y-2">
+            {topProductos.map(([cod, cant], i) => (
+              <div key={cod} className="flex items-center gap-3">
+                <span className="text-xs w-4" style={{ color: MUTED }}>{i + 1}</span>
+                <span className="text-xs flex-1" style={{ color: INK }}>{cod}</span>
+                <div className="flex-1 rounded-full overflow-hidden" style={{ backgroundColor: ACCENT_LIGHT, height: 6 }}>
+                  <div style={{ width: `${(cant / topProductos[0][1]) * 100}%`, backgroundColor: ACCENT, height: 6 }} />
+                </div>
+                <span className="text-xs w-16 text-right" style={{ color: MUTED }}>{cant} un.</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <GraficoEstacionalidad ventasCerradas={ventasCerradas} />
     </div>
   );
 }

@@ -401,6 +401,7 @@ export default function App() {
   const [gestion, setGestion] = useState(null);
   const [fotoView, setFotoView] = useState(null);
   const [retiroTarget, setRetiroTarget] = useState(null);
+  const [pagoTarget, setPagoTarget] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [descargandoId, setDescargandoId] = useState(null);
@@ -546,6 +547,21 @@ export default function App() {
 
   // Cierre manual: el usuario confirma que ya no hay más que retirar de esta reserva.
   const cerrarComprometida = (id) => updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", fechaCierre: todayISO() });
+
+  // Cobro: independiente del retiro de mercadería — se puede cobrar sin haber entregado,
+  // o entregar sin haber cobrado del todo. Se guarda como lista de pagos en la propia reserva.
+  const agregarPago = (id, data) => {
+    const c = comprometidas.find((x) => x.id === id);
+    if (!c) return;
+    const pagos = [...(c.pagos || []), { fecha: data.fecha || todayISO(), monto: Number(data.monto) || 0, formaPago: data.formaPago || "" }];
+    updateItem(COLLECTIONS.ventasComprometidas, id, { pagos });
+  };
+  const quitarPago = (id, idx) => {
+    const c = comprometidas.find((x) => x.id === id);
+    if (!c) return;
+    const pagos = (c.pagos || []).filter((_, i) => i !== idx);
+    updateItem(COLLECTIONS.ventasComprometidas, id, { pagos });
+  };
 
   const addRepuesto = (data) => addItem(COLLECTIONS.repuestos, data);
   const deleteRepuesto = (id) => deleteItem(COLLECTIONS.repuestos, id);
@@ -886,6 +902,7 @@ export default function App() {
             onCancelar={cancelarComprometida}
             onRetirar={(id) => setRetiroTarget(id)}
             onCerrar={cerrarComprometida}
+            onPago={(id) => setPagoTarget(id)}
           />
         )}
 
@@ -1084,6 +1101,15 @@ export default function App() {
           <RetiroParcialForm
             comprometida={comprometidas.find((c) => c.id === retiroTarget)}
             onSave={(d) => { retirarParcial(retiroTarget, d); setRetiroTarget(null); }}
+          />
+        )}
+      </Drawer>
+      <Drawer open={!!pagoTarget} onClose={() => setPagoTarget(null)} title="Pagos">
+        {pagoTarget && (
+          <PagosForm
+            comprometida={comprometidas.find((c) => c.id === pagoTarget)}
+            onAgregar={(d) => agregarPago(pagoTarget, d)}
+            onQuitar={(idx) => quitarPago(pagoTarget, idx)}
           />
         )}
       </Drawer>
@@ -1536,7 +1562,7 @@ const COMPROMETIDA_BADGE = {
   Retirada: { color: "#15803D", bg: "#E9F7EF" },
 };
 
-function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, onRetirar, onCerrar }) {
+function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, onRetirar, onCerrar, onPago }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
   const totalMonto = pendientes.reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
 
@@ -1569,6 +1595,8 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
             const retirado = Number(c.cantidadRetirada) || 0;
             const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
             const badge = COMPROMETIDA_BADGE[c.estado] || COMPROMETIDA_BADGE.Comprometida;
+            const pagado = (c.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+            const saldoPago = Math.max(0, (Number(c.monto) || 0) - pagado);
             return (
               <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
                 <div className="flex items-start justify-between mb-1">
@@ -1586,6 +1614,15 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
                 <p className="text-xs mt-0.5" style={{ color: MUTED }}>
                   Monto: U$S {Number(c.monto || 0).toLocaleString()} · Entrega estimada: {fmtDate(c.fechaEntrega)}
                 </p>
+                <p className="text-xs mt-0.5" style={{ color: saldoPago > 0 ? "#B45309" : "#15803D" }}>
+                  Pagado: U$S {pagado.toLocaleString()} de U$S {Number(c.monto || 0).toLocaleString()}
+                  {saldoPago > 0 ? ` · saldo U$S ${saldoPago.toLocaleString()}` : " · pagado por completo"}
+                </p>
+                <div className="mt-2">
+                  <button onClick={() => onPago(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
+                    Pagos
+                  </button>
+                </div>
                 {c.estado === "Comprometida" && (
                   <div className="flex gap-2 mt-3">
                     <button onClick={() => onRetirar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
@@ -2281,6 +2318,67 @@ function RetiroParcialForm({ comprometida, onSave }) {
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Registrar retiro</PrimaryButton>
+    </div>
+  );
+}
+
+const FORMAS_PAGO = ["Efectivo", "Transferencia", "Cheque", "Tarjeta", "Otro"];
+
+function PagosForm({ comprometida, onAgregar, onQuitar }) {
+  const pagos = comprometida.pagos || [];
+  const pagado = pagos.reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+  const total = Number(comprometida.monto) || 0;
+  const saldo = Math.max(0, total - pagado);
+
+  const [fecha, setFecha] = useState(todayISO());
+  const [monto, setMonto] = useState("");
+  const [formaPago, setFormaPago] = useState(FORMAS_PAGO[0]);
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    const m = Number(monto) || 0;
+    if (m <= 0) {
+      setError("Ingresá un monto mayor a 0.");
+      return;
+    }
+    onAgregar({ fecha, monto: m, formaPago });
+    setMonto("");
+    setError("");
+  };
+
+  return (
+    <div>
+      <div className="mb-4 p-3 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+        <p className="text-sm font-medium" style={{ color: INK }}>{comprometida.razonSocial} — {comprometida.obra}</p>
+        <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+          Pagado U$S {pagado.toLocaleString()} de U$S {total.toLocaleString()} · saldo U$S {saldo.toLocaleString()}
+        </p>
+      </div>
+
+      {pagos.length > 0 && (
+        <div className="mb-4 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {pagos.map((p, i) => (
+            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div>
+                <span className="font-medium" style={{ color: INK }}>U$S {Number(p.monto).toLocaleString()}</span>
+                <span style={{ color: MUTED }}> · {p.formaPago} · {fmtDate(p.fecha)}</span>
+              </div>
+              <button onClick={() => onQuitar(i)}><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Registrar pago</p>
+      <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></Field>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Forma de pago">
+        <Select value={formaPago} onChange={(e) => setFormaPago(e.target.value)}>
+          {FORMAS_PAGO.map((f) => <option key={f} value={f}>{f}</option>)}
+        </Select>
+      </Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Agregar pago</PrimaryButton>
     </div>
   );
 }

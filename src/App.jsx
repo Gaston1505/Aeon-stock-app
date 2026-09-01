@@ -118,6 +118,63 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
+function calcularTotalCotizacion(c) {
+  const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+  const descuentoMonto = c.incluirDescuento
+    ? (c.descuentoEsPorcentaje ? subtotal * (Number(c.descuento) || 0) / 100 : Number(c.descuento) || 0)
+    : 0;
+  return subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
+}
+
+// Agrupa cotizaciones por Cliente (constructora/desarrolladora) y, dentro de cada uno,
+// por Obra — mismo texto de Obra = misma "cadena" que va mutando en el tiempo. La versión
+// más nueva de cada obra (ya vienen ordenadas desc por createdAt) es la "activa": la que
+// cuenta para los totales y cuyo estado se puede editar. Las anteriores quedan de historial.
+function agruparCotizaciones(cotizaciones) {
+  const porCliente = new Map();
+  for (const c of cotizaciones) {
+    const clienteKey = (c.cliente || "").trim() || "(Sin cliente)";
+    const obraKey = (c.obra || "").trim() || "(Sin obra)";
+    if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, new Map());
+    const porObra = porCliente.get(clienteKey);
+    if (!porObra.has(obraKey)) porObra.set(obraKey, []);
+    porObra.get(obraKey).push(c);
+  }
+  const clientes = [];
+  for (const [cliente, porObra] of porCliente) {
+    const obras = [];
+    for (const [obra, versiones] of porObra) obras.push({ obra, versiones, activa: versiones[0] });
+    obras.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
+    clientes.push({ cliente, obras });
+  }
+  clientes.sort((a, b) => {
+    const masReciente = (g) => Math.max(...g.obras.map((o) => o.activa.createdAt || 0));
+    return masReciente(b) - masReciente(a);
+  });
+  return clientes;
+}
+
+const ESTADOS_COTIZACION = ["Pendiente", "Ganada", "Perdida"];
+const ESTADO_COTIZACION_BADGE = {
+  Pendiente: { color: "#B45309", bg: "#FDF1E0" },
+  Ganada: { color: "#15803D", bg: "#E9F7EF" },
+  Perdida: { color: "#B91C1C", bg: "#FBEAEA" },
+};
+// Resume Total cotizado / Ganadas / Perdidas / Pendientes tomando solo la versión activa
+// de cada obra dentro de la lista de grupos de cliente que se le pase.
+function resumirCotizaciones(clientes) {
+  const activas = clientes.flatMap((g) => g.obras.map((o) => o.activa));
+  const resumen = { total: 0, Ganada: { n: 0, total: 0 }, Perdida: { n: 0, total: 0 }, Pendiente: { n: 0, total: 0 } };
+  for (const c of activas) {
+    const monto = calcularTotalCotizacion(c);
+    const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+    resumen.total += monto;
+    resumen[estado].n += 1;
+    resumen[estado].total += monto;
+  }
+  return resumen;
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return null;
   const today = new Date(todayISO() + "T00:00:00");
@@ -634,6 +691,7 @@ export default function App() {
 
   const addCotizacion = (data) => addItem(COLLECTIONS.cotizaciones, data);
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
+  const updateCotizacion = (id, patch) => updateItem(COLLECTIONS.cotizaciones, id, patch);
 
   const handleDescargarPdf = async (cotizacion) => {
     setDescargandoId(cotizacion.id + ":pdf");
@@ -1120,6 +1178,7 @@ export default function App() {
             cotizaciones={filteredCotizaciones} query={query} onQuery={setQuery}
             onNew={() => setDrawer("cotizacion")}
             onDelete={deleteCotizacion}
+            onUpdate={updateCotizacion}
             onDescargarPdf={handleDescargarPdf}
             onDescargarFichas={handleDescargarFichas}
             descargandoId={descargandoId}
@@ -1731,7 +1790,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
 }
 
 // ---------- Muestras ----------
-function ComentarioEditor({ value, onSave }) {
+function ComentarioEditor({ value, onSave, placeholder = "Ej: en muestra por defecto de pintura en la puerta" }) {
   const [draft, setDraft] = useState(value || "");
   const [editing, setEditing] = useState(false);
 
@@ -1748,7 +1807,7 @@ function ComentarioEditor({ value, onSave }) {
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setEditing(true)}
       onBlur={commit}
-      placeholder="Ej: en muestra por defecto de pintura en la puerta"
+      placeholder={placeholder}
       className="w-full text-xs px-2 py-1.5 rounded border outline-none"
       style={{ borderColor: editing ? ACCENT : BORDER, color: INK }}
     />
@@ -2723,6 +2782,7 @@ function CotizacionForm({ productos, onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
+  const [clienteReal, setClienteReal] = useState("");
   const [categoria, setCategoria] = useState("");
   const [comentarios, setComentarios] = useState("");
   const [incluirDescuento, setIncluirDescuento] = useState(false);
@@ -2782,15 +2842,19 @@ function CotizacionForm({ productos, onSave }) {
       incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
       incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
       fechaEntregaEstimada, formaPago, obs,
+      clienteReal, estado: "Pendiente",
     });
   };
 
   return (
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
-      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
+      <Field label="Cliente (constructora/desarrolladora — sale en el PDF)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Usá el mismo nombre si es una obra que ya cotizaste" /></Field>
       <Field label="Categoría (título de la cotización)"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: AIRES ACONDICIONADOS" /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos (no aparecen en el PDF)</p>
+      <Field label="Cliente real / inversor"><TextInput value={clienteReal} onChange={(e) => setClienteReal(e.target.value)} placeholder="Ej: Pepe Gómez" /></Field>
 
       <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
@@ -2865,13 +2929,152 @@ function CotizacionForm({ productos, onSave }) {
   );
 }
 
-function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDescargarPdf, onDescargarFichas, descargandoId, pdfError }) {
+function ResumenCotizaciones({ resumen }) {
+  return (
+    <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
+        <p className="text-xs" style={{ color: ACCENT }}>Total cotizado</p>
+        <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {resumen.total.toLocaleString()}</p>
+      </div>
+      {ESTADOS_COTIZACION.map((estado) => {
+        const badge = ESTADO_COTIZACION_BADGE[estado];
+        return (
+          <div key={estado} className="px-3 py-2 rounded-lg" style={{ backgroundColor: badge.bg }}>
+            <p className="text-xs" style={{ color: badge.color }}>{estado} ({resumen[estado].n})</p>
+            <p className="text-sm font-semibold" style={{ color: badge.color }}>U$S {resumen[estado].total.toLocaleString()}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
+  const total = calcularTotalCotizacion(c);
+  const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
+  const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: esActiva ? "#FFFFFF" : "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between mb-1">
+        <p className="text-xs" style={{ color: MUTED }}>{fmtDate(c.fecha)}</p>
+        <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
+          <Trash2 size={13} style={{ color: MUTED }} />
+        </button>
+      </div>
+      {c.categoria && <CodeTag>{c.categoria}</CodeTag>}
+      <p className="text-sm mt-2" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString()}</p>
+
+      {esActiva && (
+        <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Info interna — no aparece en el PDF</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div style={{ width: 110 }}>
+              <Select value={estado} onChange={(e) => onUpdate(c.id, { estado: e.target.value })}>
+                {ESTADOS_COTIZACION.map((op) => <option key={op} value={op}>{op}</option>)}
+              </Select>
+            </div>
+            <div className="flex-1 min-w-[140px]">
+              <ComentarioEditor value={c.clienteReal} onSave={(v) => onUpdate(c.id, { clienteReal: v })} placeholder="Cliente real / inversor" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-3 flex-wrap">
+        <button
+          onClick={() => onDescargarPdf(c)}
+          disabled={descargandoId === `${c.id}:pdf`}
+          className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
+          style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargandoId === `${c.id}:pdf` ? 0.6 : 1 }}
+        >
+          <Download size={13} /> {descargandoId === `${c.id}:pdf` ? "Generando..." : "Descargar PDF"}
+        </button>
+        {tieneFichas && (
+          <button
+            onClick={() => onDescargarFichas(c)}
+            disabled={descargandoId === `${c.id}:fichas`}
+            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+            style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:fichas` ? 0.6 : 1 }}
+          >
+            <FileText size={13} /> {descargandoId === `${c.id}:fichas` ? "Generando..." : "Fichas técnicas"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
+  const [expandido, setExpandido] = useState(false);
+  const historial = grupo.versiones.slice(1);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs font-medium" style={{ color: INK }}>{grupo.obra}</p>
+        {historial.length > 0 && (
+          <button onClick={() => setExpandido(!expandido)} className="text-xs" style={{ color: ACCENT }}>
+            {expandido ? "Ocultar historial" : `Ver historial (${historial.length})`}
+          </button>
+        )}
+      </div>
+      <CotizacionCard
+        c={grupo.activa} esActiva
+        onDelete={onDelete} onUpdate={onUpdate}
+        onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+      />
+      {expandido && (
+        <div className="mt-2 pl-3 border-l-2 space-y-2" style={{ borderColor: BORDER }}>
+          {historial.map((v) => (
+            <CotizacionCard
+              key={v.id} c={v} esActiva={false}
+              onDelete={onDelete} onUpdate={onUpdate}
+              onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
+  const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
+        <p className="text-sm font-semibold" style={{ color: INK }}>{grupo.cliente}</p>
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString()}</span>
+          {ESTADOS_COTIZACION.map((estado) => (
+            <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
+              {estado}: {resumen[estado].n}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {grupo.obras.map((o) => (
+          <ObraGrupo
+            key={o.obra} grupo={o}
+            onDelete={onDelete} onUpdate={onUpdate}
+            onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId, pdfError }) {
+  const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
+  const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
+
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold" style={{ color: INK }}>Cotizaciones</h2>
-          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Armá una cotización con productos del catálogo y descargala en PDF, con tu firma.</p>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Armá una cotización con productos del catálogo y descargala en PDF, con tu firma. Agrupadas por cliente y obra — una obra que volvés a cotizar queda como nueva versión de la misma, con historial.</p>
         </div>
         <div className="flex items-center gap-2">
           <SearchBox value={query} onChange={onQuery} />
@@ -2886,51 +3089,18 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onDes
       {cotizaciones.length === 0 ? (
         <EmptyState icon={FileSignature} title="Todavía no hay cotizaciones" subtitle="Usá el botón de arriba para armar la primera." />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {cotizaciones.map((c) => {
-            const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
-            const descuentoMonto = c.incluirDescuento
-              ? (c.descuentoEsPorcentaje ? subtotal * (Number(c.descuento) || 0) / 100 : Number(c.descuento) || 0)
-              : 0;
-            const totalFinal = subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
-            const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
-            return (
-              <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-                <div className="flex items-start justify-between mb-1">
-                  <div>
-                    <p className="text-sm font-medium" style={{ color: INK }}>{c.cliente}</p>
-                    <p className="text-xs" style={{ color: MUTED }}>{c.obra} · {fmtDate(c.fecha)}</p>
-                  </div>
-                  <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
-                    <Trash2 size={13} style={{ color: MUTED }} />
-                  </button>
-                </div>
-                {c.categoria && <CodeTag>{c.categoria}</CodeTag>}
-                <p className="text-sm mt-2" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {totalFinal.toLocaleString()}</p>
-                <div className="flex gap-2 mt-3 flex-wrap">
-                  <button
-                    onClick={() => onDescargarPdf(c)}
-                    disabled={descargandoId === `${c.id}:pdf`}
-                    className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
-                    style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargandoId === `${c.id}:pdf` ? 0.6 : 1 }}
-                  >
-                    <Download size={13} /> {descargandoId === `${c.id}:pdf` ? "Generando..." : "Descargar PDF"}
-                  </button>
-                  {tieneFichas && (
-                    <button
-                      onClick={() => onDescargarFichas(c)}
-                      disabled={descargandoId === `${c.id}:fichas`}
-                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-                      style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:fichas` ? 0.6 : 1 }}
-                    >
-                      <FileText size={13} /> {descargandoId === `${c.id}:fichas` ? "Generando..." : "Fichas técnicas"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <>
+          <ResumenCotizaciones resumen={resumen} />
+          <div className="space-y-3">
+            {grupos.map((g) => (
+              <ClienteGrupo
+                key={g.cliente} grupo={g}
+                onDelete={onDelete} onUpdate={onUpdate}
+                onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

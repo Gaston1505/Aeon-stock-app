@@ -522,11 +522,11 @@ function Table({ columns, rows, onDelete, renderCell }) {
   }
   return (
     <div className="overflow-auto rounded-lg border" style={{ borderColor: BORDER, maxHeight: "65vh" }}>
-      <table className="w-full text-sm" style={{ minWidth: 720 }}>
+      <table className="text-sm" style={{ minWidth: 720 }}>
         <thead>
           <tr>
             {columns.map((c) => (
-              <th key={c.key} className="text-left font-medium px-3 py-2.5 border-b sticky top-0 z-10" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>
+              <th key={c.key} className="text-left font-medium px-3 py-2.5 border-b sticky top-0 z-10 whitespace-nowrap" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>
                 {c.label}
               </th>
             ))}
@@ -537,12 +537,12 @@ function Table({ columns, rows, onDelete, renderCell }) {
           {rows.map((row) => (
             <tr key={row.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
               {columns.map((c) => (
-                <td key={c.key} className="px-3 py-2.5 align-top" style={{ color: INK }}>
+                <td key={c.key} className="px-3 py-2.5 whitespace-nowrap" style={{ color: INK }}>
                   {renderCell ? renderCell(c.key, row) : row[c.key] || "—"}
                 </td>
               ))}
               {onDelete && (
-                <td className="px-2 py-2.5 align-top">
+                <td className="px-2 py-2.5">
                   <button onClick={() => onDelete(row.id)} className="p-1 rounded hover:bg-gray-100">
                     <Trash2 size={14} style={{ color: MUTED }} />
                   </button>

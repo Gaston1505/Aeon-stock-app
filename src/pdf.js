@@ -990,3 +990,362 @@ export async function downloadReporteMuestrasPdf(filas, fecha) {
   const bytes = await generateReporteMuestrasPdf(filas, fecha);
   downloadBlob(bytes, nombreArchivoReporteMuestras(fecha), "application/pdf");
 }
+
+// ---------- Reporte de mercadería física en Paraguay (para Seguro) ----------
+// `filas`: [{ categoria, modelo, cantidad, valorUnitario }]
+export async function generateReporteFisicoPdf(filas, fecha, titulo) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const colCategoria = 90;
+  const colModelo = 175;
+  const colCant = 50;
+  const colValorUnit = 90;
+  const colValorTotal = CONTENT_W - colCategoria - colModelo - colCant - colValorUnit;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 6.5, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+
+  text("Fecha:", PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
+  text(fmtFecha(fecha), PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+
+  y -= 14;
+
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const tituloTexto = titulo || "REPORTE DE MERCADERÍA FÍSICA EN PARAGUAY";
+  const titleW = bold.widthOfTextAtSize(tituloTexto, 9.5);
+  text(tituloTexto, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
+  y -= 18;
+  y -= 6;
+
+  function drawHeader() {
+    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    const headers = [
+      ["Categoría", colCategoria], ["Modelo", colModelo], ["Cant.", colCant],
+      ["Valor unit. U$S", colValorUnit], ["Valor total U$S", colValorTotal],
+    ];
+    headers.forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += w;
+    });
+    y -= 20;
+  }
+  drawHeader();
+
+  let totalCant = 0;
+  let totalValor = 0;
+  for (const f of filas) {
+    const rowH = 18;
+    ensureSpace(rowH + 20);
+    if (y === PAGE_H - MARGIN) drawHeader();
+
+    const cant = Number(f.cantidad) || 0;
+    const valorUnit = Number(f.valorUnitario) || 0;
+    const valorTotal = cant * valorUnit;
+    totalCant += cant;
+    totalValor += valorTotal;
+
+    let cx = MARGIN;
+    rect(cx, y - rowH, colCategoria, rowH, { border: BORDER });
+    centerText(f.categoria || "", cx, y, colCategoria, rowH, { size: 6 });
+    cx += colCategoria;
+
+    rect(cx, y - rowH, colModelo, rowH, { border: BORDER });
+    text(f.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+    cx += colModelo;
+
+    rect(cx, y - rowH, colCant, rowH, { border: BORDER });
+    centerText(String(cant), cx, y, colCant, rowH);
+    cx += colCant;
+
+    rect(cx, y - rowH, colValorUnit, rowH, { border: BORDER });
+    centerText(valorUnit ? `U$S ${fmtNum(valorUnit)}` : "—", cx, y, colValorUnit, rowH, { size: 6 });
+    cx += colValorUnit;
+
+    rect(cx, y - rowH, colValorTotal, rowH, { border: BORDER });
+    centerText(valorTotal ? `U$S ${fmtNum(valorTotal)}` : "—", cx, y, colValorTotal, rowH, { size: 6 });
+
+    y -= rowH;
+  }
+
+  ensureSpace(30);
+  const colLabelTotal = CONTENT_W - colValorTotal;
+  rect(MARGIN, y - 18, colLabelTotal, 18, { fill: ACCENT_LIGHT });
+  text(`Total: ${totalCant} unidad(es)`, MARGIN + 4, y - 12, { bold: true, size: 8, color: ACCENT });
+  rect(MARGIN + colLabelTotal, y - 18, colValorTotal, 18, { fill: ACCENT_LIGHT });
+  const totalStr = `U$S ${fmtNum(totalValor)}`;
+  text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 12, { bold: true, size: 8, color: ACCENT });
+
+  return pdf.save();
+}
+
+export function nombreArchivoReporteFisico(fecha) {
+  return `Reporte_Seguro_Paraguay_${fecha || ""}.pdf`;
+}
+
+export async function downloadReporteFisicoPdf(filas, fecha, titulo) {
+  const bytes = await generateReporteFisicoPdf(filas, fecha, titulo);
+  downloadBlob(bytes, nombreArchivoReporteFisico(fecha), "application/pdf");
+}
+
+// ---------- Reporte para Joel: físico en Paraguay + en tránsito, separados ----------
+// `filasFisico`: [{ categoria, modelo, cantidad, valorUnitario }]
+// `filasTransito`: [{ modelo, cantidad, costo }]
+export async function generateReporteJoelPdf(filasFisico, filasTransito, fecha) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 6.5, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+
+  text("Fecha:", PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
+  text(fmtFecha(fecha), PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+
+  y -= 14;
+
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const titulo = "REPORTE DE STOCK — FÍSICO EN PARAGUAY + TRÁNSITO";
+  const titleW = bold.widthOfTextAtSize(titulo, 9.5);
+  text(titulo, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
+  y -= 18;
+  y -= 10;
+
+  // Sección 1: físico en Paraguay
+  const colCategoria = 90;
+  const colModeloF = 175;
+  const colCantF = 50;
+  const colValorUnit = 90;
+  const colValorTotalF = CONTENT_W - colCategoria - colModeloF - colCantF - colValorUnit;
+
+  ensureSpace(30);
+  text("Físico en Paraguay", MARGIN, y, { bold: true, size: 9 });
+  y -= 14;
+
+  function drawHeaderFisico() {
+    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    const headers = [
+      ["Categoría", colCategoria], ["Modelo", colModeloF], ["Cant.", colCantF],
+      ["Valor unit. U$S", colValorUnit], ["Valor total U$S", colValorTotalF],
+    ];
+    headers.forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += w;
+    });
+    y -= 20;
+  }
+  drawHeaderFisico();
+
+  let totalCantFisico = 0;
+  let totalValorFisico = 0;
+  for (const f of filasFisico) {
+    const rowH = 18;
+    ensureSpace(rowH + 20);
+    if (y === PAGE_H - MARGIN) drawHeaderFisico();
+
+    const cant = Number(f.cantidad) || 0;
+    const valorUnit = Number(f.valorUnitario) || 0;
+    const valorTotal = cant * valorUnit;
+    totalCantFisico += cant;
+    totalValorFisico += valorTotal;
+
+    let cx = MARGIN;
+    rect(cx, y - rowH, colCategoria, rowH, { border: BORDER });
+    centerText(f.categoria || "", cx, y, colCategoria, rowH, { size: 6 });
+    cx += colCategoria;
+
+    rect(cx, y - rowH, colModeloF, rowH, { border: BORDER });
+    text(f.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+    cx += colModeloF;
+
+    rect(cx, y - rowH, colCantF, rowH, { border: BORDER });
+    centerText(String(cant), cx, y, colCantF, rowH);
+    cx += colCantF;
+
+    rect(cx, y - rowH, colValorUnit, rowH, { border: BORDER });
+    centerText(valorUnit ? `U$S ${fmtNum(valorUnit)}` : "—", cx, y, colValorUnit, rowH, { size: 6 });
+    cx += colValorUnit;
+
+    rect(cx, y - rowH, colValorTotalF, rowH, { border: BORDER });
+    centerText(valorTotal ? `U$S ${fmtNum(valorTotal)}` : "—", cx, y, colValorTotalF, rowH, { size: 6 });
+
+    y -= rowH;
+  }
+
+  ensureSpace(24);
+  const colLabelTotalF = CONTENT_W - colValorTotalF;
+  rect(MARGIN, y - 16, colLabelTotalF, 16, { fill: ACCENT_LIGHT });
+  text(`Sub-total físico: ${totalCantFisico} unidad(es)`, MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+  rect(MARGIN + colLabelTotalF, y - 16, colValorTotalF, 16, { fill: ACCENT_LIGHT });
+  const totalFisicoStr = `U$S ${fmtNum(totalValorFisico)}`;
+  text(totalFisicoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalFisicoStr, 7.5), y - 11, { bold: true, size: 7.5, color: ACCENT });
+  y -= 30;
+
+  // Sección 2: en tránsito
+  const colModeloT = 220;
+  const colCantT = 60;
+  const colCostoT = CONTENT_W - colModeloT - colCantT;
+
+  ensureSpace(30);
+  text("En tránsito (fabricándose / en camino desde China)", MARGIN, y, { bold: true, size: 9 });
+  y -= 14;
+
+  function drawHeaderTransito() {
+    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    const headers = [["Modelo", colModeloT], ["Cant.", colCantT], ["Costo/valor U$S", colCostoT]];
+    headers.forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += w;
+    });
+    y -= 20;
+  }
+
+  let totalValorTransito = 0;
+  if (filasTransito.length === 0) {
+    ensureSpace(20);
+    text("No hay envíos en tránsito cargados.", MARGIN, y, { size: 7.5, color: MUTED });
+    y -= 20;
+  } else {
+    drawHeaderTransito();
+    let totalCantTransito = 0;
+    for (const t of filasTransito) {
+      const rowH = 18;
+      ensureSpace(rowH + 20);
+      if (y === PAGE_H - MARGIN) drawHeaderTransito();
+
+      const cant = Number(t.cantidad) || 0;
+      const costo = Number(t.costo) || 0;
+      totalCantTransito += cant;
+      totalValorTransito += costo;
+
+      let cx = MARGIN;
+      rect(cx, y - rowH, colModeloT, rowH, { border: BORDER });
+      text(t.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+      cx += colModeloT;
+
+      rect(cx, y - rowH, colCantT, rowH, { border: BORDER });
+      centerText(String(cant), cx, y, colCantT, rowH);
+      cx += colCantT;
+
+      rect(cx, y - rowH, colCostoT, rowH, { border: BORDER });
+      centerText(costo ? `U$S ${fmtNum(costo)}` : "—", cx, y, colCostoT, rowH, { size: 6 });
+
+      y -= rowH;
+    }
+
+    ensureSpace(24);
+    const colLabelTotalT = colModeloT + colCantT;
+    rect(MARGIN, y - 16, colLabelTotalT, 16, { fill: ACCENT_LIGHT });
+    text(`Sub-total tránsito: ${totalCantTransito} unidad(es)`, MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+    rect(MARGIN + colLabelTotalT, y - 16, colCostoT, 16, { fill: ACCENT_LIGHT });
+    const totalTransitoStr = `U$S ${fmtNum(totalValorTransito)}`;
+    text(totalTransitoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalTransitoStr, 7.5), y - 11, { bold: true, size: 7.5, color: ACCENT });
+    y -= 24;
+  }
+
+  // Total general
+  const granTotal = totalValorFisico + totalValorTransito;
+  ensureSpace(24);
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const granTotalStr = `Total general (físico + tránsito): U$S ${fmtNum(granTotal)}`;
+  const gtW = bold.widthOfTextAtSize(granTotalStr, 8.5);
+  text(granTotalStr, MARGIN + CONTENT_W / 2 - gtW / 2, y - 12, { bold: true, size: 8.5, color: WHITE });
+
+  return pdf.save();
+}
+
+export function nombreArchivoReporteJoel(fecha) {
+  return `Reporte_Joel_${fecha || ""}.pdf`;
+}
+
+export async function downloadReporteJoelPdf(filasFisico, filasTransito, fecha) {
+  const bytes = await generateReporteJoelPdf(filasFisico, filasTransito, fecha);
+  downloadBlob(bytes, nombreArchivoReporteJoel(fecha), "application/pdf");
+}

@@ -4,6 +4,7 @@ import {
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
+  Ship, ClipboardList, Send,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -14,7 +15,7 @@ import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
-  downloadReporteMuestrasPdf,
+  downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
 } from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
@@ -119,6 +120,7 @@ const COLLECTIONS = {
   cotizaciones: "cotizaciones",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
+  transito: "transito",
 };
 
 // ---------- Helpers ----------
@@ -819,6 +821,7 @@ export default function App() {
   const [cotizaciones, setCotizaciones] = useState([]);
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
+  const [transito, setTransito] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -856,6 +859,7 @@ export default function App() {
       [COLLECTIONS.cotizaciones]: setCotizaciones,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
+      [COLLECTIONS.transito]: setTransito,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -1170,6 +1174,11 @@ export default function App() {
     }
   };
 
+  // Tránsito: mercadería fabricándose/en camino desde China, todavía no es stock físico real
+  // — se traslada a Maestro de equipos recién cuando llega (manualmente, como una entrada más).
+  const addTransito = (data) => addItem(COLLECTIONS.transito, data);
+  const deleteTransito = (id) => deleteItem(COLLECTIONS.transito, id);
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
 
@@ -1356,6 +1365,28 @@ export default function App() {
     return clientes.filter((c) => !q || [c.nombre, c.telefono].some((v) => (v || "").toLowerCase().includes(q)));
   }, [clientes, query]);
 
+  const filteredTransito = useMemo(() => {
+    const q = query.toLowerCase();
+    return transito.filter((t) => !q || [t.modelo, t.contenedor].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [transito, query]);
+
+  // Mercadería física en Paraguay para los reportes de seguro/Joel: equipos activos (todo
+  // menos Vendido/Dado de baja, que ya salieron del circuito), repuestos y lo que está en
+  // Zona de playa sin clasificar todavía. Una fila por origen, con su valor de lista si se
+  // encuentra el producto — así los tres reportes (muestras, seguro, Joel) parten de la misma cuenta.
+  const mercaderiaFisicaParaguay = useMemo(() => {
+    const buscarValor = (modelo) => Number(productos.find((p) => p.nombre === modelo)?.precioLista) || 0;
+    const deEquipos = equipos
+      .filter((e) => e.estado !== "Vendido" && e.estado !== "Dado de baja")
+      .map((e) => ({ modelo: e.modelo, categoria: "Equipos", cantidad: Number(e.cantidad) || 1, valorUnitario: buscarValor(e.modelo) }));
+    const deRepuestos = productos
+      .filter((p) => p.categoriaPrincipal === "Repuestos")
+      .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.precioLista) || 0 }))
+      .filter((r) => r.cantidad > 0);
+    const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(p.descripcion) }));
+    return [...deEquipos, ...deRepuestos, ...dePlaya];
+  }, [equipos, productos, playa]);
+
   const filteredComprometidas = useMemo(() => {
     const q = query.toLowerCase();
     return comprometidas.filter((c) => !q || [c.razonSocial, c.obra, c.modelo].some((v) => (v || "").toLowerCase().includes(q)));
@@ -1430,6 +1461,7 @@ export default function App() {
   const NAV = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
     { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
+    { key: "transito", label: "Tránsito", icon: Ship },
     { key: "playa", label: "Zona de playa", icon: Inbox },
     { key: "equipos", label: "Maestro de equipos", icon: Package },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
@@ -1442,6 +1474,8 @@ export default function App() {
     { key: "clientes", label: "Clientes", icon: Phone },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
+    { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
+    { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
   ];
 
   if (loading) {
@@ -1757,6 +1791,22 @@ export default function App() {
             onUpdateField={(id, field, value) => updateCliente(id, { [field]: value })}
           />
         )}
+
+        {tab === "transito" && (
+          <TransitoView
+            transito={filteredTransito} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("transito")}
+            onDelete={deleteTransito}
+          />
+        )}
+
+        {tab === "reporte-seguro" && (
+          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguay} />
+        )}
+
+        {tab === "reporte-joel" && (
+          <ReporteJoelView mercaderia={mercaderiaFisicaParaguay} transito={transito} />
+        )}
         </div>
       </div>
 
@@ -1824,6 +1874,9 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "cliente"} onClose={() => setDrawer(null)} title="Nuevo cliente">
         <ClienteForm onSave={(d) => { addCliente(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "transito"} onClose={() => setDrawer(null)} title="Nuevo tránsito">
+        <TransitoForm onSave={(d) => { addTransito(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "salida-cotizacion"} onClose={() => setDrawer(null)} title="Generar salida desde cotización">
         <SalidaDesdeCotizacionForm
@@ -1937,6 +1990,30 @@ function StatCard({ label, value, icon: Icon, tint, onClick }) {
 
 function sumCantidad(list) {
   return list.reduce((acc, e) => acc + (Number(e.cantidad) || 1), 0);
+}
+
+// Agrupa la mercadería física (equipos + repuestos + playa) por categoría+modelo, sumando
+// cantidades — para que un modelo con varios lotes/estados aparezca en una sola fila del reporte.
+function agruparMercaderia(mercaderia) {
+  const mapa = new Map();
+  for (const m of mercaderia) {
+    const key = `${m.categoria}|${m.modelo}`;
+    if (!mapa.has(key)) mapa.set(key, { modelo: m.modelo, categoria: m.categoria, cantidad: 0, valorUnitario: m.valorUnitario });
+    mapa.get(key).cantidad += m.cantidad;
+  }
+  return [...mapa.values()].sort((a, b) => a.categoria.localeCompare(b.categoria) || a.modelo.localeCompare(b.modelo));
+}
+
+// Agrupa el tránsito por modelo — varios lotes/contenedores del mismo modelo quedan en una fila.
+function agruparTransito(transito) {
+  const mapa = new Map();
+  for (const t of transito) {
+    if (!mapa.has(t.modelo)) mapa.set(t.modelo, { modelo: t.modelo, cantidad: 0, costo: 0 });
+    const row = mapa.get(t.modelo);
+    row.cantidad += Number(t.cantidad) || 0;
+    row.costo += Number(t.costo) || 0;
+  }
+  return [...mapa.values()].sort((a, b) => a.modelo.localeCompare(b.modelo));
 }
 
 function VentasCerradasPanel({ ventasCerradas }) {
@@ -5664,6 +5741,240 @@ function ClienteForm({ onSave }) {
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar cliente</PrimaryButton>
+    </div>
+  );
+}
+
+// Mercadería fabricándose o en camino desde China — todavía no es stock físico real. Se carga
+// a mano, y cuando llega de verdad se pasa a Maestro de equipos como una entrada normal.
+function TransitoView({ transito, query, onQuery, onNew, onDelete }) {
+  const totalUnidades = sumCantidad(transito);
+  const totalValor = transito.reduce((acc, t) => acc + (Number(t.costo) || 0), 0);
+  return (
+    <Section
+      title="Tránsito"
+      subtitle={`Mercadería fabricándose o en camino desde China — todavía no es stock físico. ${transito.length} lote(s) · ${totalUnidades} unidad(es) · U$S ${totalValor.toLocaleString()} en camino.`}
+      query={query} onQuery={onQuery}
+      onNew={onNew} newLabel="Nuevo tránsito"
+    >
+      {transito.length === 0 ? (
+        <EmptyState icon={Ship} title="No hay envíos en tránsito" subtitle="Cargá acá lo que se está fabricando o viene en camino desde China." />
+      ) : (
+        <Table
+          columns={[
+            { key: "modelo", label: "Modelo" }, { key: "cantidad", label: "Cantidad" },
+            { key: "fechaEstimadaLlegada", label: "Llegada estimada" }, { key: "contenedor", label: "Contenedor / Ref." },
+            { key: "costo", label: "Costo U$S" }, { key: "notas", label: "Notas" },
+          ]}
+          rows={transito}
+          onDelete={onDelete}
+          renderCell={(key, row) => {
+            if (key === "fechaEstimadaLlegada") return fmtDate(row.fechaEstimadaLlegada);
+            if (key === "costo") return row.costo ? `U$S ${Number(row.costo).toLocaleString()}` : "—";
+            return row[key] || "—";
+          }}
+        />
+      )}
+    </Section>
+  );
+}
+
+function TransitoForm({ onSave }) {
+  const [modelo, setModelo] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+  const [fechaEstimadaLlegada, setFechaEstimadaLlegada] = useState("");
+  const [contenedor, setContenedor] = useState("");
+  const [costo, setCosto] = useState("");
+  const [notas, setNotas] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    if (!modelo.trim()) {
+      setError("Ingresá el modelo.");
+      return;
+    }
+    onSave({
+      modelo: modelo.trim(), cantidad: Number(cantidad) || 1,
+      fechaEstimadaLlegada, contenedor, costo: Number(costo) || 0, notas,
+    });
+  };
+
+  return (
+    <div>
+      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Cantidad"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+      <Field label="Fecha estimada de llegada"><TextInput type="date" value={fechaEstimadaLlegada} onChange={(e) => setFechaEstimadaLlegada(e.target.value)} /></Field>
+      <Field label="N° de contenedor / referencia"><TextInput value={contenedor} onChange={(e) => setContenedor(e.target.value)} placeholder="Opcional" /></Field>
+      <Field label="Costo / valor del lote U$S"><TextInput type="number" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="Opcional" /></Field>
+      <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar tránsito</PrimaryButton>
+    </div>
+  );
+}
+
+// Reporte de mercadería física en Paraguay para el seguro — equipos activos, repuestos y lo que
+// está en Zona de playa sin clasificar, agrupado por modelo con su valor de lista.
+function ReporteSeguroView({ mercaderia }) {
+  const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [error, setError] = useState("");
+  const filas = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
+  const totalCant = filas.reduce((acc, f) => acc + f.cantidad, 0);
+  const totalValor = filas.reduce((acc, f) => acc + f.cantidad * f.valorUnitario, 0);
+
+  const handleExcel = () => {
+    const filasExcel = filas.map((f) => ({
+      "Categoría": f.categoria, "Modelo": f.modelo, "Cantidad": f.cantidad,
+      "Valor unitario U$S": f.valorUnitario, "Valor total U$S": f.cantidad * f.valorUnitario,
+    }));
+    filasExcel.push({ "Categoría": "", "Modelo": "TOTAL", "Cantidad": totalCant, "Valor unitario U$S": "", "Valor total U$S": totalValor });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasExcel), "Reporte Seguro");
+    XLSX.writeFile(wb, `Reporte_Seguro_Paraguay_${todayISO()}.xlsx`);
+  };
+
+  const handlePdf = async () => {
+    setGenerandoPdf(true);
+    setError("");
+    try {
+      await downloadReporteFisicoPdf(filas, todayISO(), "REPORTE PARA SEGURO — MERCADERÍA FÍSICA EN PARAGUAY");
+    } catch (e) {
+      console.error("Error generando reporte de seguro", e);
+      setError("No se pudo generar el PDF. Probá de nuevo.");
+    }
+    setGenerandoPdf(false);
+  };
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Seguro</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            Toda la mercadería física en Paraguay — equipos activos, repuestos y Zona de playa sin clasificar.
+            {" "}{filas.length} modelo(s) · {totalCant} unidad(es) · U$S {totalValor.toLocaleString()}.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <SecondaryButton onClick={handleExcel}><Download size={14} /> Reporte Excel</SecondaryButton>
+          <SecondaryButton onClick={handlePdf}><Download size={14} /> {generandoPdf ? "Generando..." : "Reporte PDF"}</SecondaryButton>
+        </div>
+      </div>
+      {error && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{error}</div>
+      )}
+      {filas.length === 0 ? (
+        <EmptyState icon={ClipboardList} title="No hay mercadería física cargada" subtitle="Se arma solo con lo que ya está en Maestro de equipos, Repuestos y Zona de playa." />
+      ) : (
+        <Table
+          columns={[
+            { key: "categoria", label: "Categoría" }, { key: "modelo", label: "Modelo" },
+            { key: "cantidad", label: "Cantidad" }, { key: "valorUnitario", label: "Valor unit. U$S" },
+            { key: "valorTotal", label: "Valor total U$S" },
+          ]}
+          rows={filas.map((f, i) => ({ ...f, id: `${f.categoria}-${f.modelo}-${i}` }))}
+          renderCell={(key, row) => {
+            if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString()}` : "—";
+            if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString()}` : "—"; }
+            return row[key] ?? "—";
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Reporte para Joel — físico en Paraguay + en tránsito, separados con su total cada uno y un
+// total general al final. Reutiliza la misma cuenta de mercadería física que el reporte de seguro.
+function ReporteJoelView({ mercaderia, transito }) {
+  const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [error, setError] = useState("");
+  const filasFisico = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
+  const filasTransito = useMemo(() => agruparTransito(transito), [transito]);
+
+  const totalFisico = filasFisico.reduce((acc, f) => acc + f.cantidad * f.valorUnitario, 0);
+  const totalTransito = filasTransito.reduce((acc, f) => acc + f.costo, 0);
+
+  const handleExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const wsFisico = XLSX.utils.json_to_sheet(filasFisico.map((f) => ({
+      "Categoría": f.categoria, "Modelo": f.modelo, "Cantidad": f.cantidad,
+      "Valor unitario U$S": f.valorUnitario, "Valor total U$S": f.cantidad * f.valorUnitario,
+    })));
+    const wsTransito = XLSX.utils.json_to_sheet(filasTransito.map((f) => ({
+      "Modelo": f.modelo, "Cantidad": f.cantidad, "Costo / valor U$S": f.costo,
+    })));
+    XLSX.utils.book_append_sheet(wb, wsFisico, "Físico Paraguay");
+    XLSX.utils.book_append_sheet(wb, wsTransito, "Tránsito");
+    XLSX.writeFile(wb, `Reporte_Joel_${todayISO()}.xlsx`);
+  };
+
+  const handlePdf = async () => {
+    setGenerandoPdf(true);
+    setError("");
+    try {
+      await downloadReporteJoelPdf(filasFisico, filasTransito, todayISO());
+    } catch (e) {
+      console.error("Error generando reporte para Joel", e);
+      setError("No se pudo generar el PDF. Probá de nuevo.");
+    }
+    setGenerandoPdf(false);
+  };
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Joel</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            Físico en Paraguay + lo que está en tránsito desde China, por separado — total general U$S {(totalFisico + totalTransito).toLocaleString()}.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <SecondaryButton onClick={handleExcel}><Download size={14} /> Reporte Excel</SecondaryButton>
+          <SecondaryButton onClick={handlePdf}><Download size={14} /> {generandoPdf ? "Generando..." : "Reporte PDF"}</SecondaryButton>
+        </div>
+      </div>
+      {error && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{error}</div>
+      )}
+
+      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString()}</p>
+      {filasFisico.length === 0 ? (
+        <p className="text-sm mb-4" style={{ color: MUTED }}>No hay mercadería física cargada.</p>
+      ) : (
+        <div className="mb-6">
+          <Table
+            columns={[
+              { key: "categoria", label: "Categoría" }, { key: "modelo", label: "Modelo" },
+              { key: "cantidad", label: "Cantidad" }, { key: "valorUnitario", label: "Valor unit. U$S" },
+              { key: "valorTotal", label: "Valor total U$S" },
+            ]}
+            rows={filasFisico.map((f, i) => ({ ...f, id: `f-${f.categoria}-${f.modelo}-${i}` }))}
+            renderCell={(key, row) => {
+              if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString()}` : "—";
+              if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString()}` : "—"; }
+              return row[key] ?? "—";
+            }}
+          />
+        </div>
+      )}
+
+      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>En tránsito — U$S {totalTransito.toLocaleString()}</p>
+      {filasTransito.length === 0 ? (
+        <p className="text-sm" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
+      ) : (
+        <Table
+          columns={[
+            { key: "modelo", label: "Modelo" }, { key: "cantidad", label: "Cantidad" }, { key: "costo", label: "Costo / valor U$S" },
+          ]}
+          rows={filasTransito.map((f, i) => ({ ...f, id: `t-${f.modelo}-${i}` }))}
+          renderCell={(key, row) => {
+            if (key === "costo") return row.costo ? `U$S ${row.costo.toLocaleString()}` : "—";
+            return row[key] ?? "—";
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -3,14 +3,18 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
-import { downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf } from "./pdf";
+import {
+  downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
+  generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
+  nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
+} from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
 const INK = "#1C1E20";
@@ -113,6 +117,7 @@ const COLLECTIONS = {
   productos: "productos",
   cotizaciones: "cotizaciones",
   presupuestosReparacion: "presupuestosReparacion",
+  clientes: "clientes",
 };
 
 // ---------- Helpers ----------
@@ -130,6 +135,31 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
+// Compartir por WhatsApp / mail: WhatsApp no permite adjuntar un archivo automáticamente
+// desde un link (solo lo hace la API paga de WhatsApp Business), así que abrimos el chat con
+// el mensaje ya escrito y el PDF recién descargado, para adjuntarlo a mano con el clip 📎.
+// Sin número guardado, wa.me/?text= abre el selector de contactos de WhatsApp del celular.
+function linkWhatsApp(telefono, texto) {
+  const numero = (telefono || "").replace(/[^\d]/g, "");
+  return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
+}
+
+// Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
+// con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
+async function compartirArchivo(bytes, filename, texto) {
+  try {
+    const file = new File([bytes], filename, { type: "application/pdf" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: texto, title: filename });
+      return true;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return true; // el usuario cerró el selector sin elegir nada
+    console.error("Error al compartir archivo", e);
+  }
+  return false;
+}
+
 function calcularTotalCotizacion(c) {
   const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
   const descuentoMonto = c.incluirDescuento
@@ -615,6 +645,7 @@ export default function App() {
   const [productos, setProductos] = useState([]);
   const [cotizaciones, setCotizaciones] = useState([]);
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
+  const [clientes, setClientes] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -651,6 +682,7 @@ export default function App() {
       [COLLECTIONS.productos]: setProductos,
       [COLLECTIONS.cotizaciones]: setCotizaciones,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
+      [COLLECTIONS.clientes]: setClientes,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -886,6 +918,70 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const handleCompartirCotizacion = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":compartir");
+    setPdfError("");
+    try {
+      const bytes = await generateCotizacionPdf(cotizacion);
+      const ok = await compartirArchivo(bytes, nombreArchivoCotizacion(cotizacion), `Cotización — ${cotizacion.cliente}${cotizacion.obra ? " / " + cotizacion.obra : ""}`);
+      if (!ok) await downloadCotizacionPdf(cotizacion);
+    } catch (e) {
+      console.error("Error compartiendo cotización", e);
+      setPdfError("No se pudo compartir el PDF de la cotización. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleWhatsappCotizacion = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":whatsapp");
+    setPdfError("");
+    try {
+      await downloadCotizacionPdf(cotizacion);
+      window.open(linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso la cotización.`), "_blank");
+    } catch (e) {
+      console.error("Error generando PDF para WhatsApp", e);
+      setPdfError("No se pudo generar el PDF de la cotización. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleCompartirFichas = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":compartir-fichas");
+    setPdfError("");
+    try {
+      const bytes = await generateFichasTecnicasPdf(cotizacion);
+      if (!bytes) {
+        setPdfError("Ninguno de los productos de esta cotización tiene ficha técnica cargada.");
+        setDescargandoId(null);
+        return;
+      }
+      const ok = await compartirArchivo(bytes, nombreArchivoFichasTecnicas(cotizacion), `Fichas técnicas — ${cotizacion.cliente}`);
+      if (!ok) await downloadFichasTecnicasPdf(cotizacion);
+    } catch (e) {
+      console.error("Error compartiendo fichas técnicas", e);
+      setPdfError("No se pudo compartir el PDF de fichas técnicas. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleWhatsappFichas = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":whatsapp-fichas");
+    setPdfError("");
+    try {
+      const ok = await downloadFichasTecnicasPdf(cotizacion);
+      if (!ok) {
+        setPdfError("Ninguno de los productos de esta cotización tiene ficha técnica cargada.");
+        setDescargandoId(null);
+        return;
+      }
+      window.open(linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso las fichas técnicas.`), "_blank");
+    } catch (e) {
+      console.error("Error generando fichas técnicas para WhatsApp", e);
+      setPdfError("No se pudo generar el PDF de fichas técnicas. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const addPresupuestoReparacion = (data) => addItem(COLLECTIONS.presupuestosReparacion, data);
   const deletePresupuestoReparacion = (id) => deleteItem(COLLECTIONS.presupuestosReparacion, id);
 
@@ -899,6 +995,50 @@ export default function App() {
       setPdfError("No se pudo generar el PDF del presupuesto. Probá de nuevo.");
     }
     setDescargandoId(null);
+  };
+
+  const handleCompartirPresupuesto = async (presupuesto) => {
+    setDescargandoId(presupuesto.id + ":compartir");
+    setPdfError("");
+    try {
+      const bytes = await generatePresupuestoReparacionPdf(presupuesto);
+      const ok = await compartirArchivo(bytes, nombreArchivoPresupuesto(presupuesto), `Presupuesto — ${presupuesto.cliente}`);
+      if (!ok) await downloadPresupuestoReparacionPdf(presupuesto);
+    } catch (e) {
+      console.error("Error compartiendo presupuesto", e);
+      setPdfError("No se pudo compartir el PDF del presupuesto. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleWhatsappPresupuesto = async (presupuesto) => {
+    setDescargandoId(presupuesto.id + ":whatsapp");
+    setPdfError("");
+    try {
+      await downloadPresupuestoReparacionPdf(presupuesto);
+      window.open(linkWhatsApp(presupuesto.clienteTelefono, `Hola${presupuesto.cliente ? " " + presupuesto.cliente : ""}, te paso el presupuesto.`), "_blank");
+    } catch (e) {
+      console.error("Error generando PDF de presupuesto para WhatsApp", e);
+      setPdfError("No se pudo generar el PDF del presupuesto. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  // Clientes: nombre + WhatsApp reutilizable entre cotizaciones/presupuestos — se completa
+  // solo al cargar un teléfono nuevo (upsertClienteTelefono) o se carga a mano en la pestaña.
+  const addCliente = (data) => addItem(COLLECTIONS.clientes, data);
+  const updateCliente = (id, data) => updateItem(COLLECTIONS.clientes, id, data);
+  const deleteCliente = (id) => deleteItem(COLLECTIONS.clientes, id);
+  const upsertClienteTelefono = (nombre, telefono) => {
+    const n = (nombre || "").trim();
+    const t = (telefono || "").trim();
+    if (!n || !t) return;
+    const existente = clientes.find((c) => (c.nombre || "").trim().toLowerCase() === n.toLowerCase());
+    if (existente) {
+      if (existente.telefono !== t) updateItem(COLLECTIONS.clientes, existente.id, { telefono: t });
+    } else {
+      addItem(COLLECTIONS.clientes, { nombre: n, telefono: t });
+    }
   };
 
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
@@ -1082,6 +1222,11 @@ export default function App() {
     return presupuestosReparacion.filter((p) => !q || [p.cliente, p.obra, p.equipoAfectado].some((v) => (v || "").toLowerCase().includes(q)));
   }, [presupuestosReparacion, query]);
 
+  const filteredClientes = useMemo(() => {
+    const q = query.toLowerCase();
+    return clientes.filter((c) => !q || [c.nombre, c.telefono].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [clientes, query]);
+
   const filteredComprometidas = useMemo(() => {
     const q = query.toLowerCase();
     return comprometidas.filter((c) => !q || [c.razonSocial, c.obra, c.modelo].some((v) => (v || "").toLowerCase().includes(q)));
@@ -1146,6 +1291,7 @@ export default function App() {
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
+    { key: "clientes", label: "Clientes", icon: Phone },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
   ];
@@ -1417,6 +1563,10 @@ export default function App() {
             onUpdate={updateCotizacion}
             onDescargarPdf={handleDescargarPdf}
             onDescargarFichas={handleDescargarFichas}
+            onCompartir={handleCompartirCotizacion}
+            onWhatsapp={handleWhatsappCotizacion}
+            onCompartirFichas={handleCompartirFichas}
+            onWhatsappFichas={handleWhatsappFichas}
             descargandoId={descargandoId}
             pdfError={pdfError}
           />
@@ -1428,8 +1578,19 @@ export default function App() {
             onNew={() => setDrawer("presupuesto-reparacion")}
             onDelete={deletePresupuestoReparacion}
             onDescargarPdf={handleDescargarPresupuestoPdf}
+            onCompartir={handleCompartirPresupuesto}
+            onWhatsapp={handleWhatsappPresupuesto}
             descargandoId={descargandoId}
             pdfError={pdfError}
+          />
+        )}
+
+        {tab === "clientes" && (
+          <ClientesView
+            clientes={filteredClientes} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("cliente")}
+            onDelete={deleteCliente}
+            onUpdateField={(id, field, value) => updateCliente(id, { [field]: value })}
           />
         )}
         </div>
@@ -1483,13 +1644,22 @@ export default function App() {
         />
       </Drawer>
       <Drawer open={drawer === "cotizacion"} onClose={() => setDrawer(null)} title="Nueva cotización">
-        <CotizacionForm productos={productos} onSave={(d) => { addCotizacion(d); setDrawer(null); }} />
+        <CotizacionForm
+          productos={productos} clientes={clientes}
+          onGuardarCliente={upsertClienteTelefono}
+          onSave={(d) => { addCotizacion(d); setDrawer(null); }}
+        />
       </Drawer>
       <Drawer open={drawer === "presupuesto-reparacion"} onClose={() => setDrawer(null)} title="Nuevo presupuesto de reparación">
         <PresupuestoReparacionForm
           productos={productos.filter((p) => p.categoriaPrincipal === "Repuestos")}
+          clientes={clientes}
+          onGuardarCliente={upsertClienteTelefono}
           onSave={(d) => { addPresupuestoReparacion(d); setDrawer(null); }}
         />
+      </Drawer>
+      <Drawer open={drawer === "cliente"} onClose={() => setDrawer(null)} title="Nuevo cliente">
+        <ClienteForm onSave={(d) => { addCliente(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "salida-cotizacion"} onClose={() => setDrawer(null)} title="Generar salida desde cotización">
         <SalidaDesdeCotizacionForm
@@ -4365,9 +4535,11 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
 const FECHA_ENTREGA_DEFAULT = "Una vez aprobado el presupuesto la entrega se concreta de 150 a 200 dias";
 const OBS_DEFAULT = "Productos a retirar de depósito.";
 
-function CotizacionForm({ productos, onSave }) {
+function CotizacionForm({ productos, clientes, onGuardarCliente, onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [cliente, setCliente] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const telefonoAutoRef = useRef(null);
   const [obra, setObra] = useState("");
   const [clienteReal, setClienteReal] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -4388,6 +4560,19 @@ function CotizacionForm({ productos, onSave }) {
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+
+  // Autocompleta el teléfono si el nombre tipeado coincide con un cliente ya guardado — pero
+  // solo mientras el teléfono siga siendo el que se autocompletó antes, para no pisar un
+  // número que el usuario haya escrito a mano para este cliente puntual.
+  const handleClienteChange = (v) => {
+    setCliente(v);
+    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === v.trim().toLowerCase());
+    const sugerido = match ? (match.telefono || "") : "";
+    if (telefono === "" || telefono === telefonoAutoRef.current) {
+      setTelefono(sugerido);
+      telefonoAutoRef.current = sugerido;
+    }
+  };
 
   // Agrupa el selector de productos por categoría (categoriaPrincipal > subcategoria > ...)
   // para que un catálogo grande siga siendo navegable en vez de una lista plana larguísima.
@@ -4437,8 +4622,9 @@ function CotizacionForm({ productos, onSave }) {
       setError("Agregá al menos un producto.");
       return;
     }
+    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
     onSave({
-      fecha, cliente, obra, categoria, comentarios, lineas,
+      fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
       incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
       incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
       fechaEntregaEstimada, formaPago, obs,
@@ -4449,7 +4635,19 @@ function CotizacionForm({ productos, onSave }) {
   return (
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-      <Field label="Cliente (constructora/desarrolladora — sale en el PDF)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Cliente (constructora/desarrolladora — sale en el PDF)">
+        <TextInput value={cliente} list="clientes-datalist" onChange={(e) => handleClienteChange(e.target.value)} />
+      </Field>
+      <datalist id="clientes-datalist">
+        {(clientes || []).map((c) => <option key={c.id} value={c.nombre} />)}
+      </datalist>
+      <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
+        <TextInput
+          value={telefono}
+          onChange={(e) => { setTelefono(e.target.value); telefonoAutoRef.current = null; }}
+          placeholder="Ej: 595981234567 (con código de país, sin +)"
+        />
+      </Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Usá el mismo nombre si es una obra que ya cotizaste" /></Field>
       <Field label="Categoría (título de la cotización)"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: AIRES ACONDICIONADOS" /></Field>
 
@@ -4559,7 +4757,7 @@ const SALIDA_COTIZACION_BADGE = {
   pendiente: { label: "Sin salida", bg: "#F2F3F4", color: "#686D73" },
 };
 
-function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
+function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
@@ -4599,7 +4797,7 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
         </div>
       )}
 
-      <div className="flex gap-2 mt-3 flex-wrap">
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
         <button
           onClick={() => onDescargarPdf(c)}
           disabled={descargandoId === `${c.id}:pdf`}
@@ -4608,22 +4806,61 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
         >
           <Download size={13} /> {descargandoId === `${c.id}:pdf` ? "Generando..." : "Descargar PDF"}
         </button>
+        <button
+          onClick={() => onCompartir(c)}
+          disabled={descargandoId === `${c.id}:compartir`}
+          className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+          style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:compartir` ? 0.6 : 1 }}
+        >
+          <Share2 size={13} /> {descargandoId === `${c.id}:compartir` ? "Generando..." : "Compartir"}
+        </button>
+        <button
+          onClick={() => onWhatsapp(c)}
+          disabled={descargandoId === `${c.id}:whatsapp`}
+          className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+          style={{ borderColor: BORDER, color: "#15803D", opacity: descargandoId === `${c.id}:whatsapp` ? 0.6 : 1 }}
+        >
+          <MessageCircle size={13} /> {descargandoId === `${c.id}:whatsapp` ? "Generando..." : "WhatsApp"}
+        </button>
+        <InfoTip>
+          <p>Se descarga el PDF y se abre WhatsApp{c.clienteTelefono ? ` en el chat de ${c.cliente}` : " para elegir el contacto"}.</p>
+          <p>Como WhatsApp no deja adjuntar un archivo automático desde un link, tocá el clip 📎 en ese chat y elegí el PDF que se acaba de descargar (carpeta Descargas).</p>
+          {!c.clienteTelefono && <p style={{ color: MUTED }}>Este cliente no tiene teléfono cargado — se abre el selector de contactos de WhatsApp para elegir a mano.</p>}
+        </InfoTip>
         {tieneFichas && (
-          <button
-            onClick={() => onDescargarFichas(c)}
-            disabled={descargandoId === `${c.id}:fichas`}
-            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-            style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:fichas` ? 0.6 : 1 }}
-          >
-            <FileText size={13} /> {descargandoId === `${c.id}:fichas` ? "Generando..." : "Fichas técnicas"}
-          </button>
+          <>
+            <button
+              onClick={() => onDescargarFichas(c)}
+              disabled={descargandoId === `${c.id}:fichas`}
+              className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+              style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:fichas` ? 0.6 : 1 }}
+            >
+              <FileText size={13} /> {descargandoId === `${c.id}:fichas` ? "Generando..." : "Fichas técnicas"}
+            </button>
+            <button
+              onClick={() => onCompartirFichas(c)}
+              disabled={descargandoId === `${c.id}:compartir-fichas`}
+              className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+              style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:compartir-fichas` ? 0.6 : 1 }}
+            >
+              <Share2 size={13} /> {descargandoId === `${c.id}:compartir-fichas` ? "Generando..." : "Compartir fichas"}
+            </button>
+            <button
+              onClick={() => onWhatsappFichas(c)}
+              disabled={descargandoId === `${c.id}:whatsapp-fichas`}
+              className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+              style={{ borderColor: BORDER, color: "#15803D", opacity: descargandoId === `${c.id}:whatsapp-fichas` ? 0.6 : 1 }}
+            >
+              <MessageCircle size={13} /> {descargandoId === `${c.id}:whatsapp-fichas` ? "Generando..." : "Fichas por WhatsApp"}
+            </button>
+          </>
         )}
       </div>
     </div>
   );
 }
 
-function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
+function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = grupo.versiones.slice(1);
   return (
@@ -4639,7 +4876,9 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
       <CotizacionCard
         c={grupo.activa} esActiva
         onDelete={onDelete} onUpdate={onUpdate}
-        onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+        onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        descargandoId={descargandoId}
       />
       {expandido && (
         <div className="mt-2 pl-3 border-l-2 space-y-2" style={{ borderColor: BORDER }}>
@@ -4647,7 +4886,9 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
             <CotizacionCard
               key={v.id} c={v} esActiva={false}
               onDelete={onDelete} onUpdate={onUpdate}
-              onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+              onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        descargandoId={descargandoId}
             />
           ))}
         </div>
@@ -4656,7 +4897,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
   );
 }
 
-function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
+function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId }) {
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -4676,7 +4917,9 @@ function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFi
           <ObraGrupo
             key={o.obra} grupo={o}
             onDelete={onDelete} onUpdate={onUpdate}
-            onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+            onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        descargandoId={descargandoId}
           />
         ))}
       </div>
@@ -4684,7 +4927,7 @@ function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFi
   );
 }
 
-function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
 
@@ -4715,7 +4958,9 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpd
               <ClienteGrupo
                 key={g.cliente} grupo={g}
                 onDelete={onDelete} onUpdate={onUpdate}
-                onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas} descargandoId={descargandoId}
+                onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        descargandoId={descargandoId}
               />
             ))}
           </div>
@@ -4757,10 +5002,12 @@ const PLAZO_ESTIMADO_DEFAULT = {
   mantenimiento: "A coordinar según disponibilidad de agenda del técnico.",
 };
 
-function PresupuestoReparacionForm({ productos, onSave }) {
+function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSave }) {
   const [tipo, setTipo] = useState("reparacion");
   const [fecha, setFecha] = useState(todayISO());
   const [cliente, setCliente] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const telefonoAutoRef = useRef(null);
   const [obra, setObra] = useState("");
   const [equipoAfectado, setEquipoAfectado] = useState("");
   const [fallaReportada, setFallaReportada] = useState("");
@@ -4793,6 +5040,18 @@ function PresupuestoReparacionForm({ productos, onSave }) {
     }
     return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [productos]);
+
+  // Autocompleta el teléfono si el nombre tipeado coincide con un cliente ya guardado — solo
+  // mientras el teléfono siga siendo el que se autocompletó, para no pisar uno tipeado a mano.
+  const handleClienteChange = (v) => {
+    setCliente(v);
+    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === v.trim().toLowerCase());
+    const sugerido = match ? (match.telefono || "") : "";
+    if (telefono === "" || telefono === telefonoAutoRef.current) {
+      setTelefono(sugerido);
+      telefonoAutoRef.current = sugerido;
+    }
+  };
 
   const handleTipo = (t) => {
     setTipo(t);
@@ -4862,8 +5121,9 @@ function PresupuestoReparacionForm({ productos, onSave }) {
       setError("Agregá al menos un servicio de mantenimiento o un repuesto.");
       return;
     }
+    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
     onSave({
-      tipo, fecha, cliente, obra, equipoAfectado, fallaReportada, lineas,
+      tipo, fecha, cliente, clienteTelefono: telefono.trim(), obra, equipoAfectado, fallaReportada, lineas,
       lineasMantenimiento: tipo === "mantenimiento" ? lineasMantenimiento : [],
       incluirInstalacion: tipo === "reparacion" && incluirInstalacion,
       instalacionMonto: Number(instalacionMonto) || 0,
@@ -4891,7 +5151,19 @@ function PresupuestoReparacionForm({ productos, onSave }) {
       </div>
 
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Cliente">
+        <TextInput value={cliente} list="clientes-datalist" onChange={(e) => handleClienteChange(e.target.value)} />
+      </Field>
+      <datalist id="clientes-datalist">
+        {(clientes || []).map((c) => <option key={c.id} value={c.nombre} />)}
+      </datalist>
+      <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
+        <TextInput
+          value={telefono}
+          onChange={(e) => { setTelefono(e.target.value); telefonoAutoRef.current = null; }}
+          placeholder="Ej: 595981234567 (con código de país, sin +)"
+        />
+      </Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label={tipo === "mantenimiento" ? "Equipo(s) a mantener" : "Equipo / Producto afectado"}>
         <TextInput
@@ -5021,7 +5293,7 @@ function PresupuestoReparacionForm({ productos, onSave }) {
   );
 }
 
-function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, descargandoId, pdfError }) {
+function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, onCompartir, onWhatsapp, descargandoId, pdfError }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -5076,19 +5348,119 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
                 ) : (
                   <p className="text-sm mt-2" style={{ color: INK }}>{(p.lineas || []).length} repuesto(s) · U$S {total.toLocaleString()}</p>
                 )}
-                <button
-                  onClick={() => onDescargarPdf(p)}
-                  disabled={descargandoId === `${p.id}:reparacion`}
-                  className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1 mt-3"
-                  style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargandoId === `${p.id}:reparacion` ? 0.6 : 1 }}
-                >
-                  <Download size={13} /> {descargandoId === `${p.id}:reparacion` ? "Generando..." : "Descargar PDF"}
-                </button>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <button
+                    onClick={() => onDescargarPdf(p)}
+                    disabled={descargandoId === `${p.id}:reparacion`}
+                    className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
+                    style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargandoId === `${p.id}:reparacion` ? 0.6 : 1 }}
+                  >
+                    <Download size={13} /> {descargandoId === `${p.id}:reparacion` ? "Generando..." : "Descargar PDF"}
+                  </button>
+                  <button
+                    onClick={() => onCompartir(p)}
+                    disabled={descargandoId === `${p.id}:compartir`}
+                    className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                    style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${p.id}:compartir` ? 0.6 : 1 }}
+                  >
+                    <Share2 size={13} /> {descargandoId === `${p.id}:compartir` ? "Generando..." : "Compartir"}
+                  </button>
+                  <button
+                    onClick={() => onWhatsapp(p)}
+                    disabled={descargandoId === `${p.id}:whatsapp`}
+                    className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                    style={{ borderColor: BORDER, color: "#15803D", opacity: descargandoId === `${p.id}:whatsapp` ? 0.6 : 1 }}
+                  >
+                    <MessageCircle size={13} /> {descargandoId === `${p.id}:whatsapp` ? "Generando..." : "WhatsApp"}
+                  </button>
+                  <InfoTip>
+                    <p>Se descarga el PDF y se abre WhatsApp{p.clienteTelefono ? ` en el chat de ${p.cliente}` : " para elegir el contacto"}.</p>
+                    <p>Como WhatsApp no deja adjuntar un archivo automático desde un link, tocá el clip 📎 en ese chat y elegí el PDF que se acaba de descargar (carpeta Descargas).</p>
+                    {!p.clienteTelefono && <p style={{ color: MUTED }}>Este cliente no tiene teléfono cargado — se abre el selector de contactos de WhatsApp para elegir a mano.</p>}
+                  </InfoTip>
+                </div>
               </div>
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Nombre + WhatsApp de cada cliente — se completa solo al cargar un teléfono en una cotización
+// o presupuesto (ver upsertClienteTelefono), o se carga a mano acá. Reutilizado por el botón
+// "WhatsApp" de cotizaciones/presupuestos para no reescribir el número cada vez.
+function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField }) {
+  return (
+    <Section
+      title="Clientes"
+      subtitle="Nombre y WhatsApp — se completa solo al cargar un teléfono en una cotización o presupuesto, y se reutiliza para enviar por WhatsApp sin volver a escribirlo."
+      query={query} onQuery={onQuery}
+      onNew={onNew} newLabel="Nuevo cliente"
+    >
+      {clientes.length === 0 ? (
+        <EmptyState icon={Phone} title="Todavía no hay clientes cargados" subtitle="Se agregan solos al poner un teléfono en una cotización, o cargalos acá directo." />
+      ) : (
+        <div className="overflow-auto rounded-lg border" style={{ borderColor: BORDER, maxHeight: "80vh" }}>
+          <table className="text-sm" style={{ minWidth: 640 }}>
+            <thead>
+              <tr>
+                {["Nombre", "Teléfono / WhatsApp", "Notas", ""].map((h) => (
+                  <th key={h} className="text-left font-medium px-3 py-2 border-b sticky top-0 z-10 whitespace-nowrap" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {clientes.map((c) => (
+                <tr key={c.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
+                  <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
+                    <ComentarioEditor value={c.nombre} onSave={(v) => onUpdateField(c.id, "nombre", v)} placeholder="Nombre" />
+                  </td>
+                  <td className="px-3 py-1.5" style={{ minWidth: 160 }}>
+                    <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
+                  </td>
+                  <td className="px-3 py-1.5" style={{ minWidth: 220 }}>
+                    <ComentarioEditor value={c.notas} onSave={(v) => onUpdateField(c.id, "notas", v)} placeholder="Opcional" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
+                      <Trash2 size={14} style={{ color: MUTED }} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function ClienteForm({ onSave }) {
+  const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [notas, setNotas] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    if (!nombre.trim()) {
+      setError("Ingresá el nombre.");
+      return;
+    }
+    onSave({ nombre: nombre.trim(), telefono: telefono.trim(), notas });
+  };
+
+  return (
+    <div>
+      <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
+      <Field label="Teléfono / WhatsApp">
+        <TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 595981234567 (con código de país, sin +)" />
+      </Field>
+      <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar cliente</PrimaryButton>
     </div>
   );
 }

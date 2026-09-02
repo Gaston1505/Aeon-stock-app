@@ -448,14 +448,18 @@ function fmtFecha(iso) {
   return `${d}/${m}/${y}`;
 }
 
+export function nombreArchivoCotizacion(cotizacion) {
+  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}.pdf`;
+}
+
 export async function downloadCotizacionPdf(cotizacion) {
   const bytes = await generateCotizacionPdf(cotizacion);
-  const nombre = `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}.pdf`;
-  downloadBlob(bytes, nombre, "application/pdf");
+  downloadBlob(bytes, nombreArchivoCotizacion(cotizacion), "application/pdf");
 }
 
 // ---------- Fichas técnicas combinadas ----------
-export async function downloadFichasTecnicasPdf(cotizacion) {
+// Devuelve los bytes del PDF combinado, o null si ninguna línea tiene ficha técnica cargada.
+export async function generateFichasTecnicasPdf(cotizacion) {
   const vistos = new Set();
   const fichas = [];
   for (const linea of cotizacion.lineas || []) {
@@ -464,7 +468,7 @@ export async function downloadFichasTecnicasPdf(cotizacion) {
       fichas.push(linea);
     }
   }
-  if (fichas.length === 0) return false;
+  if (fichas.length === 0) return null;
 
   const out = await PDFDocument.create();
   for (const f of fichas) {
@@ -477,11 +481,19 @@ export async function downloadFichasTecnicasPdf(cotizacion) {
       console.error("No se pudo incorporar la ficha técnica de", f.codigo, e);
     }
   }
-  if (out.getPageCount() === 0) return false;
+  if (out.getPageCount() === 0) return null;
 
-  const bytes = await out.save();
-  const nombre = `Fichas_tecnicas_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}.pdf`;
-  downloadBlob(bytes, nombre, "application/pdf");
+  return out.save();
+}
+
+export function nombreArchivoFichasTecnicas(cotizacion) {
+  return `Fichas_tecnicas_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}.pdf`;
+}
+
+export async function downloadFichasTecnicasPdf(cotizacion) {
+  const bytes = await generateFichasTecnicasPdf(cotizacion);
+  if (!bytes) return false;
+  downloadBlob(bytes, nombreArchivoFichasTecnicas(cotizacion), "application/pdf");
   return true;
 }
 
@@ -816,9 +828,12 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
   return pdf.save();
 }
 
+export function nombreArchivoPresupuesto(presupuesto) {
+  const prefijo = presupuesto.tipo === "mantenimiento" ? "Presupuesto_Mantenimiento" : "Presupuesto_Reparacion";
+  return `${prefijo}_${(presupuesto.cliente || "cliente").replace(/\s+/g, "_")}_${presupuesto.fecha || ""}.pdf`;
+}
+
 export async function downloadPresupuestoReparacionPdf(presupuesto) {
   const bytes = await generatePresupuestoReparacionPdf(presupuesto);
-  const prefijo = presupuesto.tipo === "mantenimiento" ? "Presupuesto_Mantenimiento" : "Presupuesto_Reparacion";
-  const nombre = `${prefijo}_${(presupuesto.cliente || "cliente").replace(/\s+/g, "_")}_${presupuesto.fecha || ""}.pdf`;
-  downloadBlob(bytes, nombre, "application/pdf");
+  downloadBlob(bytes, nombreArchivoPresupuesto(presupuesto), "application/pdf");
 }

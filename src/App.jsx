@@ -562,6 +562,7 @@ export default function App() {
   const [pagoTarget, setPagoTarget] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
   const [descargandoId, setDescargandoId] = useState(null);
   const [pdfError, setPdfError] = useState("");
   const [importandoCatalogo, setImportandoCatalogo] = useState(false);
@@ -1009,6 +1010,19 @@ export default function App() {
     });
   }, [proximosServices]);
 
+  // Navegación desde un StatCard: soporta un destino compuesto "tab:extra" (hoy solo
+  // "catalogo:repuestos", para que el card de Repuestos del Resumen abra el Catálogo
+  // directamente en modo Repuestos en vez del tab de Repuestos suelto, ya en desuso).
+  const navigateTo = (target) => {
+    if (target === "catalogo:repuestos") {
+      setCatalogoModoInicial("repuestos");
+      setTab("catalogo");
+    } else {
+      setCatalogoModoInicial(null);
+      setTab(target);
+    }
+  };
+
   const NAV = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
     { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
@@ -1065,7 +1079,7 @@ export default function App() {
               return (
                 <button
                   key={n.key}
-                  onClick={() => { setTab(n.key); setQuery(""); setNavOpen(false); }}
+                  onClick={() => { setTab(n.key); setQuery(""); setNavOpen(false); setCatalogoModoInicial(null); }}
                   className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
                   style={{
                     color: active ? ACCENT : INK,
@@ -1091,8 +1105,8 @@ export default function App() {
           <Resumen
             equipos={equipos} proximosServices={proximosServices} alertasContacto={alertasContacto}
             seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
-            playa={playa} muestras={muestras} repuestos={repuestos} ventasCerradas={ventasCerradas}
-            onNavigate={setTab}
+            playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
+            onNavigate={navigateTo}
           />
         )}
 
@@ -1285,6 +1299,7 @@ export default function App() {
         {tab === "catalogo" && (
           <CatalogoView
             productos={filteredProductos} query={query} onQuery={setQuery}
+            modoInicial={catalogoModoInicial}
             onNew={() => { setProductoEditando(null); setDrawer("producto"); }}
             onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
             onDelete={deleteProducto}
@@ -1568,11 +1583,15 @@ function VentasCerradasPanel({ ventasCerradas }) {
   );
 }
 
-function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, repuestos, ventasCerradas, onNavigate }) {
+function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, onNavigate }) {
   const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
   const bajas = equipos.filter((e) => e.estado === "Dado de baja");
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
-  const totalRepuestos = sumCantidad(repuestos);
+  // El stock de repuestos vive en el Catálogo de productos (categoriaPrincipal="Repuestos"),
+  // no en la colección "repuestos" suelta — ese origen quedó en desuso.
+  const totalRepuestos = productos
+    .filter((p) => p.categoriaPrincipal === "Repuestos")
+    .reduce((acc, p) => acc + (Number(p.stockDisponible) || 0), 0);
   const totalPlaya = sumCantidad(playa);
   const totalVendido = ventasCerradas.reduce((acc, v) => acc + (Number(v.cantidad) || 0), 0);
 
@@ -1582,7 +1601,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
     { label: "Stock vendible", value: sumCantidad(vendible), icon: ArrowDownToLine, tab: "equipos" },
     { label: "Banco de recuperables", value: sumCantidad(recuperables), icon: Wrench, tab: "recuperables" },
     { label: "Muestras", value: sumCantidad(muestras), icon: Star, tab: "muestras" },
-    { label: "Repuestos (unidades)", value: totalRepuestos, icon: Boxes, tab: "repuestos" },
+    { label: "Repuestos (unidades)", value: totalRepuestos, icon: Boxes, tab: "catalogo:repuestos" },
   ];
   const cardsHistorico = [
     { label: "Vendidos y retirados", value: totalVendido, icon: CheckCircle2, tab: "movimientos" },
@@ -3626,9 +3645,9 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
   );
 }
 
-function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado }) {
+function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
   const fileInputRef = useRef(null);
-  const [modo, setModo] = useState("productos"); // "productos" | "repuestos" — carpetas totalmente separadas
+  const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
 
   const productosFiltrados = useMemo(

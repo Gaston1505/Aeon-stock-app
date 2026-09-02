@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -571,13 +571,22 @@ function SearchBox({ value, onChange, placeholder }) {
   );
 }
 
-function nextCodigo(equipos) {
+// Código interno = modelo + secuencia por unidad de ese modelo (ej. "ASAFB-12HRN1-01"), en vez
+// de un contador global sin relación con el producto — así el código ya dice qué es de un vistazo,
+// y una vez que empiecen a llegar series reales de fábrica, cada unidad de un mismo modelo se
+// distingue con su propio número dentro de esa familia.
+function nextCodigoParaModelo(equipos, modelo) {
+  const base = (modelo || "").trim();
+  if (!base) return "";
+  const prefix = `${base}-`;
   let max = 0;
   equipos.forEach((e) => {
-    const m = /AEO-(\d+)/.exec(e.codigo || "");
-    if (m) max = Math.max(max, parseInt(m[1], 10));
+    if ((e.codigo || "").startsWith(prefix)) {
+      const n = parseInt((e.codigo || "").slice(prefix.length), 10);
+      if (!isNaN(n)) max = Math.max(max, n);
+    }
   });
-  return `AEO-${String(max + 1).padStart(4, "0")}`;
+  return `${base}-${String(max + 1).padStart(2, "0")}`;
 }
 
 // ---------- Main App ----------
@@ -647,6 +656,27 @@ export default function App() {
   const updateEquipoField = (id, field, value) => updateItem(COLLECTIONS.equipos, id, { [field]: value });
   const deleteEquipo = (id) => deleteItem(COLLECTIONS.equipos, id);
 
+  // Carga masiva por pistola lectora: una unidad individual (cantidad 1) por cada código
+  // escaneado, con secuencia propia dentro de ese modelo (modelo-01, modelo-02, ...).
+  const addEquiposPorEscaneo = (data) => {
+    const prefix = `${data.modelo}-`;
+    let max = 0;
+    equipos.forEach((e) => {
+      if ((e.codigo || "").startsWith(prefix)) {
+        const n = parseInt((e.codigo || "").slice(prefix.length), 10);
+        if (!isNaN(n)) max = Math.max(max, n);
+      }
+    });
+    data.series.forEach((serie) => {
+      max++;
+      addItem(COLLECTIONS.equipos, {
+        codigo: `${data.modelo}-${String(max).padStart(2, "0")}`,
+        serie, modelo: data.modelo, fechaIngreso: data.fechaIngreso,
+        estado: data.estado, ubicacion: data.ubicacion, cantidad: 1, notas: "",
+      });
+    });
+  };
+
   const addMovimiento = (data) => {
     // data: { fecha, categoria, sourceId, codigo, modelo, cantidad, motivo, cliente, remito, responsable, observaciones }
     addItem(COLLECTIONS.movimientos, data);
@@ -666,7 +696,7 @@ export default function App() {
       if (motivo && motivo.trackea) {
         // El equipo sigue siendo un activo a rastrear (préstamo, sustitución, reparación): se le crea una nueva fila con nuevo código
         addItem(COLLECTIONS.equipos, {
-          codigo: nextCodigo(equipos), serie: "", modelo: data.modelo,
+          codigo: nextCodigoParaModelo(equipos, data.modelo), serie: "", modelo: data.modelo,
           fechaIngreso: data.fecha, estado: motivo.estado,
           ubicacion: `Fuera de depósito (${data.cliente || "cliente"})`,
           cantidad: cantidadRetirada, notas: data.observaciones || "",
@@ -864,7 +894,7 @@ export default function App() {
   const derivarPlaya = (item, destinoValue, extra) => {
     const destino = DESTINOS_PLAYA.find((d) => d.value === destinoValue);
     if (!destino) return;
-    const codigo = nextCodigo(equipos);
+    const codigo = nextCodigoParaModelo(equipos, item.descripcion);
     addItem(COLLECTIONS.equipos, {
       codigo, serie: "", modelo: item.descripcion,
       fechaIngreso: item.fecha, estado: destino.estado,
@@ -1179,6 +1209,11 @@ export default function App() {
             query={query} onQuery={setQuery}
             onNew={() => setDrawer("equipo")}
             newLabel="Nuevo equipo"
+            extraActions={
+              <SecondaryButton onClick={() => setDrawer("escaneo")}>
+                <ScanLine size={14} /> Cargar por escaneo
+              </SecondaryButton>
+            }
           >
             <Table
               columns={[
@@ -1361,7 +1396,10 @@ export default function App() {
 
       {/* Drawers */}
       <Drawer open={drawer === "equipo"} onClose={() => setDrawer(null)} title="Nuevo equipo">
-        <EquipoForm sugerido={nextCodigo(equipos)} onSave={(d) => { addEquipo(d); setDrawer(null); }} />
+        <EquipoForm equipos={equipos} onSave={(d) => { addEquipo(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "escaneo"} onClose={() => setDrawer(null)} title="Cargar por escaneo">
+        <EscaneoUnidadesForm onSave={(d) => { addEquiposPorEscaneo(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "movimiento"} onClose={() => setDrawer(null)} title="Nueva salida">
         <MovimientoForm equipos={equipos} playa={playa} productos={productos} onSave={(d) => { addMovimiento(d); setDrawer(null); }} />
@@ -2441,8 +2479,9 @@ function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
 }
 
 // ---------- Forms ----------
-function EquipoForm({ sugerido, onSave }) {
-  const [codigo, setCodigo] = useState(sugerido);
+function EquipoForm({ equipos, onSave }) {
+  const [codigo, setCodigo] = useState("");
+  const [codigoAuto, setCodigoAuto] = useState(true);
   const [serie, setSerie] = useState("");
   const [modelo, setModelo] = useState("");
   const [fechaIngreso, setFechaIngreso] = useState(todayISO());
@@ -2452,6 +2491,17 @@ function EquipoForm({ sugerido, onSave }) {
   const [notas, setNotas] = useState("");
   const [motivoBaja, setMotivoBaja] = useState("");
   const [error, setError] = useState("");
+
+  // El código interno se arma solo a partir del modelo (modelo-01, modelo-02...) mientras el
+  // usuario no lo edite a mano — si lo toca, dejamos de pisarlo aunque siga cambiando el modelo.
+  const handleModelo = (v) => {
+    setModelo(v);
+    if (codigoAuto) setCodigo(nextCodigoParaModelo(equipos, v));
+  };
+  const handleCodigo = (v) => {
+    setCodigo(v);
+    setCodigoAuto(false);
+  };
 
   const submit = () => {
     if (!codigo.trim() || !modelo.trim()) {
@@ -2463,9 +2513,9 @@ function EquipoForm({ sugerido, onSave }) {
 
   return (
     <div>
-      <Field label="Código interno"><TextInput value={codigo} onChange={(e) => setCodigo(e.target.value)} /></Field>
+      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => handleModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Código interno"><TextInput value={codigo} onChange={(e) => handleCodigo(e.target.value)} placeholder="Se arma solo a partir del modelo" /></Field>
       <Field label="N° de serie"><TextInput value={serie} onChange={(e) => setSerie(e.target.value)} placeholder="N° de serie de fábrica" /></Field>
-      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
       <Field label="Cantidad"><TextInput type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
       <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
       <Field label="Estado"><Select value={estado} onChange={(e) => setEstado(e.target.value)}>{ESTADOS.map((s) => <option key={s}>{s}</option>)}</Select></Field>
@@ -2481,6 +2531,96 @@ function EquipoForm({ sugerido, onSave }) {
       <Field label="Comentario"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar equipo</PrimaryButton>
+    </div>
+  );
+}
+
+function EscaneoUnidadesForm({ onSave }) {
+  const [modelo, setModelo] = useState("");
+  const [estado, setEstado] = useState("En depósito");
+  const [ubicacion, setUbicacion] = useState("Depósito principal");
+  const [fechaIngreso, setFechaIngreso] = useState(todayISO());
+  const [scanInput, setScanInput] = useState("");
+  const [series, setSeries] = useState([]);
+  const [error, setError] = useState("");
+
+  const registrarScan = () => {
+    const v = scanInput.trim();
+    if (!v) return;
+    if (series.includes(v)) {
+      setError(`"${v}" ya fue escaneado en esta carga.`);
+      setScanInput("");
+      return;
+    }
+    setSeries([...series, v]);
+    setScanInput("");
+    setError("");
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      registrarScan();
+    }
+  };
+
+  const quitarSerie = (s) => setSeries(series.filter((x) => x !== s));
+
+  const submit = () => {
+    if (!modelo.trim()) {
+      setError("Ingresá el modelo.");
+      return;
+    }
+    if (series.length === 0) {
+      setError("Escaneá al menos una unidad antes de guardar.");
+      return;
+    }
+    onSave({ modelo, estado, ubicacion, fechaIngreso, series });
+  };
+
+  return (
+    <div>
+      <p className="text-xs mb-3" style={{ color: MUTED }}>
+        Cada código escaneado carga una unidad individual (cantidad 1) con ese número de serie —
+        para cuando lleguen productos con serie propia por caja.
+      </p>
+      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Estado inicial">
+        <Select value={estado} onChange={(e) => setEstado(e.target.value)}>
+          {ESTADOS.filter((s) => s !== "Dado de baja").map((s) => <option key={s}>{s}</option>)}
+        </Select>
+      </Field>
+      <Field label="Ubicación"><TextInput value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} /></Field>
+      <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Escaneo de unidades</p>
+      <Field label={`Código / N° de serie — ${series.length} escaneada${series.length === 1 ? "" : "s"}`}>
+        <input
+          autoFocus
+          value={scanInput}
+          onChange={(e) => setScanInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Apuntá la pistola acá y escaneá — o tipeá el código y Enter"
+          className="w-full text-sm px-3 py-2 rounded-md border outline-none"
+          style={{ borderColor: BORDER, color: INK }}
+        />
+      </Field>
+
+      {series.length > 0 && (
+        <div className="mb-3 rounded border overflow-y-auto" style={{ borderColor: BORDER, maxHeight: 220 }}>
+          {series.map((s, i) => (
+            <div key={s} className="flex items-center justify-between px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <span style={{ color: INK }}>{i + 1}. {s}</span>
+              <button onClick={() => quitarSerie(s)}><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>
+        Guardar{series.length > 0 ? ` ${series.length} unidad${series.length === 1 ? "" : "es"}` : ""}
+      </PrimaryButton>
     </div>
   );
 }

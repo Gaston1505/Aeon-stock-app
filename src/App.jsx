@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -2535,6 +2535,27 @@ function EquipoForm({ equipos, onSave }) {
   );
 }
 
+// Botón "i" que abre/cierra una explicación corta al lado de un título — reutilizable en
+// cualquier pantalla que tenga carga por escaneo.
+function InfoTip({ children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-block">
+      <button type="button" onClick={() => setOpen(!open)} className="align-middle p-0.5 rounded hover:bg-gray-100">
+        <Info size={14} style={{ color: MUTED }} />
+      </button>
+      {open && (
+        <div
+          className="absolute z-20 left-0 mt-1 p-3 rounded-lg text-xs space-y-1.5"
+          style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}`, color: INK, width: 260, boxShadow: "0 4px 16px rgba(0,0,0,0.12)" }}
+        >
+          {children}
+        </div>
+      )}
+    </span>
+  );
+}
+
 const FORMATOS_BARCODE = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code", "itf", "codabar"];
 
 function EscaneoUnidadesForm({ onSave }) {
@@ -2661,7 +2682,16 @@ function EscaneoUnidadesForm({ onSave }) {
       <Field label="Ubicación"><TextInput value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} /></Field>
       <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Escaneo de unidades</p>
+      <div className="flex items-center gap-1 mt-4 mb-2">
+        <p className="text-xs font-semibold" style={{ color: ACCENT }}>Escaneo de unidades</p>
+        <InfoTip>
+          <p><strong>1.</strong> Completá Modelo, Estado y Ubicación una vez — aplican a toda la tanda.</p>
+          <p><strong>2.</strong> Tocá "Escanear con la cámara" y aceptá el permiso (funciona en Chrome de Android).</p>
+          <p><strong>3.</strong> Apuntá cada código — se agrega solo a la lista, sin tocar nada más.</p>
+          <p><strong>4.</strong> Cuando termines de escanear el lote, tocá "Guardar" para subir todo junto.</p>
+          <p style={{ color: MUTED }}>Sin cámara compatible podés usar una pistola lectora, o escribir el código a mano en el mismo campo y Enter.</p>
+        </InfoTip>
+      </div>
 
       <div className="mb-2">
         {!camaraActiva ? (

@@ -1214,6 +1214,24 @@ export default function App() {
     });
   }, [proximosServices]);
 
+  // Stock bajo: solo productos a los que se les cargó un mínimo (stockMinimo). Para repuestos
+  // se compara contra su stockDisponible; para el resto, contra las unidades vendibles del
+  // mismo modelo en Maestro de equipos (única fuente real de stock para esos productos).
+  const stockBajo = useMemo(() => {
+    return productos
+      .filter((p) => p.stockMinimo != null && Number(p.stockMinimo) > 0)
+      .map((p) => {
+        const actual = p.categoriaPrincipal === "Repuestos"
+          ? Number(p.stockDisponible) || 0
+          : equipos
+            .filter((e) => e.modelo === p.nombre && ESTADOS_EQUIPO_VENDIBLE.includes(e.estado))
+            .reduce((acc, e) => acc + Math.max(0, (Number(e.cantidad) || 1) - (Number(e.comprometido) || 0)), 0);
+        return { producto: p, actual, minimo: Number(p.stockMinimo) };
+      })
+      .filter((r) => r.actual < r.minimo)
+      .sort((a, b) => (a.actual - a.minimo) - (b.actual - b.minimo));
+  }, [productos, equipos]);
+
   // Navegación desde un StatCard: soporta un destino compuesto "tab:extra" (hoy solo
   // "catalogo:repuestos", para que el card de Repuestos del Resumen abra el Catálogo
   // directamente en modo Repuestos en vez del tab de Repuestos suelto, ya en desuso).
@@ -1310,6 +1328,7 @@ export default function App() {
             equipos={equipos} proximosServices={proximosServices} alertasContacto={alertasContacto}
             seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
             playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
+            stockBajo={stockBajo}
             onNavigate={navigateTo}
           />
         )}
@@ -1812,7 +1831,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
   );
 }
 
-function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, onNavigate }) {
+function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
   const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
   const bajas = equipos.filter((e) => e.estado === "Dado de baja");
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
@@ -1886,6 +1905,23 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
             </div>
           )}
           <p className="text-xs mt-2" style={{ color: "#92400E" }}>Gestioná el contacto y la decisión del cliente desde la pestaña "Ventas y garantías".</p>
+        </div>
+      )}
+
+      {stockBajo.length > 0 && (
+        <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FBEAEA", border: "0.5px solid #F5C6C6" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={15} style={{ color: "#B91C1C" }} />
+            <h3 className="text-sm font-semibold" style={{ color: "#7F1D1D" }}>Stock bajo — reponer pronto</h3>
+          </div>
+          {stockBajo.map((r) => (
+            <p key={r.producto.id} className="text-sm" style={{ color: "#7F1D1D" }}>
+              · {r.producto.nombre} — quedan {r.actual} (mínimo {r.minimo})
+            </p>
+          ))}
+          <button onClick={() => onNavigate("catalogo")} className="text-xs mt-2 underline" style={{ color: "#7F1D1D" }}>
+            Ver en Catálogo de productos
+          </button>
         </div>
       )}
 
@@ -4078,6 +4114,7 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
+  const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stockMinimo ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
@@ -4133,6 +4170,7 @@ function ProductoForm({ producto, defaults, onSave }) {
         costoOrigen: Number(costoOrigen) || 0, costoPy: Number(costoPy) || 0,
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
+        stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
         foto, ...ficha,
       });
     } catch (err) {
@@ -4183,6 +4221,14 @@ function ProductoForm({ producto, defaults, onSave }) {
         <Field label="Cantidad por contenedor"><TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} /></Field>
       </div>
       <Field label="Stock disponible (unidades en depósito)"><TextInput type="number" value={stockDisponible} onChange={(e) => setStockDisponible(e.target.value)} /></Field>
+      <Field label="Stock mínimo (para avisarte cuando esté bajo)">
+        <TextInput type="number" min="0" value={stockMinimo} onChange={(e) => setStockMinimo(e.target.value)} placeholder="Dejalo vacío para no recibir alerta" />
+      </Field>
+      <p className="text-xs mb-3 -mt-2" style={{ color: MUTED }}>
+        {esRepuesto
+          ? "Se compara contra el Stock disponible de arriba."
+          : "Se compara contra las unidades vendibles cargadas en Maestro de equipos con este mismo modelo — no hace falta tocar Stock disponible."}
+      </p>
 
       <Field label="Foto de referencia">
         <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />

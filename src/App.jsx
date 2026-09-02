@@ -251,8 +251,15 @@ function updateItem(name, id, patch) {
   return updateDoc(doc(db, name, id), patch)
     .catch((e) => console.error("Firestore update error", name, id, e));
 }
-function deleteItem(name, id) {
-  if (!window.confirm("¿Eliminar este registro? Esta acción no se puede deshacer.")) return;
+// El navegador nativo (window.confirm) resultó poco confiable en algunos celulares/PWA —
+// a veces no aparece o queda bloqueado por el navegador sin avisar. `confirmBridge` lo
+// conecta con un popup propio de la app (ver ConfirmDialog), montado una vez desde App.
+let confirmBridge = null;
+async function deleteItem(name, id) {
+  const confirmado = confirmBridge
+    ? await confirmBridge("¿Eliminar este registro? Esta acción no se puede deshacer.")
+    : window.confirm("¿Eliminar este registro? Esta acción no se puede deshacer.");
+  if (!confirmado) return;
   return deleteDoc(doc(db, name, id))
     .catch((e) => console.error("Firestore delete error", name, id, e));
 }
@@ -452,6 +459,41 @@ function Drawer({ open, onClose, title, children }) {
   );
 }
 
+function ConfirmDialog({ state, onResolve }) {
+  if (!state) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ backgroundColor: "rgba(15,23,32,0.75)" }}
+      onClick={() => onResolve(false)}
+    >
+      <div
+        className="rounded-xl p-5 w-full"
+        style={{ backgroundColor: "#FFFFFF", maxWidth: 340 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-sm" style={{ color: INK }}>{state.message}</p>
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={() => onResolve(false)}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={{ backgroundColor: "#FFFFFF", color: MUTED, border: `0.5px solid ${BORDER}` }}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => onResolve(true)}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={{ backgroundColor: "#B91C1C", color: "#FFFFFF" }}
+          >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PhotoViewer({ src, onClose }) {
   if (!src) return null;
   return (
@@ -555,6 +597,16 @@ export default function App() {
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
   const [fotoView, setFotoView] = useState(null);
+  const [confirmState, setConfirmState] = useState(null);
+
+  useEffect(() => {
+    confirmBridge = (message) => new Promise((resolve) => setConfirmState({ message, resolve }));
+    return () => { confirmBridge = null; };
+  }, []);
+  const resolveConfirm = (value) => {
+    confirmState?.resolve(value);
+    setConfirmState(null);
+  };
   const [retiroTarget, setRetiroTarget] = useState(null);
   const [pagoTarget, setPagoTarget] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
@@ -1385,6 +1437,7 @@ export default function App() {
         )}
       </Drawer>
       <PhotoViewer src={fotoView} onClose={() => setFotoView(null)} />
+      <ConfirmDialog state={confirmState} onResolve={resolveConfirm} />
     </div>
   );
 }

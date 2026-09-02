@@ -616,7 +616,7 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
       let cx = startX;
       const headers = [
         ["Categoría", colCategoria], ["Detalle", colDetalleMtto],
-        ["Cant.", colCantMtto], ["Precio Unitario ₲", colPrecioMtto],
+        ["Cant.", colCantMtto], ["Precio Unitario Gs.", colPrecioMtto],
       ];
       headers.forEach(([label, w]) => {
         const lw = bold.widthOfTextAtSize(label, 6.5);
@@ -663,7 +663,7 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
     rect(MARGIN, y - 16, CONTENT_W - colTotalMtto, 16, { fill: ACCENT_LIGHT });
     text("Sub-total mantenimiento", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
     rect(MARGIN + CONTENT_W - colTotalMtto, y - 16, colTotalMtto, 16, { fill: ACCENT_LIGHT });
-    const subMttoStr = `₲ ${fmtGs(subtotalMtto)}`;
+    const subMttoStr = `Gs. ${fmtGs(subtotalMtto)}`;
     text(subMttoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subMttoStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
     y -= 16;
 

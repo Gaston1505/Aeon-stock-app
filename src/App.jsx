@@ -877,6 +877,7 @@ export default function App() {
       "Código interno": e.codigo, "N° de serie": e.serie, "Modelo": e.modelo,
       "Fecha ingreso": e.fechaIngreso, "Estado actual": e.estado, "Ubicación": e.ubicacion,
       "Cantidad": e.cantidad || 1, "Comprometido": e.comprometido || 0,
+      "Sin marca": e.sinMarca ? "Sí" : "No",
       "Motivo de baja": e.motivoBaja || "", "Comentario": e.notas || "",
     })));
     const wsMov = XLSX.utils.json_to_sheet(movimientos.map((m) => ({
@@ -2265,22 +2266,60 @@ function ComentarioEditor({ value, onSave, placeholder = "Ej: en muestra por def
   );
 }
 
+const MUESTRAS_TABS = [
+  { key: "todas", label: "Todas" },
+  { key: "con-marca", label: "Con marca" },
+  { key: "sin-marca", label: "Sin marca" },
+];
+
 function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
-  const filtered = muestras.filter((e) => {
+  const [tabMarca, setTabMarca] = useState("todas");
+
+  const buscadas = muestras.filter((e) => {
     const q = query.toLowerCase();
     return !q || [e.codigo, e.modelo].some((v) => (v || "").toLowerCase().includes(q));
   });
+  const filtered = buscadas.filter((e) => {
+    if (tabMarca === "con-marca") return !e.sinMarca;
+    if (tabMarca === "sin-marca") return !!e.sinMarca;
+    return true;
+  });
+
+  const totalTodas = sumCantidad(buscadas);
+  const totalSinMarca = sumCantidad(buscadas.filter((e) => e.sinMarca));
+  const totalConMarca = totalTodas - totalSinMarca;
+
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold" style={{ color: INK }}>Muestras</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Equipos usados como pieza de exhibición — en depósito o prestados a un cliente.
+            Equipos usados como pieza de exhibición — en depósito o prestados a un cliente. Incluye tanto muestras con
+            marca como muestras sin marca de fábrica (China) — el total de acá es el que se reporta al seguro.
           </p>
         </div>
         <SearchBox value={query} onChange={onQuery} />
       </div>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        {MUESTRAS_TABS.map((t) => {
+          const n = t.key === "todas" ? totalTodas : t.key === "con-marca" ? totalConMarca : totalSinMarca;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTabMarca(t.key)}
+              className="text-xs px-3 py-1.5 rounded-full font-medium"
+              style={tabMarca === t.key
+                ? { backgroundColor: ACCENT, color: "#FFFFFF" }
+                : { backgroundColor: "#F2F3F4", color: MUTED }}
+            >
+              {t.label} ({n})
+            </button>
+          );
+        })}
+      </div>
+
       {filtered.length === 0 ? (
         <EmptyState icon={Star} title="No hay muestras cargadas" subtitle="Los equipos clasificados como Muestra van a aparecer acá." />
       ) : (
@@ -2288,7 +2327,7 @@ function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ backgroundColor: "#FAFBFC" }}>
-                {["Producto", "Código", "Cantidad", "Estado", "Comentario"].map((h) => (
+                {["Producto", "Código", "Cantidad", "Estado", "Sin marca", "Comentario"].map((h) => (
                   <th key={h} className="text-left font-medium px-3 py-2.5 border-b" style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>{h}</th>
                 ))}
               </tr>
@@ -2300,6 +2339,13 @@ function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
                   <td className="px-3 py-2.5"><CodeTag>{e.codigo}</CodeTag></td>
                   <td className="px-3 py-2.5" style={{ color: INK }}>{e.cantidad || 1}</td>
                   <td className="px-3 py-2.5"><StatusBadge estado={e.estado} /></td>
+                  <td className="px-3 py-2.5 text-center">
+                    <input
+                      type="checkbox" checked={!!e.sinMarca}
+                      onChange={(ev) => onUpdateField(e.id, "sinMarca", ev.target.checked)}
+                      title="Muestra de fábrica sin logo de la marca"
+                    />
+                  </td>
                   <td className="px-3 py-2.5" style={{ minWidth: 260 }}>
                     <ComentarioEditor value={e.notas} onSave={(v) => onUpdateField(e.id, "notas", v)} />
                   </td>

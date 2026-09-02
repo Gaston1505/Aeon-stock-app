@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -706,6 +706,87 @@ function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion
   );
 }
 
+// Campanita de alertas — visible en cualquier pestaña (no solo en Resumen), agrupa lo mismo que
+// ya se calcula ahí (garantías a contactar/reenviar, stock bajo) para no duplicar esa lógica.
+function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const total = alertasContacto.length + seguimientosPendientes.length + stockBajo.length;
+
+  const ir = (tab) => {
+    onIr(tab);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative shrink-0">
+      <button onClick={() => setOpen(!open)} className="relative p-1.5 rounded hover:bg-gray-100">
+        <Bell size={18} style={{ color: total > 0 ? "#B91C1C" : MUTED }} />
+        {total > 0 && (
+          <span
+            className="absolute -top-0.5 -right-0.5 flex items-center justify-center rounded-full text-[10px] font-semibold"
+            style={{ width: 15, height: 15, backgroundColor: "#B91C1C", color: "#FFFFFF" }}
+          >
+            {total > 9 ? "9+" : total}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 mt-1 rounded-lg overflow-y-auto z-50"
+          style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}`, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", width: 280, maxHeight: 360 }}
+        >
+          {total === 0 ? (
+            <p className="text-xs px-3 py-3" style={{ color: MUTED }}>Sin alertas pendientes.</p>
+          ) : (
+            <>
+              {alertasContacto.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1" style={{ color: MUTED }}>Contactar por garantía</p>
+                  {alertasContacto.map((s, i) => (
+                    <button key={i} onClick={() => ir("ventas")} className="w-full text-left text-xs px-3 py-1.5 hover:bg-gray-50" style={{ color: INK }}>
+                      {s.cliente} — {s.obra} — {s.label} ({s.dias < 0 ? `vencido hace ${Math.abs(s.dias)}d` : `en ${s.dias}d`})
+                    </button>
+                  ))}
+                </div>
+              )}
+              {seguimientosPendientes.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1" style={{ color: MUTED }}>Reenviar recordatorio</p>
+                  {seguimientosPendientes.map((s, i) => (
+                    <button key={i} onClick={() => ir("ventas")} className="w-full text-left text-xs px-3 py-1.5 hover:bg-gray-50" style={{ color: INK }}>
+                      {s.cliente} — {s.obra} — {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {stockBajo.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1" style={{ color: MUTED }}>Stock bajo</p>
+                  {stockBajo.map((r) => (
+                    <button key={r.producto.id} onClick={() => ir("catalogo")} className="w-full text-left text-xs px-3 py-1.5 hover:bg-gray-50" style={{ color: INK }}>
+                      {r.producto.nombre} — quedan {r.actual} (mínimo {r.minimo})
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Código interno = modelo + secuencia por unidad de ese modelo (ej. "ASAFB-12HRN1-01"), en vez
 // de un contador global sin relación con el producto — así el código ya dice qué es de un vistazo,
 // y una vez que empiecen a llegar series reales de fábrica, cada unidad de un mismo modelo se
@@ -1378,7 +1459,11 @@ export default function App() {
         <button onClick={() => setNavOpen(true)} className="p-1 -ml-1 rounded hover:bg-gray-100">
           <Menu size={20} style={{ color: INK }} />
         </button>
-        <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-8 w-auto" />
+        <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-8 w-auto flex-1" />
+        <AlertasBell
+          alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
+          onIr={navigateTo}
+        />
       </div>
 
       <div className="flex w-full">
@@ -1392,8 +1477,14 @@ export default function App() {
           className={`fixed md:static inset-y-0 left-0 z-40 w-56 shrink-0 border-r flex flex-col transition-transform duration-200 md:translate-x-0 ${navOpen ? "translate-x-0" : "-translate-x-full"}`}
           style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}
         >
-          <div className="px-4 py-4 border-b" style={{ borderColor: BORDER }}>
+          <div className="px-4 py-4 border-b flex items-start justify-between" style={{ borderColor: BORDER }}>
             <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-20 w-auto" />
+            <div className="hidden md:block">
+              <AlertasBell
+                alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
+                onIr={(t) => { navigateTo(t); setNavOpen(false); }}
+              />
+            </div>
           </div>
           <div className="px-4 py-3 border-b" style={{ borderColor: BORDER }}>
             <GlobalSearch

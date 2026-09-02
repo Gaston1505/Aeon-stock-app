@@ -135,25 +135,6 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
-// Compartir por WhatsApp / mail: WhatsApp no permite adjuntar un archivo automáticamente
-// desde un link (solo lo hace la API paga de WhatsApp Business), así que abrimos el chat con
-// el mensaje ya escrito y el PDF recién descargado, para adjuntarlo a mano con el clip 📎.
-// Sin número guardado, wa.me/?text= abre el selector de contactos de WhatsApp del celular.
-function linkWhatsApp(telefono, texto) {
-  const numero = (telefono || "").replace(/[^\d]/g, "");
-  return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
-}
-
-// Abre la pestaña ANTES de generar el PDF (que es async) — si se abre recién después de un
-// await, varios navegadores (Safari siempre, Chrome a veces) bloquean el window.open porque ya
-// no lo cuentan como parte del mismo gesto de click del usuario. Se navega esa pestaña ya
-// abierta una vez que el link está listo, en vez de abrir una nueva.
-function abrirVentanaWhatsApp() {
-  const ventana = window.open("", "_blank");
-  if (ventana) ventana.document.write('<p style="font-family:sans-serif;padding:20px;color:#686D73">Generando PDF...</p>');
-  return ventana;
-}
-
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
 // con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
 async function compartirArchivo(bytes, filename, texto) {
@@ -942,22 +923,6 @@ export default function App() {
     setDescargandoId(null);
   };
 
-  const handleWhatsappCotizacion = async (cotizacion) => {
-    const ventana = abrirVentanaWhatsApp();
-    setDescargandoId(cotizacion.id + ":whatsapp");
-    setPdfError("");
-    try {
-      await downloadCotizacionPdf(cotizacion);
-      const url = linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso la cotización.`);
-      if (ventana) ventana.location.href = url; else window.open(url, "_blank");
-    } catch (e) {
-      if (ventana) ventana.close();
-      console.error("Error generando PDF para WhatsApp", e);
-      setPdfError("No se pudo generar el PDF de la cotización. Probá de nuevo.");
-    }
-    setDescargandoId(null);
-  };
-
   const handleCompartirFichas = async (cotizacion) => {
     setDescargandoId(cotizacion.id + ":compartir-fichas");
     setPdfError("");
@@ -973,28 +938,6 @@ export default function App() {
     } catch (e) {
       console.error("Error compartiendo fichas técnicas", e);
       setPdfError("No se pudo compartir el PDF de fichas técnicas. Probá de nuevo.");
-    }
-    setDescargandoId(null);
-  };
-
-  const handleWhatsappFichas = async (cotizacion) => {
-    const ventana = abrirVentanaWhatsApp();
-    setDescargandoId(cotizacion.id + ":whatsapp-fichas");
-    setPdfError("");
-    try {
-      const ok = await downloadFichasTecnicasPdf(cotizacion);
-      if (!ok) {
-        if (ventana) ventana.close();
-        setPdfError("Ninguno de los productos de esta cotización tiene ficha técnica cargada.");
-        setDescargandoId(null);
-        return;
-      }
-      const url = linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso las fichas técnicas.`);
-      if (ventana) ventana.location.href = url; else window.open(url, "_blank");
-    } catch (e) {
-      if (ventana) ventana.close();
-      console.error("Error generando fichas técnicas para WhatsApp", e);
-      setPdfError("No se pudo generar el PDF de fichas técnicas. Probá de nuevo.");
     }
     setDescargandoId(null);
   };
@@ -1024,22 +967,6 @@ export default function App() {
     } catch (e) {
       console.error("Error compartiendo presupuesto", e);
       setPdfError("No se pudo compartir el PDF del presupuesto. Probá de nuevo.");
-    }
-    setDescargandoId(null);
-  };
-
-  const handleWhatsappPresupuesto = async (presupuesto) => {
-    const ventana = abrirVentanaWhatsApp();
-    setDescargandoId(presupuesto.id + ":whatsapp");
-    setPdfError("");
-    try {
-      await downloadPresupuestoReparacionPdf(presupuesto);
-      const url = linkWhatsApp(presupuesto.clienteTelefono, `Hola${presupuesto.cliente ? " " + presupuesto.cliente : ""}, te paso el presupuesto.`);
-      if (ventana) ventana.location.href = url; else window.open(url, "_blank");
-    } catch (e) {
-      if (ventana) ventana.close();
-      console.error("Error generando PDF de presupuesto para WhatsApp", e);
-      setPdfError("No se pudo generar el PDF del presupuesto. Probá de nuevo.");
     }
     setDescargandoId(null);
   };
@@ -1584,9 +1511,7 @@ export default function App() {
             onDescargarPdf={handleDescargarPdf}
             onDescargarFichas={handleDescargarFichas}
             onCompartir={handleCompartirCotizacion}
-            onWhatsapp={handleWhatsappCotizacion}
             onCompartirFichas={handleCompartirFichas}
-            onWhatsappFichas={handleWhatsappFichas}
             descargandoId={descargandoId}
             pdfError={pdfError}
           />
@@ -1599,7 +1524,6 @@ export default function App() {
             onDelete={deletePresupuestoReparacion}
             onDescargarPdf={handleDescargarPresupuestoPdf}
             onCompartir={handleCompartirPresupuesto}
-            onWhatsapp={handleWhatsappPresupuesto}
             descargandoId={descargandoId}
             pdfError={pdfError}
           />
@@ -4777,7 +4701,7 @@ const SALIDA_COTIZACION_BADGE = {
   pendiente: { label: "Sin salida", bg: "#F2F3F4", color: "#686D73" },
 };
 
-function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId }) {
+function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
@@ -4834,19 +4758,6 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
         >
           <Share2 size={13} /> {descargandoId === `${c.id}:compartir` ? "Generando..." : "Compartir"}
         </button>
-        <button
-          onClick={() => onWhatsapp(c)}
-          disabled={descargandoId === `${c.id}:whatsapp`}
-          className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-          style={{ borderColor: BORDER, color: "#15803D", opacity: descargandoId === `${c.id}:whatsapp` ? 0.6 : 1 }}
-        >
-          <MessageCircle size={13} /> {descargandoId === `${c.id}:whatsapp` ? "Generando..." : "WhatsApp"}
-        </button>
-        <InfoTip>
-          <p>Se descarga el PDF y se abre WhatsApp{c.clienteTelefono ? ` en el chat de ${c.cliente}` : " para elegir el contacto"}.</p>
-          <p>Como WhatsApp no deja adjuntar un archivo automático desde un link, tocá el clip 📎 en ese chat y elegí el PDF que se acaba de descargar (carpeta Descargas).</p>
-          {!c.clienteTelefono && <p style={{ color: MUTED }}>Este cliente no tiene teléfono cargado — se abre el selector de contactos de WhatsApp para elegir a mano.</p>}
-        </InfoTip>
         {tieneFichas && (
           <>
             <button
@@ -4865,14 +4776,6 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
             >
               <Share2 size={13} /> {descargandoId === `${c.id}:compartir-fichas` ? "Generando..." : "Compartir fichas"}
             </button>
-            <button
-              onClick={() => onWhatsappFichas(c)}
-              disabled={descargandoId === `${c.id}:whatsapp-fichas`}
-              className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-              style={{ borderColor: BORDER, color: "#15803D", opacity: descargandoId === `${c.id}:whatsapp-fichas` ? 0.6 : 1 }}
-            >
-              <MessageCircle size={13} /> {descargandoId === `${c.id}:whatsapp-fichas` ? "Generando..." : "Fichas por WhatsApp"}
-            </button>
           </>
         )}
       </div>
@@ -4880,7 +4783,7 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
   );
 }
 
-function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId }) {
+function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = grupo.versiones.slice(1);
   return (
@@ -4897,7 +4800,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
         c={grupo.activa} esActiva
         onDelete={onDelete} onUpdate={onUpdate}
         onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
       />
       {expandido && (
@@ -4907,7 +4810,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
               key={v.id} c={v} esActiva={false}
               onDelete={onDelete} onUpdate={onUpdate}
               onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
             />
           ))}
@@ -4917,7 +4820,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
   );
 }
 
-function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId }) {
+function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -4938,7 +4841,7 @@ function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFi
             key={o.obra} grupo={o}
             onDelete={onDelete} onUpdate={onUpdate}
             onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
           />
         ))}
@@ -4947,7 +4850,7 @@ function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFi
   );
 }
 
-function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onWhatsapp, onCompartirFichas, onWhatsappFichas, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
 
@@ -4979,7 +4882,7 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpd
                 key={g.cliente} grupo={g}
                 onDelete={onDelete} onUpdate={onUpdate}
                 onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onWhatsapp={onWhatsapp} onCompartirFichas={onCompartirFichas} onWhatsappFichas={onWhatsappFichas}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
               />
             ))}
@@ -5313,7 +5216,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   );
 }
 
-function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, onCompartir, onWhatsapp, descargandoId, pdfError }) {
+function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, onCompartir, descargandoId, pdfError }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -5385,19 +5288,6 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
                   >
                     <Share2 size={13} /> {descargandoId === `${p.id}:compartir` ? "Generando..." : "Compartir"}
                   </button>
-                  <button
-                    onClick={() => onWhatsapp(p)}
-                    disabled={descargandoId === `${p.id}:whatsapp`}
-                    className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-                    style={{ borderColor: BORDER, color: "#15803D", opacity: descargandoId === `${p.id}:whatsapp` ? 0.6 : 1 }}
-                  >
-                    <MessageCircle size={13} /> {descargandoId === `${p.id}:whatsapp` ? "Generando..." : "WhatsApp"}
-                  </button>
-                  <InfoTip>
-                    <p>Se descarga el PDF y se abre WhatsApp{p.clienteTelefono ? ` en el chat de ${p.cliente}` : " para elegir el contacto"}.</p>
-                    <p>Como WhatsApp no deja adjuntar un archivo automático desde un link, tocá el clip 📎 en ese chat y elegí el PDF que se acaba de descargar (carpeta Descargas).</p>
-                    {!p.clienteTelefono && <p style={{ color: MUTED }}>Este cliente no tiene teléfono cargado — se abre el selector de contactos de WhatsApp para elegir a mano.</p>}
-                  </InfoTip>
                 </div>
               </div>
             );

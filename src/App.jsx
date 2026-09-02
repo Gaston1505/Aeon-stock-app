@@ -3486,10 +3486,26 @@ const NIVELES_CATEGORIA_PRODUCTO = [
   (p) => p.subcategoria3,
 ];
 
+// Orden manual pedido para cada pestaña del catálogo — lo que no figure acá cae al final,
+// ordenado alfabéticamente, así un valor nuevo nunca desaparece del catálogo.
+function ordenarClaves(claves, ordenPersonalizado) {
+  if (!ordenPersonalizado) return [...claves].sort((a, b) => a.localeCompare(b));
+  const idx = (v) => {
+    const i = ordenPersonalizado.indexOf(v);
+    return i === -1 ? ordenPersonalizado.length : i;
+  };
+  return [...claves].sort((a, b) => {
+    const diff = idx(a) - idx(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
+}
+
 // Árbol de categorías: cada nodo tiene `productos` (hoja, ya ordenados) o `hijos` (subgrupos).
 // Productos sin valor en un nivel quedan agrupados como "Otros" en ese mismo nivel, en vez de
-// perderse — así un catálogo cargado a medias sigue siendo navegable.
-function construirArbolCategorias(productos, nivel = 0) {
+// perderse — así un catálogo cargado a medias sigue siendo navegable. `ordenesPorNivel` es un
+// objeto { [nivel]: ["valor1", "valor2", ...] } opcional para forzar un orden manual en vez del
+// alfabético por default.
+function construirArbolCategorias(productos, nivel = 0, ordenesPorNivel = null) {
   if (nivel >= NIVELES_CATEGORIA_PRODUCTO.length) return { productos: ordenarProductos(productos), hijos: null };
   const get = NIVELES_CATEGORIA_PRODUCTO[nivel];
   const grupos = new Map();
@@ -3501,11 +3517,42 @@ function construirArbolCategorias(productos, nivel = 0) {
     grupos.get(key).push(p);
   }
   if (grupos.size === 0) return { productos: ordenarProductos(productos), hijos: null };
-  const claves = [...grupos.keys()].sort((a, b) => a.localeCompare(b));
-  const hijos = claves.map((valor) => ({ valor, ...construirArbolCategorias(grupos.get(valor), nivel + 1) }));
+  const claves = ordenarClaves([...grupos.keys()], ordenesPorNivel && ordenesPorNivel[nivel]);
+  const hijos = claves.map((valor) => ({ valor, ...construirArbolCategorias(grupos.get(valor), nivel + 1, ordenesPorNivel) }));
   if (sinValor.length > 0) hijos.push({ valor: "Otros", ...construirArbolCategorias(sinValor, NIVELES_CATEGORIA_PRODUCTO.length) });
   return { productos: null, hijos };
 }
+
+// Pestañas del catálogo de productos (no incluye Repuestos, que tiene su propio modo aparte).
+// `nivelInicio` salta los niveles ya implícitos en la pestaña (categoriaPrincipal, y para las
+// de Cocina también subcategoria) para no repetir un título redundante con el nombre de la pestaña.
+const CATALOGO_TABS = [
+  {
+    key: "aires", label: "Aire Acondicionado", nivelInicio: 1,
+    filtro: (p) => p.categoriaPrincipal === "Aire Acondicionado",
+    ordenesPorNivel: { 1: ["Split Pared", "Cassette", "Piso-Techo", "Ducto", "Multi Split Interior", "Multi Split Exterior"] },
+  },
+  {
+    key: "anafes", label: "Anafes", nivelInicio: 2,
+    filtro: (p) => p.categoriaPrincipal === "Cocina" && p.subcategoria === "Anafe",
+    ordenesPorNivel: { 2: ["Vitrocerámica", "Inducción", "Combinado"] },
+  },
+  {
+    key: "campanas", label: "Campanas", nivelInicio: 2,
+    filtro: (p) => p.categoriaPrincipal === "Cocina" && p.subcategoria === "Campana",
+    ordenesPorNivel: { 2: ["Pared", "Isla"] },
+  },
+  {
+    key: "hornos", label: "Hornos", nivelInicio: 2,
+    filtro: (p) => p.categoriaPrincipal === "Cocina" && p.subcategoria === "Horno",
+    ordenesPorNivel: { 2: ["Mecánico", "Semi-Digital", "Digital"] },
+  },
+  {
+    key: "termocalefones", label: "Termocalefones", nivelInicio: 1,
+    filtro: (p) => p.categoriaPrincipal === "Termocalefones",
+    ordenesPorNivel: null,
+  },
+];
 
 const CATEGORIA_TITULO_CLASE = ["text-base font-semibold", "text-sm font-semibold", "text-xs font-semibold", "text-xs font-medium"];
 
@@ -3536,18 +3583,46 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
 function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado }) {
   const fileInputRef = useRef(null);
   const [modo, setModo] = useState("productos"); // "productos" | "repuestos" — carpetas totalmente separadas
+  const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
 
   const productosFiltrados = useMemo(
     () => productos.filter((p) => (p.categoriaPrincipal === "Repuestos") === (modo === "repuestos")),
     [productos, modo]
   );
-  const arbol = useMemo(() => {
-    const a = construirArbolCategorias(productosFiltrados);
-    // En modo repuestos todos comparten categoriaPrincipal="Repuestos" — ese nivel es redundante
-    // con el selector de arriba, así que se muestra directamente su contenido.
-    if (modo === "repuestos" && a.hijos && a.hijos.length === 1 && a.hijos[0].valor === "Repuestos") return a.hijos[0];
-    return a;
+
+  const buscando = query.trim().length > 0;
+
+  // Todo lo que no cae en ninguna pestaña conocida (ej. Enfriador de vinos, o una categoría
+  // nueva que todavía no tiene su propia pestaña) — para que nunca desaparezca del catálogo.
+  const otrosProductos = useMemo(() => {
+    if (modo !== "productos") return [];
+    return productosFiltrados.filter((p) => !CATALOGO_TABS.some((t) => t.filtro(p)));
   }, [productosFiltrados, modo]);
+
+  const tabs = useMemo(() => {
+    if (modo !== "productos") return [];
+    const tabs = CATALOGO_TABS.map((t) => ({ key: t.key, label: t.label, count: productosFiltrados.filter(t.filtro).length }));
+    if (otrosProductos.length > 0) tabs.push({ key: "otros", label: "Otros", count: otrosProductos.length });
+    return tabs;
+  }, [productosFiltrados, otrosProductos, modo]);
+
+  const tabActivo = CATALOGO_TABS.find((t) => t.key === catTab);
+  const hayProductosEnTab = catTab === "otros" ? otrosProductos.length > 0 : (tabActivo ? productosFiltrados.some(tabActivo.filtro) : false);
+
+  const arbol = useMemo(() => {
+    if (modo === "repuestos") {
+      const a = construirArbolCategorias(productosFiltrados);
+      // En modo repuestos todos comparten categoriaPrincipal="Repuestos" — ese nivel es redundante
+      // con el selector de arriba, así que se muestra directamente su contenido.
+      if (a.hijos && a.hijos.length === 1 && a.hijos[0].valor === "Repuestos") return a.hijos[0];
+      return a;
+    }
+    // Buscando: se muestra todo el catálogo sin recortar por pestaña, para no esconder resultados.
+    if (buscando) return construirArbolCategorias(productosFiltrados);
+    if (catTab === "otros") return construirArbolCategorias(otrosProductos);
+    if (!tabActivo) return { productos: [], hijos: null };
+    return construirArbolCategorias(productosFiltrados.filter(tabActivo.filtro), tabActivo.nivelInicio, tabActivo.ordenesPorNivel);
+  }, [modo, productosFiltrados, buscando, catTab, otrosProductos, tabActivo]);
 
   const handleFileChange = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -3594,12 +3669,35 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultado}</div>
       )}
 
+      {modo === "productos" && !buscando && tabs.length > 0 && (
+        <div className="flex gap-1.5 mb-4 flex-wrap">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setCatTab(t.key)}
+              className="text-xs px-3 py-1.5 rounded-full font-medium"
+              style={catTab === t.key
+                ? { backgroundColor: ACCENT, color: "#FFFFFF" }
+                : { backgroundColor: "#F2F3F4", color: MUTED }}
+            >
+              {t.label} ({t.count})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {modo === "productos" && buscando && (
+        <p className="text-xs mb-3" style={{ color: MUTED }}>Resultados de búsqueda en todo el catálogo de productos.</p>
+      )}
+
       {productosFiltrados.length === 0 ? (
         <EmptyState
           icon={Tag}
           title={modo === "repuestos" ? "Todavía no hay repuestos cargados" : "Todavía no hay productos cargados"}
           subtitle="Usá el botón de arriba para cargar el primero."
         />
+      ) : modo === "productos" && !buscando && !hayProductosEnTab ? (
+        <EmptyState icon={Tag} title="Sin productos en esta categoría" subtitle="Elegí otra pestaña o cargá un producto nuevo acá." />
       ) : (
         <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
       )}

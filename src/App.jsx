@@ -521,16 +521,16 @@ function Table({ columns, rows, onDelete, renderCell }) {
     return <EmptyState icon={Package} title="Todavía no hay registros" subtitle="Usá el botón de arriba para cargar el primero." />;
   }
   return (
-    <div className="overflow-x-auto rounded-lg border" style={{ borderColor: BORDER }}>
+    <div className="overflow-auto rounded-lg border" style={{ borderColor: BORDER, maxHeight: "65vh" }}>
       <table className="w-full text-sm" style={{ minWidth: 720 }}>
         <thead>
-          <tr style={{ backgroundColor: "#FAFBFC" }}>
+          <tr>
             {columns.map((c) => (
-              <th key={c.key} className="text-left font-medium px-3 py-2.5 border-b" style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>
+              <th key={c.key} className="text-left font-medium px-3 py-2.5 border-b sticky top-0 z-10" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>
                 {c.label}
               </th>
             ))}
-            {onDelete && <th className="w-10 border-b" style={{ borderColor: BORDER }}></th>}
+            {onDelete && <th className="w-10 border-b sticky top-0 z-10" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}></th>}
           </tr>
         </thead>
         <tbody>

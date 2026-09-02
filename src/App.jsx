@@ -2535,6 +2535,8 @@ function EquipoForm({ equipos, onSave }) {
   );
 }
 
+const FORMATOS_BARCODE = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code", "itf", "codabar"];
+
 function EscaneoUnidadesForm({ onSave }) {
   const [modelo, setModelo] = useState("");
   const [estado, setEstado] = useState("En depósito");
@@ -2544,17 +2546,30 @@ function EscaneoUnidadesForm({ onSave }) {
   const [series, setSeries] = useState([]);
   const [error, setError] = useState("");
 
-  const registrarScan = () => {
-    const v = scanInput.trim();
+  const [camaraActiva, setCamaraActiva] = useState(false);
+  const [camaraError, setCamaraError] = useState("");
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const detectorRef = useRef(null);
+  const intervalRef = useRef(null);
+  const lastScanRef = useRef({ valor: "", ts: 0 });
+
+  const agregarCodigo = (valor) => {
+    const v = (valor || "").trim();
     if (!v) return;
-    if (series.includes(v)) {
-      setError(`"${v}" ya fue escaneado en esta carga.`);
-      setScanInput("");
-      return;
-    }
-    setSeries([...series, v]);
+    setSeries((prev) => {
+      if (prev.includes(v)) {
+        setError(`"${v}" ya fue escaneado en esta carga.`);
+        return prev;
+      }
+      setError("");
+      return [...prev, v];
+    });
+  };
+
+  const registrarScan = () => {
+    agregarCodigo(scanInput);
     setScanInput("");
-    setError("");
   };
 
   const handleKeyDown = (e) => {
@@ -2566,6 +2581,58 @@ function EscaneoUnidadesForm({ onSave }) {
 
   const quitarSerie = (s) => setSeries(series.filter((x) => x !== s));
 
+  const detenerCamara = () => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    setCamaraActiva(false);
+  };
+
+  const iniciarCamara = async () => {
+    setCamaraError("");
+    if (!("BarcodeDetector" in window)) {
+      setCamaraError("Este navegador no soporta lectura de códigos por cámara (probá con Chrome en Android). Usá la pistola o escribí el código a mano.");
+      return;
+    }
+    try {
+      detectorRef.current = new window.BarcodeDetector({ formats: FORMATOS_BARCODE });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      setCamaraActiva(true);
+    } catch (err) {
+      setCamaraError("No se pudo acceder a la cámara. Revisá que le hayas dado permiso al navegador.");
+    }
+  };
+
+  useEffect(() => {
+    if (!camaraActiva || !streamRef.current || !videoRef.current || !detectorRef.current) return;
+    const video = videoRef.current;
+    video.srcObject = streamRef.current;
+    video.play().catch(() => {});
+    intervalRef.current = setInterval(async () => {
+      if (video.readyState < 2) return;
+      try {
+        const codigos = await detectorRef.current.detect(video);
+        if (codigos.length > 0) {
+          const valor = codigos[0].rawValue;
+          const ahora = Date.now();
+          if (valor === lastScanRef.current.valor && ahora - lastScanRef.current.ts < 2000) return;
+          lastScanRef.current = { valor, ts: ahora };
+          agregarCodigo(valor);
+        }
+      } catch (e) {
+        // Cuadro no decodificable — se sigue intentando en el próximo ciclo.
+      }
+    }, 350);
+    return () => {
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    };
+  }, [camaraActiva]);
+
+  // Apaga la cámara si se cierra el formulario sin tocar "Cerrar cámara" (ej. se cierra el drawer).
+  useEffect(() => () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+  }, []);
+
   const submit = () => {
     if (!modelo.trim()) {
       setError("Ingresá el modelo.");
@@ -2575,6 +2642,7 @@ function EscaneoUnidadesForm({ onSave }) {
       setError("Escaneá al menos una unidad antes de guardar.");
       return;
     }
+    detenerCamara();
     onSave({ modelo, estado, ubicacion, fechaIngreso, series });
   };
 
@@ -2594,6 +2662,21 @@ function EscaneoUnidadesForm({ onSave }) {
       <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
 
       <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Escaneo de unidades</p>
+
+      <div className="mb-2">
+        {!camaraActiva ? (
+          <SecondaryButton onClick={iniciarCamara}><Camera size={14} /> Escanear con la cámara</SecondaryButton>
+        ) : (
+          <SecondaryButton onClick={detenerCamara}><X size={14} /> Cerrar cámara</SecondaryButton>
+        )}
+      </div>
+      {camaraError && <p className="text-xs mb-2" style={{ color: "#B45309" }}>{camaraError}</p>}
+      {camaraActiva && (
+        <div className="mb-3 rounded-lg overflow-hidden border" style={{ borderColor: BORDER }}>
+          <video ref={videoRef} muted playsInline className="w-full" style={{ maxHeight: 260, backgroundColor: "#000" }} />
+        </div>
+      )}
+
       <Field label={`Código / N° de serie — ${series.length} escaneada${series.length === 1 ? "" : "s"}`}>
         <input
           autoFocus

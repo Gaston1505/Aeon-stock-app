@@ -144,6 +144,16 @@ function linkWhatsApp(telefono, texto) {
   return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
 }
 
+// Abre la pestaña ANTES de generar el PDF (que es async) — si se abre recién después de un
+// await, varios navegadores (Safari siempre, Chrome a veces) bloquean el window.open porque ya
+// no lo cuentan como parte del mismo gesto de click del usuario. Se navega esa pestaña ya
+// abierta una vez que el link está listo, en vez de abrir una nueva.
+function abrirVentanaWhatsApp() {
+  const ventana = window.open("", "_blank");
+  if (ventana) ventana.document.write('<p style="font-family:sans-serif;padding:20px;color:#686D73">Generando PDF...</p>');
+  return ventana;
+}
+
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
 // con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
 async function compartirArchivo(bytes, filename, texto) {
@@ -933,12 +943,15 @@ export default function App() {
   };
 
   const handleWhatsappCotizacion = async (cotizacion) => {
+    const ventana = abrirVentanaWhatsApp();
     setDescargandoId(cotizacion.id + ":whatsapp");
     setPdfError("");
     try {
       await downloadCotizacionPdf(cotizacion);
-      window.open(linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso la cotización.`), "_blank");
+      const url = linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso la cotización.`);
+      if (ventana) ventana.location.href = url; else window.open(url, "_blank");
     } catch (e) {
+      if (ventana) ventana.close();
       console.error("Error generando PDF para WhatsApp", e);
       setPdfError("No se pudo generar el PDF de la cotización. Probá de nuevo.");
     }
@@ -965,17 +978,21 @@ export default function App() {
   };
 
   const handleWhatsappFichas = async (cotizacion) => {
+    const ventana = abrirVentanaWhatsApp();
     setDescargandoId(cotizacion.id + ":whatsapp-fichas");
     setPdfError("");
     try {
       const ok = await downloadFichasTecnicasPdf(cotizacion);
       if (!ok) {
+        if (ventana) ventana.close();
         setPdfError("Ninguno de los productos de esta cotización tiene ficha técnica cargada.");
         setDescargandoId(null);
         return;
       }
-      window.open(linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso las fichas técnicas.`), "_blank");
+      const url = linkWhatsApp(cotizacion.clienteTelefono, `Hola${cotizacion.cliente ? " " + cotizacion.cliente : ""}, te paso las fichas técnicas.`);
+      if (ventana) ventana.location.href = url; else window.open(url, "_blank");
     } catch (e) {
+      if (ventana) ventana.close();
       console.error("Error generando fichas técnicas para WhatsApp", e);
       setPdfError("No se pudo generar el PDF de fichas técnicas. Probá de nuevo.");
     }
@@ -1012,12 +1029,15 @@ export default function App() {
   };
 
   const handleWhatsappPresupuesto = async (presupuesto) => {
+    const ventana = abrirVentanaWhatsApp();
     setDescargandoId(presupuesto.id + ":whatsapp");
     setPdfError("");
     try {
       await downloadPresupuestoReparacionPdf(presupuesto);
-      window.open(linkWhatsApp(presupuesto.clienteTelefono, `Hola${presupuesto.cliente ? " " + presupuesto.cliente : ""}, te paso el presupuesto.`), "_blank");
+      const url = linkWhatsApp(presupuesto.clienteTelefono, `Hola${presupuesto.cliente ? " " + presupuesto.cliente : ""}, te paso el presupuesto.`);
+      if (ventana) ventana.location.href = url; else window.open(url, "_blank");
     } catch (e) {
+      if (ventana) ventana.close();
       console.error("Error generando PDF de presupuesto para WhatsApp", e);
       setPdfError("No se pudo generar el PDF del presupuesto. Probá de nuevo.");
     }

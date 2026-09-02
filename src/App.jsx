@@ -14,6 +14,7 @@ import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
+  downloadReporteMuestrasPdf,
 } from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
@@ -1485,7 +1486,7 @@ export default function App() {
         )}
 
         {tab === "muestras" && (
-          <MuestrasView muestras={muestras} query={query} onQuery={setQuery} onUpdateField={updateEquipoField} />
+          <MuestrasView muestras={muestras} productos={productos} query={query} onQuery={setQuery} onUpdateField={updateEquipoField} />
         )}
 
         {tab === "catalogo" && (
@@ -2555,8 +2556,10 @@ const MUESTRAS_TABS = [
   { key: "sin-marca", label: "Sin marca" },
 ];
 
-function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
+function MuestrasView({ muestras, productos, query, onQuery, onUpdateField }) {
   const [tabMarca, setTabMarca] = useState("todas");
+  const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [reporteError, setReporteError] = useState("");
 
   const buscadas = muestras.filter((e) => {
     const q = query.toLowerCase();
@@ -2572,6 +2575,41 @@ function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
   const totalSinMarca = sumCantidad(buscadas.filter((e) => e.sinMarca));
   const totalConMarca = totalTodas - totalSinMarca;
 
+  // Reporte mensual — siempre sobre TODAS las muestras (no el filtro de búsqueda en pantalla),
+  // porque es una declaración periódica completa para el seguro, no una vista de trabajo.
+  const filasReporte = () => muestras.map((e) => {
+    const producto = productos.find((p) => p.nombre === e.modelo);
+    return {
+      modelo: e.modelo, codigo: e.codigo, cantidad: Number(e.cantidad) || 1,
+      sinMarca: !!e.sinMarca, valorUnitario: Number(producto?.precioLista) || 0,
+    };
+  });
+
+  const handleReporteExcel = () => {
+    const filas = filasReporte().map((f) => ({
+      "Modelo": f.modelo, "Código": f.codigo, "Marca": f.sinMarca ? "Sin marca" : "Con marca",
+      "Cantidad": f.cantidad, "Valor unitario U$S": f.valorUnitario, "Valor total U$S": f.valorUnitario * f.cantidad,
+    }));
+    const totalCant = filas.reduce((acc, f) => acc + f["Cantidad"], 0);
+    const totalValor = filas.reduce((acc, f) => acc + f["Valor total U$S"], 0);
+    filas.push({ "Modelo": "TOTAL", "Código": "", "Marca": "", "Cantidad": totalCant, "Valor unitario U$S": "", "Valor total U$S": totalValor });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), "Muestras");
+    XLSX.writeFile(wb, `Reporte_Muestras_Seguro_${todayISO()}.xlsx`);
+  };
+
+  const handleReportePdf = async () => {
+    setGenerandoPdf(true);
+    setReporteError("");
+    try {
+      await downloadReporteMuestrasPdf(filasReporte(), todayISO());
+    } catch (e) {
+      console.error("Error generando reporte de muestras", e);
+      setReporteError("No se pudo generar el PDF del reporte. Probá de nuevo.");
+    }
+    setGenerandoPdf(false);
+  };
+
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -2582,8 +2620,17 @@ function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
             marca como muestras sin marca de fábrica (China) — el total de acá es el que se reporta al seguro.
           </p>
         </div>
-        <SearchBox value={query} onChange={onQuery} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchBox value={query} onChange={onQuery} />
+          <SecondaryButton onClick={handleReporteExcel}><Download size={14} /> Reporte Excel</SecondaryButton>
+          <SecondaryButton onClick={handleReportePdf}>
+            <Download size={14} /> {generandoPdf ? "Generando..." : "Reporte PDF"}
+          </SecondaryButton>
+        </div>
       </div>
+      {reporteError && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{reporteError}</div>
+      )}
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         {MUESTRAS_TABS.map((t) => {

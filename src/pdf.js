@@ -837,3 +837,156 @@ export async function downloadPresupuestoReparacionPdf(presupuesto) {
   const bytes = await generatePresupuestoReparacionPdf(presupuesto);
   downloadBlob(bytes, nombreArchivoPresupuesto(presupuesto), "application/pdf");
 }
+
+// ---------- Reporte de muestras (declaración mensual para el seguro) ----------
+// `filas`: [{ modelo, codigo, cantidad, sinMarca, valorUnitario }]
+export async function generateReporteMuestrasPdf(filas, fecha) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const colModelo = 190;
+  const colCodigo = 75;
+  const colMarca = 60;
+  const colCant = 40;
+  const colValorUnit = 80;
+  const colValorTotal = CONTENT_W - colModelo - colCodigo - colMarca - colCant - colValorUnit;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 6.5, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+
+  // Header (membrete)
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+
+  text("Fecha:", PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
+  text(fmtFecha(fecha), PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+
+  y -= 14;
+
+  // Title bar
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const title = "REPORTE DE MUESTRAS — DECLARACIÓN PARA SEGURO";
+  const titleW = bold.widthOfTextAtSize(title, 9.5);
+  text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
+  y -= 18;
+  y -= 6;
+
+  function drawHeader() {
+    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    const headers = [
+      ["Modelo", colModelo], ["Código", colCodigo], ["Marca", colMarca],
+      ["Cant.", colCant], ["Valor unit. U$S", colValorUnit], ["Valor total U$S", colValorTotal],
+    ];
+    headers.forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += w;
+    });
+    y -= 20;
+  }
+  drawHeader();
+
+  let totalCant = 0;
+  let totalValor = 0;
+  for (const f of filas) {
+    const rowH = 18;
+    ensureSpace(rowH + 20);
+    if (y === PAGE_H - MARGIN) drawHeader();
+
+    const cant = Number(f.cantidad) || 0;
+    const valorUnit = Number(f.valorUnitario) || 0;
+    const valorTotal = cant * valorUnit;
+    totalCant += cant;
+    totalValor += valorTotal;
+
+    let cx = MARGIN;
+    rect(cx, y - rowH, colModelo, rowH, { border: BORDER });
+    text(f.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+    cx += colModelo;
+
+    rect(cx, y - rowH, colCodigo, rowH, { border: BORDER });
+    centerText(f.codigo || "", cx, y, colCodigo, rowH);
+    cx += colCodigo;
+
+    rect(cx, y - rowH, colMarca, rowH, { border: BORDER });
+    centerText(f.sinMarca ? "Sin marca" : "Con marca", cx, y, colMarca, rowH, { size: 6 });
+    cx += colMarca;
+
+    rect(cx, y - rowH, colCant, rowH, { border: BORDER });
+    centerText(String(cant), cx, y, colCant, rowH);
+    cx += colCant;
+
+    rect(cx, y - rowH, colValorUnit, rowH, { border: BORDER });
+    centerText(valorUnit ? `U$S ${fmtNum(valorUnit)}` : "—", cx, y, colValorUnit, rowH, { size: 6 });
+    cx += colValorUnit;
+
+    rect(cx, y - rowH, colValorTotal, rowH, { border: BORDER });
+    centerText(valorTotal ? `U$S ${fmtNum(valorTotal)}` : "—", cx, y, colValorTotal, rowH, { size: 6 });
+
+    y -= rowH;
+  }
+
+  ensureSpace(50);
+  const colLabelTotal = CONTENT_W - colValorTotal;
+  rect(MARGIN, y - 18, colLabelTotal, 18, { fill: ACCENT_LIGHT });
+  text(`Total: ${totalCant} unidad(es)`, MARGIN + 4, y - 12, { bold: true, size: 8, color: ACCENT });
+  rect(MARGIN + colLabelTotal, y - 18, colValorTotal, 18, { fill: ACCENT_LIGHT });
+  const totalStr = `U$S ${fmtNum(totalValor)}`;
+  text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 12, { bold: true, size: 8, color: ACCENT });
+  y -= 26;
+
+  ensureSpace(30);
+  text("Firma:", MARGIN, y, { bold: true, size: 8 });
+  y -= 20;
+  text(`${COMPANY.firmante} — ${COMPANY.ruc}`, MARGIN, y, { size: 7.5, color: MUTED });
+
+  return pdf.save();
+}
+
+export function nombreArchivoReporteMuestras(fecha) {
+  return `Reporte_Muestras_Seguro_${fecha || ""}.pdf`;
+}
+
+export async function downloadReporteMuestrasPdf(filas, fecha) {
+  const bytes = await generateReporteMuestrasPdf(filas, fecha);
+  downloadBlob(bytes, nombreArchivoReporteMuestras(fecha), "application/pdf");
+}

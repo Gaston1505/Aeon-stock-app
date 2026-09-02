@@ -1096,7 +1096,10 @@ export default function App() {
         )}
 
         {tab === "panel" && (
-          <PanelView ventasCerradas={ventasCerradas} cotizaciones={cotizaciones} comprometidas={comprometidas} />
+          <PanelView
+            ventasCerradas={ventasCerradas} cotizaciones={cotizaciones} comprometidas={comprometidas}
+            presupuestosReparacion={presupuestosReparacion}
+          />
         )}
 
         {tab === "playa" && (
@@ -1800,7 +1803,109 @@ function GraficoEstacionalidad({ ventasCerradas }) {
   );
 }
 
-function PanelView({ ventasCerradas, cotizaciones, comprometidas }) {
+function RankingCard({ title, subtitle, rows, valueLabel }) {
+  if (rows.length === 0) return null;
+  const max = rows[0][1];
+  return (
+    <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <p className="text-sm font-semibold" style={{ color: INK }}>{title}</p>
+      {subtitle && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{subtitle}</p>}
+      <div className="space-y-2 mt-3">
+        {rows.map(([label, value], i) => (
+          <div key={label} className="flex items-center gap-3">
+            <span className="text-xs w-4" style={{ color: MUTED }}>{i + 1}</span>
+            <span className="text-xs flex-1 truncate" style={{ color: INK }}>{label}</span>
+            <div className="flex-1 rounded-full overflow-hidden" style={{ backgroundColor: ACCENT_LIGHT, height: 6 }}>
+              <div style={{ width: `${max > 0 ? (value / max) * 100 : 0}%`, backgroundColor: ACCENT, height: 6 }} />
+            </div>
+            <span className="text-xs w-20 text-right shrink-0" style={{ color: MUTED }}>{valueLabel(value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GraficoTendenciaVentas({ ventasDirectas, comprometidas }) {
+  const meses = useMemo(() => {
+    const hoy = todayISO();
+    const [y0, m0] = hoy.split("-").map(Number);
+    const arr = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(y0, m0 - 1 - i, 1);
+      const inicio = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+      const dSig = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+      const fin = `${dSig.getFullYear()}-${String(dSig.getMonth() + 1).padStart(2, "0")}-01`;
+      const total = sumarMonto(inicio, fin, ventasDirectas) + sumarMonto(inicio, fin, comprometidas);
+      arr.push({ label: MESES_LABEL[d.getMonth()], total });
+    }
+    return arr;
+  }, [ventasDirectas, comprometidas]);
+
+  const max = Math.max(1, ...meses.map((m) => m.total));
+  const hayDatos = meses.some((m) => m.total > 0);
+
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <p className="text-sm font-semibold" style={{ color: INK }}>Tendencia de ventas — últimos 6 meses</p>
+      <p className="text-xs mt-0.5 mb-3" style={{ color: MUTED }}>Ventas directas + ventas comprometidas, en U$S por mes.</p>
+      {!hayDatos ? (
+        <p className="text-sm py-6 text-center" style={{ color: MUTED }}>Todavía no hay ventas registradas.</p>
+      ) : (
+        <>
+          <div className="flex items-end gap-2" style={{ height: 110 }}>
+            {meses.map((m, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                <div
+                  className="w-full rounded-t"
+                  style={{ height: `${Math.max(2, (m.total / max) * 100)}%`, backgroundColor: i === meses.length - 1 ? ACCENT : ACCENT_LIGHT }}
+                  title={`${m.label}: U$S ${m.total.toLocaleString()}`}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-1.5">
+            {meses.map((m, i) => (
+              <p key={i} className="flex-1 text-center text-[10px]" style={{ color: i === meses.length - 1 ? ACCENT : MUTED, fontWeight: i === meses.length - 1 ? 600 : 400 }}>{m.label}</p>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReparacionMantenimientoCard({ presupuestos }) {
+  const nReparacion = presupuestos.filter((p) => p.tipo !== "mantenimiento").length;
+  const nMantenimiento = presupuestos.filter((p) => p.tipo === "mantenimiento").length;
+  const total = nReparacion + nMantenimiento;
+  if (total === 0) return null;
+  const pctRep = (nReparacion / total) * 100;
+  const pctMtto = (nMantenimiento / total) * 100;
+  const VERDE = "#2F7A4A";
+
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <p className="text-sm font-semibold mb-3" style={{ color: INK }}>Presupuestos de reparación — mezcla</p>
+      <div className="flex rounded-full overflow-hidden" style={{ height: 10, backgroundColor: ACCENT_LIGHT }}>
+        {pctRep > 0 && <div style={{ width: `${pctRep}%`, backgroundColor: ACCENT }} title={`Reparación / repuestos: ${nReparacion}`} />}
+        {pctMtto > 0 && <div style={{ width: `${pctMtto}%`, backgroundColor: VERDE }} title={`Mantenimiento: ${nMantenimiento}`} />}
+      </div>
+      <div className="flex items-center gap-4 mt-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: ACCENT }} />
+          <span className="text-xs" style={{ color: MUTED }}>Reparación / repuestos ({nReparacion})</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: VERDE }} />
+          <span className="text-xs" style={{ color: MUTED }}>Mantenimiento ({nMantenimiento})</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion }) {
   const hoy = todayISO();
   const mesActual = mesPrefijo(hoy);
   const [yActual, mActual] = mesActual.split("-").map(Number);
@@ -1831,6 +1936,16 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas }) {
     }
     return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
   }, [ventasCerradas, hace90]);
+
+  const topClientes = useMemo(() => {
+    const map = new Map();
+    for (const c of cotizaciones) {
+      if (c.estado !== "Ganada") continue;
+      const key = (c.cliente || "").trim() || "(Sin cliente)";
+      map.set(key, (map.get(key) || 0) + calcularTotalCotizacion(c));
+    }
+    return [...map.entries()].filter(([, total]) => total > 0).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [cotizaciones]);
 
   return (
     <div>
@@ -1863,23 +1978,24 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas }) {
         />
       </div>
 
-      {topProductos.length > 0 && (
-        <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-          <p className="text-sm font-semibold mb-3" style={{ color: INK }}>Top 5 productos — últimos 90 días</p>
-          <div className="space-y-2">
-            {topProductos.map(([cod, cant], i) => (
-              <div key={cod} className="flex items-center gap-3">
-                <span className="text-xs w-4" style={{ color: MUTED }}>{i + 1}</span>
-                <span className="text-xs flex-1" style={{ color: INK }}>{cod}</span>
-                <div className="flex-1 rounded-full overflow-hidden" style={{ backgroundColor: ACCENT_LIGHT, height: 6 }}>
-                  <div style={{ width: `${(cant / topProductos[0][1]) * 100}%`, backgroundColor: ACCENT, height: 6 }} />
-                </div>
-                <span className="text-xs w-16 text-right" style={{ color: MUTED }}>{cant} un.</span>
-              </div>
-            ))}
-          </div>
+      <GraficoTendenciaVentas ventasDirectas={ventasDirectas} comprometidas={comprometidas} />
+
+      {(topProductos.length > 0 || topClientes.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
+          <RankingCard
+            title="Top 5 productos — últimos 90 días"
+            rows={topProductos}
+            valueLabel={(v) => `${v} un.`}
+          />
+          <RankingCard
+            title="Top clientes — cotizaciones ganadas"
+            rows={topClientes}
+            valueLabel={(v) => `U$S ${v.toLocaleString()}`}
+          />
         </div>
       )}
+
+      <ReparacionMantenimientoCard presupuestos={presupuestosReparacion} />
 
       <GraficoEstacionalidad ventasCerradas={ventasCerradas} />
     </div>

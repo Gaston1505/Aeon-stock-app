@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu, Hammer,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -125,6 +125,26 @@ function calcularTotalCotizacion(c) {
     ? (c.descuentoEsPorcentaje ? subtotal * (Number(c.descuento) || 0) / 100 : Number(c.descuento) || 0)
     : 0;
   return subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
+}
+
+// Estado de cumplimiento de la salida de depósito para una cotización Ganada — cuánto de lo
+// cotizado ya salió físicamente (via "Generar desde cotización" en Salidas), null si no aplica.
+function estadoSalidaCotizacion(c) {
+  if (c.estado !== "Ganada") return null;
+  const lineas = c.lineas || [];
+  if (lineas.length === 0) return null;
+  const retiradas = c.lineasRetiradas || {};
+  let completas = 0;
+  let algo = 0;
+  for (const l of lineas) {
+    const retirado = Number(retiradas[l.codigo]) || 0;
+    if (retirado <= 0) continue;
+    if (retirado >= (Number(l.cantidad) || 0)) completas++;
+    else algo++;
+  }
+  if (completas === lineas.length) return "completa";
+  if (completas > 0 || algo > 0) return "parcial";
+  return "pendiente";
 }
 
 // Agrupa cotizaciones por Cliente (constructora/desarrolladora) y, dentro de cada uno,
@@ -620,6 +640,37 @@ export default function App() {
   };
   const deleteMovimiento = (id) => deleteItem(COLLECTIONS.movimientos, id);
 
+  // Genera una o más salidas (una por cada lote de equipo usado) a partir de una cotización
+  // Ganada. `lineas` viene de SalidaDesdeCotizacionForm ya resuelto contra stock disponible:
+  // [{ codigo, descripcion, precioUnit, cantidad, batches: [{ equipoId, codigo, categoria, cantidad }] }]
+  const generarSalidaDesdeCotizacion = (cotizacion, lineas, remitoData) => {
+    const retiros = {};
+    for (const linea of lineas) {
+      for (const batch of linea.batches) {
+        const cat = CATEGORIAS_ORIGEN.find((c) => c.value === batch.categoria);
+        addMovimiento({
+          fecha: remitoData.fecha,
+          categoria: batch.categoria, categoriaLabel: cat ? cat.label : "Stock vendible",
+          sourceId: batch.equipoId, codigo: batch.codigo, modelo: linea.codigo,
+          cantidad: batch.cantidad, motivo: "Venta",
+          cliente: cotizacion.cliente, obra: cotizacion.obra,
+          monto: (Number(linea.precioUnit) || 0) * batch.cantidad,
+          remito: remitoData.remito, responsable: remitoData.responsable,
+          observaciones: remitoData.observaciones || `Generado desde cotización — ${cotizacion.cliente}${cotizacion.obra ? " / " + cotizacion.obra : ""}`,
+          lugarSalida: remitoData.lugarSalida, empresaCliente: remitoData.empresaCliente, rucCliente: remitoData.rucCliente,
+          firmaNombre: remitoData.firmaNombre, firmaCedula: remitoData.firmaCedula, fotoRemito: remitoData.fotoRemito,
+          cotizacionId: cotizacion.id,
+        });
+      }
+      retiros[linea.codigo] = (retiros[linea.codigo] || 0) + linea.cantidad;
+    }
+    const nuevasRetiradas = { ...(cotizacion.lineasRetiradas || {}) };
+    for (const [codigo, cant] of Object.entries(retiros)) {
+      nuevasRetiradas[codigo] = (Number(nuevasRetiradas[codigo]) || 0) + cant;
+    }
+    updateItem(COLLECTIONS.cotizaciones, cotizacion.id, { lineasRetiradas: nuevasRetiradas });
+  };
+
   const addEntrada = (data) => {
     addItem(COLLECTIONS.entradas, data);
     if (data.codigo && data.estadoResultante) updateEquipoEstadoByCodigo(data.codigo, data.estadoResultante);
@@ -1108,6 +1159,11 @@ export default function App() {
             query={query} onQuery={setQuery}
             onNew={() => setDrawer("movimiento")}
             newLabel="Nueva salida"
+            extraActions={
+              <SecondaryButton onClick={() => setDrawer("salida-cotizacion")}>
+                <PackageCheck size={14} /> Generar desde cotización
+              </SecondaryButton>
+            }
           >
             <Table
               columns={[
@@ -1303,6 +1359,13 @@ export default function App() {
           onSave={(d) => { addPresupuestoReparacion(d); setDrawer(null); }}
         />
       </Drawer>
+      <Drawer open={drawer === "salida-cotizacion"} onClose={() => setDrawer(null)} title="Generar salida desde cotización">
+        <SalidaDesdeCotizacionForm
+          cotizaciones={cotizaciones}
+          equipos={equipos}
+          onGenerar={(cotizacion, lineas, remitoData) => { generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData); setDrawer(null); }}
+        />
+      </Drawer>
       <Drawer open={!!gestion} onClose={() => setGestion(null)} title={gestion ? `Seguimiento — ${gestion.field === "Service1" ? "Service 1 (12m)" : "Service 2 (24m)"}` : ""}>
         {gestion && (
           <GestionServiceForm
@@ -1367,7 +1430,7 @@ function ServiceCell({ venta, field, label, onUpdate, onGestionar }) {
   );
 }
 
-function Section({ title, subtitle, query, onQuery, onNew, newLabel, children }) {
+function Section({ title, subtitle, query, onQuery, onNew, newLabel, extraActions, children }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -1377,6 +1440,7 @@ function Section({ title, subtitle, query, onQuery, onNew, newLabel, children })
         </div>
         <div className="flex items-center gap-2">
           <SearchBox value={query} onChange={onQuery} />
+          {extraActions}
           <PrimaryButton onClick={onNew}><Plus size={15} /> {newLabel}</PrimaryButton>
         </div>
       </div>
@@ -2345,6 +2409,225 @@ function MovimientoForm({ equipos, playa, repuestos, onSave }) {
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar salida</PrimaryButton>
+    </div>
+  );
+}
+
+// Estados de equipo desde los que se puede despachar una venta (coincide con las categorías
+// "vendible" y "vendible_desc" de CATEGORIAS_ORIGEN).
+const ESTADOS_EQUIPO_VENDIBLE = ["En depósito", "Apto para venta", "Apto para venta con descuento"];
+
+function categoriaOrigenPorEstadoEquipo(estado) {
+  return CATEGORIAS_ORIGEN.find((c) => c.type === "equipo" && c.estados.includes(estado))?.value || "vendible";
+}
+
+// Para una línea de cotización, busca en `equipos` los lotes (por modelo === código de la
+// línea) con stock realmente libre (cantidad - comprometido) en un estado apto para venta.
+function candidatosParaLinea(equipos, codigoLinea) {
+  return equipos
+    .filter((e) => e.modelo === codigoLinea && ESTADOS_EQUIPO_VENDIBLE.includes(e.estado))
+    .map((e) => ({ id: e.id, codigo: e.codigo, estado: e.estado, disponible: Math.max(0, (Number(e.cantidad) || 1) - (Number(e.comprometido) || 0)) }))
+    .filter((e) => e.disponible > 0)
+    .sort((a, b) => b.disponible - a.disponible);
+}
+
+function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
+  const [cotizacionId, setCotizacionId] = useState("");
+  const [seleccion, setSeleccion] = useState({});
+  const [cantidades, setCantidades] = useState({});
+
+  const [fecha, setFecha] = useState(todayISO());
+  const [remito, setRemito] = useState("");
+  const [responsable, setResponsable] = useState("");
+  const [lugarSalida, setLugarSalida] = useState("Depósito principal");
+  const [empresaCliente, setEmpresaCliente] = useState("");
+  const [rucCliente, setRucCliente] = useState("");
+  const [firmaNombre, setFirmaNombre] = useState("");
+  const [firmaCedula, setFirmaCedula] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  const [fotoRemito, setFotoRemito] = useState("");
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [error, setError] = useState("");
+
+  const cotizacionesGanadas = useMemo(() => {
+    return cotizaciones
+      .filter((c) => c.estado === "Ganada")
+      .filter((c) => (c.lineas || []).some((l) => (Number(l.cantidad) || 0) - (Number((c.lineasRetiradas || {})[l.codigo]) || 0) > 0))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [cotizaciones]);
+
+  const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
+
+  const filas = useMemo(() => {
+    if (!cotizacion) return [];
+    const retiradas = cotizacion.lineasRetiradas || {};
+    return (cotizacion.lineas || []).map((l) => {
+      const pendiente = Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0));
+      const candidatos = candidatosParaLinea(equipos, l.codigo);
+      const stockDisponible = candidatos.reduce((acc, e) => acc + e.disponible, 0);
+      return { ...l, pendiente, candidatos, stockDisponible };
+    });
+  }, [cotizacion, equipos]);
+
+  const handleCotizacion = (id) => {
+    setCotizacionId(id);
+    const c = cotizaciones.find((x) => x.id === id);
+    if (!c) { setSeleccion({}); setCantidades({}); return; }
+    const retiradas = c.lineasRetiradas || {};
+    const nuevaSel = {};
+    const nuevaCant = {};
+    for (const l of c.lineas || []) {
+      const pendiente = Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0));
+      const stockDisponible = candidatosParaLinea(equipos, l.codigo).reduce((acc, e) => acc + e.disponible, 0);
+      const aRetirar = Math.min(pendiente, stockDisponible);
+      nuevaSel[l.codigo] = aRetirar > 0;
+      nuevaCant[l.codigo] = aRetirar;
+    }
+    setSeleccion(nuevaSel);
+    setCantidades(nuevaCant);
+    setError("");
+  };
+
+  const toggleLinea = (codigo) => setSeleccion((s) => ({ ...s, [codigo]: !s[codigo] }));
+  const setCantidadLinea = (codigo, v) => setCantidades((c) => ({ ...c, [codigo]: v }));
+
+  const handleFoto = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setSubiendoFoto(true);
+    try {
+      const dataUrl = await compressImage(file);
+      setFotoRemito(dataUrl);
+    } catch (err) {
+      setError("No se pudo procesar la foto, probá con otra imagen.");
+    }
+    setSubiendoFoto(false);
+  };
+
+  const submit = () => {
+    if (!cotizacion) {
+      setError("Elegí una cotización.");
+      return;
+    }
+    if (!remito.trim()) {
+      setError("Ingresá el N° de remito.");
+      return;
+    }
+    if (!firmaNombre.trim()) {
+      setError("Falta la aclaración de firma de quien retira/recibe.");
+      return;
+    }
+
+    const lineasParaGenerar = [];
+    for (const f of filas) {
+      if (!seleccion[f.codigo]) continue;
+      const cantidad = Math.min(Number(cantidades[f.codigo]) || 0, f.pendiente, f.stockDisponible);
+      if (cantidad <= 0) continue;
+      let restante = cantidad;
+      const batches = [];
+      for (const cand of f.candidatos) {
+        if (restante <= 0) break;
+        const tomar = Math.min(cand.disponible, restante);
+        if (tomar <= 0) continue;
+        batches.push({ equipoId: cand.id, codigo: cand.codigo, categoria: categoriaOrigenPorEstadoEquipo(cand.estado), cantidad: tomar });
+        restante -= tomar;
+      }
+      if (batches.length > 0) {
+        lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnit, cantidad: cantidad - restante, batches });
+      }
+    }
+    if (lineasParaGenerar.length === 0) {
+      setError("No hay productos seleccionados con stock disponible para retirar.");
+      return;
+    }
+    onGenerar(cotizacion, lineasParaGenerar, {
+      fecha, remito, responsable, lugarSalida, empresaCliente, rucCliente,
+      firmaNombre, firmaCedula, observaciones, fotoRemito,
+    });
+  };
+
+  return (
+    <div>
+      <Field label="Cotización ganada">
+        <Select value={cotizacionId} onChange={(e) => handleCotizacion(e.target.value)}>
+          <option value="">Seleccionar...</option>
+          {cotizacionesGanadas.map((c) => (
+            <option key={c.id} value={c.id}>{c.cliente || "(Sin cliente)"} — {c.obra || "(Sin obra)"} ({fmtDate(c.fecha)})</option>
+          ))}
+        </Select>
+        {cotizacionesGanadas.length === 0 && (
+          <p className="text-xs mt-1" style={{ color: "#B45309" }}>No hay cotizaciones ganadas con productos pendientes de salida.</p>
+        )}
+      </Field>
+
+      {cotizacion && (
+        <>
+          <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Productos a retirar</p>
+          <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+            {filas.map((f) => {
+              const sinStock = f.stockDisponible === 0;
+              const stockInsuficiente = f.stockDisponible > 0 && f.stockDisponible < f.pendiente;
+              const yaCompleto = f.pendiente === 0;
+              return (
+                <div key={f.codigo} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox" checked={!!seleccion[f.codigo]} disabled={sinStock || yaCompleto}
+                      onChange={() => toggleLinea(f.codigo)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium" style={{ color: INK }}>{f.descripcion || f.codigo}</span>
+                      <span style={{ color: MUTED }}> · {f.codigo}</span>
+                    </div>
+                    {seleccion[f.codigo] && !sinStock && !yaCompleto && (
+                      <input
+                        type="number" min="1" max={Math.min(f.pendiente, f.stockDisponible)}
+                        value={cantidades[f.codigo] || 0}
+                        onChange={(e) => setCantidadLinea(f.codigo, e.target.value)}
+                        className="w-16 text-xs px-1.5 py-1 rounded border"
+                        style={{ borderColor: BORDER }}
+                      />
+                    )}
+                  </div>
+                  <div className="mt-1 pl-6" style={{ color: MUTED }}>
+                    {yaCompleto && "Ya se generó la salida completa de este producto."}
+                    {!yaCompleto && sinStock && "Sin stock disponible en depósito — no se puede incluir en esta salida."}
+                    {!yaCompleto && !sinStock && stockInsuficiente && `Pendiente: ${f.pendiente} · solo hay ${f.stockDisponible} disponible(s).`}
+                    {!yaCompleto && !sinStock && !stockInsuficiente && `Pendiente: ${f.pendiente} · disponible: ${f.stockDisponible}.`}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
+      <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
+      <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
+      <Field label="N° de remito"><TextInput value={remito} onChange={(e) => setRemito(e.target.value)} /></Field>
+      <Field label="Responsable"><TextInput value={responsable} onChange={(e) => setResponsable(e.target.value)} placeholder="Ej: Gastón" /></Field>
+      <Field label="Firma — Aclaración (quien retira/recibe)"><TextInput value={firmaNombre} onChange={(e) => setFirmaNombre(e.target.value)} /></Field>
+      <Field label="Firma — C.I. N°"><TextInput value={firmaCedula} onChange={(e) => setFirmaCedula(e.target.value)} /></Field>
+
+      <Field label="Foto del remito en papel">
+        <input type="file" accept="image/*" capture="environment" onChange={handleFoto} className="text-xs" />
+      </Field>
+      {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
+      {fotoRemito && (
+        <div className="mb-3 relative inline-block">
+          <img src={fotoRemito} alt="Remito" className="rounded border" style={{ maxWidth: 160, borderColor: BORDER }} />
+          <button onClick={() => setFotoRemito("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
+            <X size={12} color="#FFFFFF" />
+          </button>
+        </div>
+      )}
+
+      <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Opcional" /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Generar salida</PrimaryButton>
     </div>
   );
 }
@@ -3400,10 +3683,18 @@ function ResumenCotizaciones({ resumen }) {
   );
 }
 
+const SALIDA_COTIZACION_BADGE = {
+  completa: { label: "Salida completa", bg: "#E8F3EC", color: "#1F7A44" },
+  parcial: { label: "Salida parcial", bg: "#FEF3E2", color: "#B45309" },
+  pendiente: { label: "Sin salida", bg: "#F2F3F4", color: "#686D73" },
+};
+
 function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, descargandoId }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+  const estadoSalida = estadoSalidaCotizacion(c);
+  const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: esActiva ? "#FFFFFF" : "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start justify-between mb-1">
@@ -3413,7 +3704,14 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
         </button>
       </div>
       {c.categoria && <CodeTag>{c.categoria}</CodeTag>}
-      <p className="text-sm mt-2" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString()}</p>
+      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+        <p className="text-sm" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString()}</p>
+        {badgeSalida && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: badgeSalida.bg, color: badgeSalida.color }}>
+            {badgeSalida.label}
+          </span>
+        )}
+      </div>
 
       {esActiva && (
         <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#F7F8FA" }}>

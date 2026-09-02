@@ -52,7 +52,6 @@ const DESTINOS_PLAYA = [
   { value: "socorro", label: "Equipo de socorro (unidad de rescate)", estado: "Reservado - unidad de rescate" },
   { value: "vendible", label: "Stock vendible", estado: "Apto para venta" },
   { value: "muestra", label: "Muestra (exhibición de calidad)", estado: "Muestra" },
-  { value: "repuesto", label: "Repuesto", estado: null },
 ];
 
 // Categorías desde donde se puede dar salida a un producto — cada una filtra un pool distinto
@@ -62,7 +61,7 @@ const CATEGORIAS_ORIGEN = [
   { value: "vendible_desc", label: "Stock vendible con descuento", type: "equipo", estados: ["Apto para venta con descuento"] },
   { value: "recuperables", label: "Banco de recuperables", type: "equipo", estados: ["Pendiente de reparación", "En reparación", "Reservado - unidad de rescate"] },
   { value: "playa", label: "Zona de playa", type: "playa" },
-  { value: "repuesto", label: "Repuesto", type: "repuesto" },
+  { value: "repuesto", label: "Repuesto", type: "producto-repuesto" },
 ];
 
 // Motivo de la salida — determina en qué queda el equipo (si sigue siendo un activo a rastrear)
@@ -96,7 +95,6 @@ const COLLECTIONS = {
   movimientos: "movimientos",
   entradas: "entradas",
   ventas: "ventas",
-  repuestos: "repuestos",
   playa: "playa",
   ventasComprometidas: "ventasComprometidas",
   productos: "productos",
@@ -548,7 +546,6 @@ export default function App() {
   const [movimientos, setMovimientos] = useState([]);
   const [entradas, setEntradas] = useState([]);
   const [ventas, setVentas] = useState([]);
-  const [repuestos, setRepuestos] = useState([]);
   const [playa, setPlaya] = useState([]);
   const [comprometidas, setComprometidas] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -561,6 +558,7 @@ export default function App() {
   const [retiroTarget, setRetiroTarget] = useState(null);
   const [pagoTarget, setPagoTarget] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
+  const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
   const [descargandoId, setDescargandoId] = useState(null);
@@ -574,7 +572,6 @@ export default function App() {
       [COLLECTIONS.movimientos]: setMovimientos,
       [COLLECTIONS.entradas]: setEntradas,
       [COLLECTIONS.ventas]: setVentas,
-      [COLLECTIONS.repuestos]: setRepuestos,
       [COLLECTIONS.playa]: setPlaya,
       [COLLECTIONS.ventasComprometidas]: setComprometidas,
       [COLLECTIONS.productos]: setProductos,
@@ -630,12 +627,13 @@ export default function App() {
         if (restante > 0) updateItem(COLLECTIONS.playa, source.id, { cantidad: restante });
         else deleteItem(COLLECTIONS.playa, source.id);
       }
-    } else if (cat.type === "repuesto") {
-      const source = repuestos.find((r) => r.id === data.sourceId);
+    } else if (cat.type === "producto-repuesto") {
+      // A diferencia de equipo/playa, el repuesto es una ficha permanente del catálogo — nunca
+      // se borra al llegar a 0, solo se descuenta su stock (piso en 0).
+      const source = productos.find((p) => p.id === data.sourceId);
       if (source) {
-        const restante = (Number(source.cantidad) || 1) - cantidadRetirada;
-        if (restante > 0) updateItem(COLLECTIONS.repuestos, source.id, { cantidad: restante });
-        else deleteItem(COLLECTIONS.repuestos, source.id);
+        const restante = Math.max(0, (Number(source.stockDisponible) || 0) - cantidadRetirada);
+        updateItem(COLLECTIONS.productos, source.id, { stockDisponible: restante });
       }
     }
   };
@@ -756,9 +754,6 @@ export default function App() {
     updateItem(COLLECTIONS.ventasComprometidas, id, { pagos });
   };
 
-  const addRepuesto = (data) => addItem(COLLECTIONS.repuestos, data);
-  const deleteRepuesto = (id) => deleteItem(COLLECTIONS.repuestos, id);
-
   // Catálogo de productos: precio de lista y ficha técnica de cada modelo — de acá salen
   // el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
   const addProducto = (data) => addItem(COLLECTIONS.productos, data);
@@ -817,31 +812,34 @@ export default function App() {
   const derivarPlaya = (item, destinoValue, extra) => {
     const destino = DESTINOS_PLAYA.find((d) => d.value === destinoValue);
     if (!destino) return;
-    if (destino.value === "repuesto") {
-      addRepuesto({
-        nombre: extra.nombre || item.descripcion,
-        modeloAsociado: extra.modeloAsociado || "",
-        cantidad: extra.cantidad || 1,
-        precio: extra.precio || 0,
-      });
-    } else {
-      const codigo = nextCodigo(equipos);
-      addItem(COLLECTIONS.equipos, {
-        codigo, serie: "", modelo: item.descripcion,
-        fechaIngreso: item.fecha, estado: destino.estado,
-        ubicacion: "Depósito principal",
-        cantidad: (extra && extra.cantidad) || item.cantidad || 1,
-        notas: (extra && extra.notas) || item.notas || "",
-      });
-      addItem(COLLECTIONS.entradas, {
-        fecha: todayISO(), codigo,
-        tipo: "Retorno de reparación propia", origen: `Zona de playa (${item.origen})`,
-        motivo: `Derivado desde playa: ${item.descripcion}`,
-        estadoResultante: destino.estado,
-        responsable: "",
-      });
-    }
+    const codigo = nextCodigo(equipos);
+    addItem(COLLECTIONS.equipos, {
+      codigo, serie: "", modelo: item.descripcion,
+      fechaIngreso: item.fecha, estado: destino.estado,
+      ubicacion: "Depósito principal",
+      cantidad: (extra && extra.cantidad) || item.cantidad || 1,
+      notas: (extra && extra.notas) || item.notas || "",
+    });
+    addItem(COLLECTIONS.entradas, {
+      fecha: todayISO(), codigo,
+      tipo: "Retorno de reparación propia", origen: `Zona de playa (${item.origen})`,
+      motivo: `Derivado desde playa: ${item.descripcion}`,
+      estadoResultante: destino.estado,
+      responsable: "",
+    });
     deletePlaya(item.id);
+  };
+
+  // Extraer una pieza de un equipo en playa destinado a desarmadero: suma stock al repuesto
+  // del catálogo, pero el equipo de playa NO se borra ni se deriva — sigue ahí, solo con una
+  // línea de historial en sus notas de qué se le sacó y cuándo (puede pasar varias veces).
+  const extraerRepuestoDePlaya = (item, productoId, cantidad) => {
+    const producto = productos.find((p) => p.id === productoId);
+    if (!producto) return;
+    const cant = Number(cantidad) || 1;
+    updateItem(COLLECTIONS.productos, producto.id, { stockDisponible: (Number(producto.stockDisponible) || 0) + cant });
+    const linea = `[${fmtDate(todayISO())}] Repuesto extraído: ${producto.descripcion || producto.nombre} (${producto.nombre}) x${cant}`;
+    updateItem(COLLECTIONS.playa, item.id, { notas: item.notas ? `${item.notas}\n${linea}` : linea });
   };
 
   const handleImportarCatalogo = async (file) => {
@@ -904,9 +902,9 @@ export default function App() {
       "Contactado service 2": v.contactadoService2 ? "Sí" : "No", "Fecha contacto service 2": v.fechaContactoService2 || "",
       "Decisión service 2": v.decisionService2 || "", "Cita service 2": v.citaService2 ? `${fmtDate(v.citaService2.fecha)} ${v.citaService2.hora || ""}` : "",
     })));
-    const wsRepuestos = XLSX.utils.json_to_sheet(repuestos.map((r) => ({
-      "Nombre del repuesto": r.nombre, "Modelo asociado": r.modeloAsociado,
-      "Cantidad": r.cantidad, "Precio U$S": r.precio,
+    const wsRepuestos = XLSX.utils.json_to_sheet(productos.filter((p) => p.categoriaPrincipal === "Repuestos").map((p) => ({
+      "Código": p.nombre, "Descripción": p.descripcion, "Tipo de equipo": p.subcategoria, "Código de equipo": p.subcategoria2,
+      "Precio de lista U$S": p.precioLista, "Costo puesto en PY U$S": p.costoPy, "Stock disponible": p.stockDisponible,
     })));
     const wsPlaya = XLSX.utils.json_to_sheet(playa.map((p) => ({
       "Fecha": p.fecha, "Descripción": p.descripcion, "Origen": p.origen, "Cantidad": p.cantidad || 1, "Notas": p.notas,
@@ -945,11 +943,6 @@ export default function App() {
     const q = query.toLowerCase();
     return ventas.filter((v) => !q || [v.codigo, v.cliente, v.obra].some((v2) => (v2 || "").toLowerCase().includes(q)));
   }, [ventas, query]);
-
-  const filteredRepuestos = useMemo(() => {
-    const q = query.toLowerCase();
-    return repuestos.filter((r) => !q || [r.nombre, r.modeloAsociado].some((v) => (v || "").toLowerCase().includes(q)));
-  }, [repuestos, query]);
 
   const filteredPlaya = useMemo(() => {
     const q = query.toLowerCase();
@@ -1034,7 +1027,6 @@ export default function App() {
     { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
     { key: "muestras", label: "Muestras", icon: Star },
-    { key: "repuestos", label: "Repuestos", icon: Boxes },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
@@ -1122,6 +1114,8 @@ export default function App() {
             playa={filteredPlaya} query={query} onQuery={setQuery}
             onNew={() => setDrawer("playa")}
             onDerivar={derivarPlaya}
+            onExtraerRepuesto={extraerRepuestoDePlaya}
+            productosRepuestos={productos.filter((p) => p.categoriaPrincipal === "Repuestos")}
             onDelete={deletePlaya}
           />
         )}
@@ -1273,34 +1267,11 @@ export default function App() {
           <MuestrasView muestras={muestras} query={query} onQuery={setQuery} onUpdateField={updateEquipoField} />
         )}
 
-        {tab === "repuestos" && (
-          <Section
-            title="Repuestos"
-            subtitle="Piezas sueltas en stock, asociadas al modelo de equipo que corresponden."
-            query={query} onQuery={setQuery}
-            onNew={() => setDrawer("repuesto")}
-            newLabel="Nuevo repuesto"
-          >
-            <Table
-              columns={[
-                { key: "nombre", label: "Repuesto" }, { key: "modeloAsociado", label: "Modelo asociado" },
-                { key: "cantidad", label: "Cantidad" }, { key: "precio", label: "Precio U$S" },
-              ]}
-              rows={filteredRepuestos}
-              onDelete={deleteRepuesto}
-              renderCell={(key, row) => {
-                if (key === "precio") return `$${Number(row.precio || 0).toFixed(2)}`;
-                return row[key] || "—";
-              }}
-            />
-          </Section>
-        )}
-
         {tab === "catalogo" && (
           <CatalogoView
             productos={filteredProductos} query={query} onQuery={setQuery}
             modoInicial={catalogoModoInicial}
-            onNew={() => { setProductoEditando(null); setDrawer("producto"); }}
+            onNew={(modo) => { setProductoEditando(null); setNuevoProductoDefaults(modo === "repuestos" ? { categoriaPrincipal: "Repuestos" } : null); setDrawer("producto"); }}
             onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
             onDelete={deleteProducto}
             onQuitarFicha={quitarFichaTecnica}
@@ -1341,7 +1312,7 @@ export default function App() {
         <EquipoForm sugerido={nextCodigo(equipos)} onSave={(d) => { addEquipo(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "movimiento"} onClose={() => setDrawer(null)} title="Nueva salida">
-        <MovimientoForm equipos={equipos} playa={playa} repuestos={repuestos} onSave={(d) => { addMovimiento(d); setDrawer(null); }} />
+        <MovimientoForm equipos={equipos} playa={playa} productos={productos} onSave={(d) => { addMovimiento(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "entrada"} onClose={() => setDrawer(null)} title="Nueva entrada">
         <EntradaForm equipos={equipos} onSave={(d) => { addEntrada(d); setDrawer(null); }} />
@@ -1355,17 +1326,19 @@ export default function App() {
       <Drawer open={drawer === "playa"} onClose={() => setDrawer(null)} title="Nuevo ingreso a playa">
         <PlayaForm onSave={(d) => { addPlaya(d); setDrawer(null); }} />
       </Drawer>
-      <Drawer open={drawer === "repuesto"} onClose={() => setDrawer(null)} title="Nuevo repuesto">
-        <RepuestoForm onSave={(d) => { addRepuesto(d); setDrawer(null); }} />
-      </Drawer>
-      <Drawer open={drawer === "producto"} onClose={() => setDrawer(null)} title={productoEditando ? "Editar producto" : "Nuevo producto"}>
+      <Drawer
+        open={drawer === "producto"} onClose={() => { setDrawer(null); setNuevoProductoDefaults(null); }}
+        title={productoEditando ? "Editar producto" : nuevoProductoDefaults?.categoriaPrincipal === "Repuestos" ? "Nuevo repuesto" : "Nuevo producto"}
+      >
         <ProductoForm
           producto={productoEditando}
+          defaults={nuevoProductoDefaults}
           onSave={(d) => {
             if (productoEditando) updateProducto(productoEditando.id, d);
             else addProducto(d);
             setDrawer(null);
             setProductoEditando(null);
+            setNuevoProductoDefaults(null);
           }}
         />
       </Drawer>
@@ -2022,20 +1995,33 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
   );
 }
 
-function PlayaCard({ item, onDerivar, onDelete }) {
+function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onDelete }) {
   const [destino, setDestino] = useState("");
-  const [nombre, setNombre] = useState(item.descripcion);
-  const [modeloAsociado, setModeloAsociado] = useState("");
   const [cantidad, setCantidad] = useState(item.cantidad || 1);
-  const [precio, setPrecio] = useState("");
   const [error, setError] = useState("");
+
+  const [extrayendo, setExtrayendo] = useState(false);
+  const [repuestoId, setRepuestoId] = useState("");
+  const [cantidadExtraida, setCantidadExtraida] = useState(1);
 
   const confirmar = () => {
     if (!destino) {
       setError("Elegí un destino primero.");
       return;
     }
-    onDerivar(item, destino, { nombre, modeloAsociado, cantidad: Number(cantidad) || 1, precio: Number(precio) || 0 });
+    onDerivar(item, destino, { cantidad: Number(cantidad) || 1 });
+  };
+
+  const confirmarExtraccion = () => {
+    if (!repuestoId) {
+      setError("Elegí qué repuesto extraer.");
+      return;
+    }
+    onExtraerRepuesto(item, repuestoId, Number(cantidadExtraida) || 1);
+    setExtrayendo(false);
+    setRepuestoId("");
+    setCantidadExtraida(1);
+    setError("");
   };
 
   return (
@@ -2049,7 +2035,8 @@ function PlayaCard({ item, onDerivar, onDelete }) {
           <Trash2 size={14} style={{ color: MUTED }} />
         </button>
       </div>
-      {item.notas && <p className="text-xs mt-1 mb-2" style={{ color: MUTED }}>{item.notas}</p>}
+      {item.notas && <p className="text-xs mt-1 mb-2 whitespace-pre-line" style={{ color: MUTED }}>{item.notas}</p>}
+
       <div className="flex items-center gap-2 mt-2">
         <Select value={destino} onChange={(e) => { setDestino(e.target.value); setError(""); }} style={{ ...inputStyle, padding: "4px 8px", fontSize: 12 }}>
           <option value="">Derivar a...</option>
@@ -2059,22 +2046,41 @@ function PlayaCard({ item, onDerivar, onDelete }) {
           <ArrowRight size={14} color="#FFFFFF" />
         </button>
       </div>
-      {destino === "repuesto" && (
-        <div className="mt-3 pt-3 border-t space-y-2" style={{ borderColor: BORDER }}>
-          <TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre del repuesto" />
-          <TextInput value={modeloAsociado} onChange={(e) => setModeloAsociado(e.target.value)} placeholder="Modelo asociado" />
-          <div className="flex gap-2">
-            <TextInput type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="Cantidad" />
-            <TextInput type="number" value={precio} onChange={(e) => setPrecio(e.target.value)} placeholder="Precio U$S" />
+
+      {!extrayendo ? (
+        <button onClick={() => setExtrayendo(true)} className="text-xs font-medium mt-2.5" style={{ color: ACCENT }}>
+          + Extraer repuesto (queda en playa)
+        </button>
+      ) : (
+        <div className="mt-2.5 pt-3 border-t space-y-2" style={{ borderColor: BORDER }}>
+          <p className="text-xs" style={{ color: MUTED }}>Suma stock a un repuesto del catálogo sin sacar este equipo de playa — para desarmaderos de los que se van rescatando piezas de a poco.</p>
+          <Select value={repuestoId} onChange={(e) => setRepuestoId(e.target.value)} style={{ ...inputStyle, padding: "4px 8px", fontSize: 12 }}>
+            <option value="">Repuesto del catálogo...</option>
+            {productosRepuestos.map((p) => (
+              <option key={p.id} value={p.id}>{p.nombre}{p.descripcion ? " — " + p.descripcion : ""}</option>
+            ))}
+          </Select>
+          <div className="flex items-center gap-2">
+            <TextInput type="number" min="1" value={cantidadExtraida} onChange={(e) => setCantidadExtraida(e.target.value)} placeholder="Cantidad" />
+            <button onClick={confirmarExtraccion} className="text-xs px-3 py-2 rounded shrink-0" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+              Confirmar
+            </button>
+            <button onClick={() => { setExtrayendo(false); setError(""); }} className="text-xs px-2 py-2 rounded shrink-0" style={{ color: MUTED }}>
+              Cancelar
+            </button>
           </div>
+          {productosRepuestos.length === 0 && (
+            <p className="text-xs" style={{ color: "#B45309" }}>No hay repuestos cargados todavía — creá uno en Catálogo de productos → Repuestos.</p>
+          )}
         </div>
       )}
+
       {error && <p className="text-xs mt-2" style={{ color: "#B91C1C" }}>{error}</p>}
     </div>
   );
 }
 
-function PlayaView({ playa, query, onQuery, onNew, onDerivar, onDelete }) {
+function PlayaView({ playa, productosRepuestos, query, onQuery, onNew, onDerivar, onExtraerRepuesto, onDelete }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -2094,7 +2100,10 @@ function PlayaView({ playa, query, onQuery, onNew, onDerivar, onDelete }) {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {playa.map((item) => (
-            <PlayaCard key={item.id} item={item} onDerivar={onDerivar} onDelete={onDelete} />
+            <PlayaCard
+              key={item.id} item={item} productosRepuestos={productosRepuestos}
+              onDerivar={onDerivar} onExtraerRepuesto={onExtraerRepuesto} onDelete={onDelete}
+            />
           ))}
         </div>
       )}
@@ -2423,7 +2432,7 @@ function EquipoForm({ sugerido, onSave }) {
   );
 }
 
-function MovimientoForm({ equipos, playa, repuestos, onSave }) {
+function MovimientoForm({ equipos, playa, productos, onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [categoria, setCategoria] = useState("");
   const [sourceId, setSourceId] = useState("");
@@ -2450,13 +2459,15 @@ function MovimientoForm({ equipos, playa, repuestos, onSave }) {
     if (!cat) return [];
     if (cat.type === "equipo") return equipos.filter((e) => cat.estados.includes(e.estado));
     if (cat.type === "playa") return playa;
-    if (cat.type === "repuesto") return repuestos;
+    if (cat.type === "producto-repuesto") return productos.filter((p) => p.categoriaPrincipal === "Repuestos");
     return [];
-  }, [cat, equipos, playa, repuestos]);
+  }, [cat, equipos, playa, productos]);
 
   const source = opciones.find((o) => o.id === sourceId);
   const comprometido = source && cat.type === "equipo" ? (Number(source.comprometido) || 0) : 0;
-  const disponible = source ? Math.max(0, (Number(source.cantidad) || 1) - comprometido) : 0;
+  const disponible = !source ? 0
+    : cat.type === "producto-repuesto" ? Math.max(0, Number(source.stockDisponible) || 0)
+    : Math.max(0, (Number(source.cantidad) || 1) - comprometido);
 
   const handleCategoria = (v) => {
     setCategoria(v);
@@ -2504,8 +2515,13 @@ function MovimientoForm({ equipos, playa, repuestos, onSave }) {
       setError("Elegí el motivo de la salida.");
       return;
     }
-    const modelo = cat.type === "equipo" ? source.modelo : cat.type === "playa" ? source.descripcion : source.nombre;
-    const codigo = cat.type === "equipo" ? source.codigo : (source.codigo || modelo);
+    const modelo = cat.type === "equipo" ? source.modelo
+      : cat.type === "playa" ? source.descripcion
+      : cat.type === "producto-repuesto" ? (source.descripcion || source.nombre)
+      : source.nombre;
+    const codigo = cat.type === "equipo" ? source.codigo
+      : cat.type === "producto-repuesto" ? source.nombre
+      : (source.codigo || modelo);
     onSave({
       fecha, categoria: cat.value, categoriaLabel: cat.label, sourceId, codigo, modelo,
       cantidad: cant, motivo: cat.type === "equipo" ? motivo : "",
@@ -2529,8 +2545,13 @@ function MovimientoForm({ equipos, playa, repuestos, onSave }) {
           <Select value={sourceId} onChange={(e) => { setSourceId(e.target.value); setCantidad(1); }}>
             <option value="">Seleccionar...</option>
             {opciones.map((o) => {
-              const label = cat.type === "equipo" ? `${o.codigo} — ${o.modelo}` : cat.type === "playa" ? o.descripcion : `${o.nombre}${o.modeloAsociado ? " — " + o.modeloAsociado : ""}`;
-              const libres = cat.type === "equipo" ? Math.max(0, (Number(o.cantidad) || 1) - (Number(o.comprometido) || 0)) : (o.cantidad || 1);
+              const label = cat.type === "equipo" ? `${o.codigo} — ${o.modelo}`
+                : cat.type === "playa" ? o.descripcion
+                : cat.type === "producto-repuesto" ? `${o.nombre}${o.descripcion ? " — " + o.descripcion : ""}`
+                : o.nombre;
+              const libres = cat.type === "equipo" ? Math.max(0, (Number(o.cantidad) || 1) - (Number(o.comprometido) || 0))
+                : cat.type === "producto-repuesto" ? (Number(o.stockDisponible) || 0)
+                : (o.cantidad || 1);
               return <option key={o.id} value={o.id}>{label} (disponible: {libres})</option>;
             })}
           </Select>
@@ -3281,7 +3302,7 @@ function PlayaForm({ onSave }) {
       <Field label="Quién lo dejó"><Select value={origen} onChange={(e) => setOrigen(e.target.value)}>{ORIGENES_PLAYA.map((o) => <option key={o}>{o}</option>)}</Select></Field>
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
       <p className="text-xs mb-3" style={{ color: MUTED }}>
-        Una vez cargado, vas a poder derivarlo a Banco de recuperables, Equipo de socorro, Stock vendible, Muestra o Repuestos.
+        Una vez cargado, vas a poder derivarlo a Banco de recuperables, Equipo de socorro, Stock vendible o Muestra — o extraerle repuestos sin sacarlo de playa.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar en playa</PrimaryButton>
@@ -3289,38 +3310,11 @@ function PlayaForm({ onSave }) {
   );
 }
 
-function RepuestoForm({ onSave }) {
-  const [nombre, setNombre] = useState("");
-  const [modeloAsociado, setModeloAsociado] = useState("");
-  const [cantidad, setCantidad] = useState(1);
-  const [precio, setPrecio] = useState("");
-  const [error, setError] = useState("");
-
-  const submit = () => {
-    if (!nombre.trim()) {
-      setError("Ingresá el nombre del repuesto.");
-      return;
-    }
-    onSave({ nombre, modeloAsociado, cantidad: Number(cantidad) || 1, precio: Number(precio) || 0 });
-  };
-
-  return (
-    <div>
-      <Field label="Nombre del repuesto"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Placa electrónica" /></Field>
-      <Field label="Modelo asociado"><TextInput value={modeloAsociado} onChange={(e) => setModeloAsociado(e.target.value)} placeholder="Ej: Horno AE-AK630-9M-3G-CS-ON" /></Field>
-      <Field label="Cantidad"><TextInput type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
-      <Field label="Precio U$S"><TextInput type="number" value={precio} onChange={(e) => setPrecio(e.target.value)} /></Field>
-      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar repuesto</PrimaryButton>
-    </div>
-  );
-}
-
 // ---------- Catálogo de productos ----------
-function ProductoForm({ producto, onSave }) {
+function ProductoForm({ producto, defaults, onSave }) {
   const [nombre, setNombre] = useState(producto?.nombre || "");
   const [categoria, setCategoria] = useState(producto?.categoria || "");
-  const [categoriaPrincipal, setCategoriaPrincipal] = useState(producto?.categoriaPrincipal || "");
+  const [categoriaPrincipal, setCategoriaPrincipal] = useState(producto?.categoriaPrincipal || defaults?.categoriaPrincipal || "");
   const [subcategoria, setSubcategoria] = useState(producto?.subcategoria || "");
   const [subcategoria2, setSubcategoria2] = useState(producto?.subcategoria2 || "");
   const [subcategoria3, setSubcategoria3] = useState(producto?.subcategoria3 || "");
@@ -3397,11 +3391,15 @@ function ProductoForm({ producto, onSave }) {
     }
   };
 
+  const esRepuesto = categoriaPrincipal === "Repuestos";
+
   return (
     <div>
-      <Field label="Nombre / código del producto"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label={esRepuesto ? "Código del repuesto" : "Nombre / código del producto"}>
+        <TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder={esRepuesto ? "Ej: AE-AWG-2T-30-ON-Rep-1" : "Ej: AE-AK630-9M-3G-CS-ON"} />
+      </Field>
       <Field label="Categoría"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: Electrodomésticos, Aires acondicionados..." /></Field>
-      <Field label="Descripción (aparece en la cotización)"><Textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Descripción técnica completa del producto" /></Field>
+      <Field label="Descripción (aparece en la cotización)"><Textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder={esRepuesto ? "Ej: Motor" : "Descripción técnica completa del producto"} /></Field>
       <div className="flex gap-2">
         <Field label="Especificación — etiqueta"><TextInput value={especLabel} onChange={(e) => setEspecLabel(e.target.value)} placeholder="Ej: Capacidad BTU" /></Field>
         <Field label="Especificación — valor"><TextInput value={especValor} onChange={(e) => setEspecValor(e.target.value)} placeholder="Ej: 12.000" /></Field>
@@ -3411,10 +3409,14 @@ function ProductoForm({ producto, onSave }) {
       <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Categorización (para agrupar y ordenar el catálogo)</p>
       <div className="flex gap-2">
         <Field label="Categoría principal"><TextInput value={categoriaPrincipal} onChange={(e) => setCategoriaPrincipal(e.target.value)} placeholder="Ej: Cocina" /></Field>
-        <Field label="Subcategoría"><TextInput value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)} placeholder="Ej: Campana" /></Field>
+        <Field label={esRepuesto ? "Tipo de equipo" : "Subcategoría"}>
+          <TextInput value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)} placeholder={esRepuesto ? "Ej: Horno" : "Ej: Campana"} />
+        </Field>
       </div>
       <div className="flex gap-2">
-        <Field label="Subcategoría 2"><TextInput value={subcategoria2} onChange={(e) => setSubcategoria2(e.target.value)} placeholder="Ej: Pared" /></Field>
+        <Field label={esRepuesto ? "Código de equipo" : "Subcategoría 2"}>
+          <TextInput value={subcategoria2} onChange={(e) => setSubcategoria2(e.target.value)} placeholder={esRepuesto ? "Ej: AE-AK630-9M-3G-CS-ON" : "Ej: Pared"} />
+        </Field>
         <Field label="Subcategoría 3"><TextInput value={subcategoria3} onChange={(e) => setSubcategoria3(e.target.value)} placeholder="Ej: Telescópica" /></Field>
       </div>
       <Field label="Orden dentro del grupo (número — ej. potencia, litraje, hornallas)">
@@ -3711,7 +3713,7 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
           <SecondaryButton onClick={() => fileInputRef.current?.click()}>
             <Upload size={14} /> {importando ? "Importando..." : "Importar Excel"}
           </SecondaryButton>
-          <PrimaryButton onClick={onNew}><Plus size={15} /> Nuevo producto</PrimaryButton>
+          <PrimaryButton onClick={() => onNew(modo)}><Plus size={15} /> {modo === "repuestos" ? "Nuevo repuesto" : "Nuevo producto"}</PrimaryButton>
         </div>
       </div>
 

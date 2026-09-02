@@ -3560,7 +3560,37 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpd
 // ---------- Presupuestos de reparación / repuestos ----------
 // Vía totalmente separada de Cotizaciones: se arma con productos de la carpeta
 // "Repuestos" del catálogo y genera un PDF con el modelo "Presupuesto de Reparación".
+const MANTENIMIENTO_CATEGORIAS = ["Aire Acondicionado", "Termocalefón", "Campana"];
+
+const MANTENIMIENTO_PRECIOS = {
+  "Aire Acondicionado": {
+    conBtu: true,
+    opciones: [
+      { label: "9.000 - 12.000 BTU", precio: 300000 },
+      { label: "18.000 - 36.000 BTU", precio: 420000 },
+      { label: "48.000 - 64.000 BTU", precio: 576000 },
+    ],
+    descripcion: "Mantenimiento preventivo: limpieza de filtros, serpentinas y chequeo general.",
+  },
+  "Termocalefón": {
+    conBtu: false,
+    precio: 360000,
+    descripcion: "Desarme, limpieza con hidrolavadora, cambio de vela de magnesio (incluido), chequeo de resistencia y montaje.",
+  },
+  "Campana": {
+    conBtu: false,
+    precio: 300000,
+    descripcion: "Limpieza de filtro, turbina, campana y ducto. De ser necesario, cambio de filtro con costo adicional.",
+  },
+};
+
+const PLAZO_ESTIMADO_DEFAULT = {
+  reparacion: "A confirmar según disponibilidad de repuesto y agenda del técnico.",
+  mantenimiento: "A coordinar según disponibilidad de agenda del técnico.",
+};
+
 function PresupuestoReparacionForm({ productos, onSave }) {
+  const [tipo, setTipo] = useState("reparacion");
   const [fecha, setFecha] = useState(todayISO());
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
@@ -3572,11 +3602,19 @@ function PresupuestoReparacionForm({ productos, onSave }) {
   const [costoNuevo, setCostoNuevo] = useState("");
   const [incluirInstalacion, setIncluirInstalacion] = useState(false);
   const [instalacionMonto, setInstalacionMonto] = useState("");
-  const [plazoEstimado, setPlazoEstimado] = useState("A confirmar según disponibilidad de repuesto y agenda del técnico.");
+  const [plazoEstimado, setPlazoEstimado] = useState(PLAZO_ESTIMADO_DEFAULT.reparacion);
   const [error, setError] = useState("");
+
+  const [lineasMantenimiento, setLineasMantenimiento] = useState([]);
+  const [categoriaActiva, setCategoriaActiva] = useState(MANTENIMIENTO_CATEGORIAS[0]);
+  const [btuSel, setBtuSel] = useState(0);
+  const [cantidadMtto, setCantidadMtto] = useState(1);
+  const [precioMtto, setPrecioMtto] = useState(String(MANTENIMIENTO_PRECIOS[MANTENIMIENTO_CATEGORIAS[0]].opciones[0].precio));
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.costoUnitario) || 0), 0);
+  const subtotalMtto = lineasMantenimiento.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0), 0);
+  const mttoInfo = MANTENIMIENTO_PRECIOS[categoriaActiva];
 
   const productosPorGrupo = useMemo(() => {
     const grupos = new Map();
@@ -3587,6 +3625,11 @@ function PresupuestoReparacionForm({ productos, onSave }) {
     }
     return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [productos]);
+
+  const handleTipo = (t) => {
+    setTipo(t);
+    if (Object.values(PLAZO_ESTIMADO_DEFAULT).includes(plazoEstimado)) setPlazoEstimado(PLAZO_ESTIMADO_DEFAULT[t]);
+  };
 
   const handleProducto = (id) => {
     setProductoId(id);
@@ -3614,31 +3657,137 @@ function PresupuestoReparacionForm({ productos, onSave }) {
 
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
 
+  const handleCategoriaActiva = (cat) => {
+    setCategoriaActiva(cat);
+    const info = MANTENIMIENTO_PRECIOS[cat];
+    setCantidadMtto(1);
+    setBtuSel(0);
+    setPrecioMtto(String(info.conBtu ? info.opciones[0].precio : info.precio));
+  };
+
+  const handleBtuSel = (idx) => {
+    setBtuSel(idx);
+    setPrecioMtto(String(mttoInfo.opciones[idx].precio));
+  };
+
+  const agregarLineaMtto = () => {
+    const detalle = mttoInfo.conBtu ? mttoInfo.opciones[btuSel].label : mttoInfo.descripcion;
+    setLineasMantenimiento([...lineasMantenimiento, {
+      categoria: categoriaActiva, detalle,
+      cantidad: Number(cantidadMtto) || 1, precioUnitario: Number(precioMtto) || 0,
+    }]);
+    setCantidadMtto(1);
+  };
+
+  const quitarLineaMtto = (idx) => setLineasMantenimiento(lineasMantenimiento.filter((_, i) => i !== idx));
+
   const submit = () => {
     if (!cliente.trim()) {
       setError("Ingresá el cliente.");
       return;
     }
-    if (lineas.length === 0) {
+    if (tipo === "reparacion" && lineas.length === 0) {
       setError("Agregá al menos un repuesto.");
       return;
     }
+    if (tipo === "mantenimiento" && lineasMantenimiento.length === 0 && lineas.length === 0) {
+      setError("Agregá al menos un servicio de mantenimiento o un repuesto.");
+      return;
+    }
     onSave({
-      fecha, cliente, obra, equipoAfectado, fallaReportada, lineas,
-      incluirInstalacion, instalacionMonto: Number(instalacionMonto) || 0,
+      tipo, fecha, cliente, obra, equipoAfectado, fallaReportada, lineas,
+      lineasMantenimiento: tipo === "mantenimiento" ? lineasMantenimiento : [],
+      incluirInstalacion: tipo === "reparacion" && incluirInstalacion,
+      instalacionMonto: Number(instalacionMonto) || 0,
       plazoEstimado,
     });
   };
 
   return (
     <div>
+      <div className="flex gap-2 mb-4">
+        <button
+          type="button" onClick={() => handleTipo("reparacion")}
+          className="flex-1 text-xs font-medium px-3 py-2 rounded-lg"
+          style={tipo === "reparacion" ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+        >
+          Reparación / Repuestos
+        </button>
+        <button
+          type="button" onClick={() => handleTipo("mantenimiento")}
+          className="flex-1 text-xs font-medium px-3 py-2 rounded-lg"
+          style={tipo === "mantenimiento" ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+        >
+          Mantenimiento
+        </button>
+      </div>
+
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
-      <Field label="Equipo / Producto afectado"><TextInput value={equipoAfectado} onChange={(e) => setEquipoAfectado(e.target.value)} placeholder="Ej: Horno AE-AK630-9M-3G-CS-ON" /></Field>
-      <Field label="Falla reportada"><Textarea value={fallaReportada} onChange={(e) => setFallaReportada(e.target.value)} placeholder="Descripción de la falla que reportó el cliente" /></Field>
+      <Field label={tipo === "mantenimiento" ? "Equipo(s) a mantener" : "Equipo / Producto afectado"}>
+        <TextInput
+          value={equipoAfectado} onChange={(e) => setEquipoAfectado(e.target.value)}
+          placeholder={tipo === "mantenimiento" ? "Ej: 3 splits, 1 termocalefón" : "Ej: Horno AE-AK630-9M-3G-CS-ON"}
+        />
+      </Field>
+      <Field label={tipo === "mantenimiento" ? "Detalle / Observaciones" : "Falla reportada"}>
+        <Textarea
+          value={fallaReportada} onChange={(e) => setFallaReportada(e.target.value)}
+          placeholder={tipo === "mantenimiento" ? "Observaciones adicionales (opcional)" : "Descripción de la falla que reportó el cliente"}
+        />
+      </Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Repuestos</p>
+      {tipo === "mantenimiento" && (
+        <>
+          <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Servicios de mantenimiento</p>
+          <div className="flex gap-1.5 mb-2 flex-wrap">
+            {MANTENIMIENTO_CATEGORIAS.map((cat) => (
+              <button
+                key={cat} type="button" onClick={() => handleCategoriaActiva(cat)}
+                className="text-xs px-2.5 py-1.5 rounded-full"
+                style={categoriaActiva === cat ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+          <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+            {mttoInfo.conBtu && (
+              <Field label="Capacidad (BTU)">
+                <Select value={btuSel} onChange={(e) => handleBtuSel(Number(e.target.value))}>
+                  {mttoInfo.opciones.map((o, i) => <option key={i} value={i}>{o.label}</option>)}
+                </Select>
+              </Field>
+            )}
+            <p className="text-xs mb-2" style={{ color: MUTED }}>{mttoInfo.descripcion}</p>
+            <div className="flex gap-2">
+              <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadMtto} onChange={(e) => setCantidadMtto(e.target.value)} /></Field>
+              <Field label="Precio unitario ₲"><TextInput type="number" value={precioMtto} onChange={(e) => setPrecioMtto(e.target.value)} /></Field>
+            </div>
+            <SecondaryButton onClick={agregarLineaMtto}><Plus size={14} /> Agregar mantenimiento</SecondaryButton>
+          </div>
+
+          {lineasMantenimiento.length > 0 && (
+            <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+              {lineasMantenimiento.map((l, i) => (
+                <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+                  <div className="min-w-0">
+                    <span className="font-medium" style={{ color: INK }}>{l.categoria}</span>
+                    <span style={{ color: MUTED }}> · {l.detalle} · cant. {l.cantidad} × ₲ {Number(l.precioUnitario).toLocaleString()} = ₲ {(l.cantidad * l.precioUnitario).toLocaleString()}</span>
+                  </div>
+                  <button onClick={() => quitarLineaMtto(i)}><X size={13} style={{ color: MUTED }} /></button>
+                </div>
+              ))}
+              <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+                <span>Subtotal mantenimiento</span><span>₲ {subtotalMtto.toLocaleString()}</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Repuestos{tipo === "mantenimiento" ? " (opcional)" : ""}</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Repuesto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
@@ -3673,23 +3822,27 @@ function PresupuestoReparacionForm({ productos, onSave }) {
             </div>
           ))}
           <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Subtotal</span><span>U$S {subtotal.toLocaleString()}</span>
+            <span>Subtotal repuestos</span><span>U$S {subtotal.toLocaleString()}</span>
           </div>
         </div>
       )}
 
-      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
-        <input type="checkbox" checked={incluirInstalacion} onChange={(e) => setIncluirInstalacion(e.target.checked)} />
-        Incluir instalación
-      </label>
-      {incluirInstalacion && (
-        <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
-      )}
-      {lineas.length > 0 && (
-        <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-          <span>Total final</span>
-          <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
-        </div>
+      {tipo === "reparacion" && (
+        <>
+          <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+            <input type="checkbox" checked={incluirInstalacion} onChange={(e) => setIncluirInstalacion(e.target.checked)} />
+            Incluir instalación
+          </label>
+          {incluirInstalacion && (
+            <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
+          )}
+          {lineas.length > 0 && (
+            <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+              <span>Total final</span>
+              <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
+            </div>
+          )}
+        </>
       )}
 
       <Field label="Plazo estimado"><TextInput value={plazoEstimado} onChange={(e) => setPlazoEstimado(e.target.value)} /></Field>
@@ -3706,7 +3859,7 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold" style={{ color: INK }}>Presupuestos de reparación</h2>
-          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Para fallas fuera de garantía, con repuestos del catálogo — vía separada de las cotizaciones de venta.</p>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Reparación / repuestos y mantenimiento (AA, termocalefón, campana) — vía separada de las cotizaciones de venta.</p>
         </div>
         <div className="flex items-center gap-2">
           <SearchBox value={query} onChange={onQuery} />
@@ -3723,13 +3876,23 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {presupuestos.map((p) => {
+            const esMtto = p.tipo === "mantenimiento";
             const subtotal = (p.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.costoUnitario) || 0), 0);
             const total = subtotal + (p.incluirInstalacion ? Number(p.instalacionMonto) || 0 : 0);
+            const subtotalMtto = (p.lineasMantenimiento || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0), 0);
             return (
               <div key={p.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
                 <div className="flex items-start justify-between mb-1">
                   <div>
-                    <p className="text-sm font-medium" style={{ color: INK }}>{p.cliente}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-medium" style={{ color: INK }}>{p.cliente}</p>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                        style={esMtto ? { backgroundColor: "#EAF4EE", color: "#2F7A4A" } : { backgroundColor: ACCENT_LIGHT, color: ACCENT }}
+                      >
+                        {esMtto ? "Mantenimiento" : "Reparación"}
+                      </span>
+                    </div>
                     <p className="text-xs" style={{ color: MUTED }}>{p.obra} · {fmtDate(p.fecha)}</p>
                   </div>
                   <button onClick={() => onDelete(p.id)} className="p-1 rounded hover:bg-gray-100">
@@ -3737,7 +3900,14 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
                   </button>
                 </div>
                 {p.equipoAfectado && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.equipoAfectado}</p>}
-                <p className="text-sm mt-2" style={{ color: INK }}>{(p.lineas || []).length} repuesto(s) · U$S {total.toLocaleString()}</p>
+                {esMtto ? (
+                  <p className="text-sm mt-2" style={{ color: INK }}>
+                    {(p.lineasMantenimiento || []).length} servicio(s) · ₲ {subtotalMtto.toLocaleString()}
+                    {(p.lineas || []).length > 0 && ` · +${(p.lineas || []).length} repuesto(s) U$S ${subtotal.toLocaleString()}`}
+                  </p>
+                ) : (
+                  <p className="text-sm mt-2" style={{ color: INK }}>{(p.lineas || []).length} repuesto(s) · U$S {total.toLocaleString()}</p>
+                )}
                 <button
                   onClick={() => onDescargarPdf(p)}
                   disabled={descargandoId === `${p.id}:reparacion`}

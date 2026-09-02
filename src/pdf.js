@@ -435,6 +435,13 @@ export async function generateCotizacionPdf(cotizacion) {
 function fmtNum(n) {
   return (Number(n) || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+function fmtGs(n) {
+  return (Number(n) || 0).toLocaleString("es-PY", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+export function montoEnLetrasGuaranies(monto) {
+  const letras = numeroALetras(monto);
+  return letras.charAt(0).toUpperCase() + letras.slice(1);
+}
 function fmtFecha(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
@@ -478,7 +485,7 @@ export async function downloadFichasTecnicasPdf(cotizacion) {
   return true;
 }
 
-// ---------- Presupuesto de Reparación / Repuestos (vía separada de Cotizaciones) ----------
+// ---------- Presupuesto de Reparación / Repuestos / Mantenimiento (vía separada de Cotizaciones) ----------
 const LEGAL_TEXT_REPARACION =
   "Este presupuesto corresponde a una falla NO cubierta por la garantía de fábrica Aeon (ej. golpes, uso indebido, " +
   "desgaste, u otras causas ajenas a defectos de fabricación). El trabajo se realizará únicamente una vez confirmada " +
@@ -486,6 +493,13 @@ const LEGAL_TEXT_REPARACION =
   "Presupuesto válido por 15 días desde la fecha de emisión. La instalación es opcional y no siempre está a cargo " +
   "de Aeon; de no incluirse, el repuesto se entrega para su instalación por terceros. Forma de pago sugerida: " +
   "contado contra confirmación del trabajo realizado.";
+
+const LEGAL_TEXT_MANTENIMIENTO =
+  "Este presupuesto corresponde a un servicio de mantenimiento preventivo. Los precios de mano de obra están " +
+  "expresados en guaraníes e incluyen IVA; los repuestos, si los hubiera, se cotizan por separado en dólares. " +
+  "El trabajo se realizará únicamente una vez confirmada la aceptación de este presupuesto por parte del cliente. " +
+  "Presupuesto válido por 15 días desde la fecha de emisión. Forma de pago sugerida: contado contra confirmación " +
+  "del trabajo realizado.";
 
 export async function generatePresupuestoReparacionPdf(presupuesto) {
   const pdf = await PDFDocument.create();
@@ -496,13 +510,20 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
   const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
 
+  const tipo = presupuesto.tipo === "mantenimiento" ? "mantenimiento" : "reparacion";
   const lineas = presupuesto.lineas || [];
+  const lineasMantenimiento = tipo === "mantenimiento" ? (presupuesto.lineasMantenimiento || []) : [];
 
   const colItem = 85;
   const colModelo = 105;
   const colCant = 35;
   const colCosto = 75;
   const colDescripcion = CONTENT_W - colItem - colModelo - colCant - colCosto;
+
+  const colCategoria = 110;
+  const colCantMtto = 40;
+  const colPrecioMtto = 95;
+  const colDetalleMtto = CONTENT_W - colCategoria - colCantMtto - colPrecioMtto;
 
   let page = pdf.addPage([PAGE_W, PAGE_H]);
   let y = PAGE_H - MARGIN;
@@ -553,7 +574,7 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
 
   // Title bar
   rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
-  const title = "PRESUPUESTO DE REPARACIÓN / REPUESTOS";
+  const title = tipo === "mantenimiento" ? "PRESUPUESTO DE MANTENIMIENTO" : "PRESUPUESTO DE REPARACIÓN / REPUESTOS";
   const titleW = bold.widthOfTextAtSize(title, 9.5);
   text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
   y -= 18;
@@ -569,112 +590,188 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
   text(presupuesto.obra || "", MARGIN + 60, y - 11, { size: 8 });
   y -= rowH;
   rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
-  text("Equipo / Producto afectado:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  const equipoLabel = tipo === "mantenimiento" ? "Equipo(s) a mantener:" : "Equipo / Producto afectado:";
+  text(equipoLabel, MARGIN + 4, y - 11, { bold: true, size: 8 });
   text(presupuesto.equipoAfectado || "", MARGIN + 155, y - 11, { size: 8 });
   y -= rowH;
 
-  // Falla reportada (alto dinámico según el texto)
+  // Falla reportada / Detalle (alto dinámico según el texto)
+  const detalleLabel = tipo === "mantenimiento" ? "Detalle / Observaciones:" : "Falla reportada:";
   const fallaLines = wrapText(font, presupuesto.fallaReportada || "", 7, CONTENT_W - 90);
   const fallaH = Math.max(fallaLines.length * 9 + 6, 16);
   rect(MARGIN, y - fallaH, 80, fallaH, { border: BORDER });
-  text("Falla reportada:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
+  text(detalleLabel, MARGIN + 4, y - 11, { bold: true, size: 7.5 });
   rect(MARGIN + 80, y - fallaH, CONTENT_W - 80, fallaH, { border: BORDER });
   fallaLines.forEach((line, i) => text(line, MARGIN + 84, y - 11 - i * 9, { size: 7 }));
   y -= fallaH;
 
   y -= 6;
 
-  // Tabla: Ítem | Descripción | Modelo del equipo | Cant. | Costo x Unidad U$S
-  function drawTableHeader() {
-    const startX = MARGIN;
-    rect(startX, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
-    let cx = startX;
-    const headers = [
-      ["Ítem", colItem], ["Descripción", colDescripcion], ["Modelo del equipo", colModelo],
-      ["Cant.", colCant], ["Costo x Unidad U$S", colCosto],
-    ];
-    headers.forEach(([label, w]) => {
-      const lw = bold.widthOfTextAtSize(label, 6.5);
-      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
-      cx += w;
-    });
-    y -= 20;
-  }
-  drawTableHeader();
+  // Tabla de mantenimiento (₲): Categoría | Detalle | Cant. | Precio Unitario
+  let subtotalMtto = 0;
+  if (lineasMantenimiento.length > 0) {
+    function drawMttoHeader() {
+      const startX = MARGIN;
+      rect(startX, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+      let cx = startX;
+      const headers = [
+        ["Categoría", colCategoria], ["Detalle", colDetalleMtto],
+        ["Cant.", colCantMtto], ["Precio Unitario ₲", colPrecioMtto],
+      ];
+      headers.forEach(([label, w]) => {
+        const lw = bold.widthOfTextAtSize(label, 6.5);
+        text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+        cx += w;
+      });
+      y -= 20;
+    }
+    drawMttoHeader();
 
-  let subtotal = 0;
-  for (const linea of lineas) {
-    const cant = Number(linea.cantidad) || 0;
-    const costo = Number(linea.costoUnitario) || 0;
-    subtotal += cant * costo;
+    for (const linea of lineasMantenimiento) {
+      const cant = Number(linea.cantidad) || 0;
+      const precio = Number(linea.precioUnitario) || 0;
+      subtotalMtto += cant * precio;
 
-    const descLines = wrapText(font, linea.descripcion, 6.5, colDescripcion - 6);
-    const rowH2 = Math.max(descLines.length * 8 + 6, 22);
-    ensureSpace(rowH2 + 20);
-    if (y === PAGE_H - MARGIN) drawTableHeader();
+      const detLines = wrapText(font, linea.detalle || "", 6.5, colDetalleMtto - 6);
+      const rowH2 = Math.max(detLines.length * 8 + 6, 22);
+      ensureSpace(rowH2 + 20);
+      if (y === PAGE_H - MARGIN) drawMttoHeader();
 
-    let cx = MARGIN;
-    rect(cx, y - rowH2, colItem, rowH2, { border: BORDER });
-    centerText(linea.item || "", cx, y, colItem, rowH2);
-    cx += colItem;
+      let cx = MARGIN;
+      rect(cx, y - rowH2, colCategoria, rowH2, { border: BORDER });
+      centerText(linea.categoria || "", cx, y, colCategoria, rowH2);
+      cx += colCategoria;
 
-    rect(cx, y - rowH2, colDescripcion, rowH2, { border: BORDER });
-    const descBlockH = descLines.length * 8;
-    const descTop = y - (rowH2 - descBlockH) / 2 - 6;
-    descLines.forEach((line, i) => text(line, cx + 3, descTop - i * 8, { size: 6.5 }));
-    cx += colDescripcion;
+      rect(cx, y - rowH2, colDetalleMtto, rowH2, { border: BORDER });
+      const detBlockH = detLines.length * 8;
+      const detTop = y - (rowH2 - detBlockH) / 2 - 6;
+      detLines.forEach((line, i) => text(line, cx + 3, detTop - i * 8, { size: 6.5 }));
+      cx += colDetalleMtto;
 
-    rect(cx, y - rowH2, colModelo, rowH2, { border: BORDER });
-    centerText(linea.modeloEquipo || "", cx, y, colModelo, rowH2);
-    cx += colModelo;
+      rect(cx, y - rowH2, colCantMtto, rowH2, { border: BORDER });
+      centerText(String(cant), cx, y, colCantMtto, rowH2);
+      cx += colCantMtto;
 
-    rect(cx, y - rowH2, colCant, rowH2, { border: BORDER });
-    centerText(String(cant), cx, y, colCant, rowH2);
-    cx += colCant;
+      rect(cx, y - rowH2, colPrecioMtto, rowH2, { border: BORDER });
+      centerText(fmtGs(precio), cx, y, colPrecioMtto, rowH2);
 
-    rect(cx, y - rowH2, colCosto, rowH2, { border: BORDER });
-    centerText(fmtNum(costo), cx, y, colCosto, rowH2);
+      y -= rowH2;
+    }
 
-    y -= rowH2;
-  }
-
-  ensureSpace(150);
-
-  const incluirInstalacion = !!presupuesto.incluirInstalacion;
-  const instalacionMonto = incluirInstalacion ? Number(presupuesto.instalacionMonto) || 0 : 0;
-  const totalFinal = subtotal + instalacionMonto;
-
-  // Sub-total
-  const colTotalLedger = colCosto;
-  rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { fill: ACCENT_LIGHT });
-  text("Sub-total", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
-  rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { fill: ACCENT_LIGHT });
-  const subStr = fmtNum(subtotal);
-  text(subStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
-  y -= 16;
-
-  // Instalación (opcional)
-  if (incluirInstalacion) {
-    rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { border: BORDER });
-    text("Instalación (opcional)", MARGIN + 4, y - 11, { size: 8 });
-    rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { border: BORDER });
-    const instStr = fmtNum(instalacionMonto);
-    text(instStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(instStr, 8), y - 11, { size: 8 });
+    ensureSpace(70);
+    const colTotalMtto = colPrecioMtto;
+    rect(MARGIN, y - 16, CONTENT_W - colTotalMtto, 16, { fill: ACCENT_LIGHT });
+    text("Sub-total mantenimiento", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
+    rect(MARGIN + CONTENT_W - colTotalMtto, y - 16, colTotalMtto, 16, { fill: ACCENT_LIGHT });
+    const subMttoStr = `₲ ${fmtGs(subtotalMtto)}`;
+    text(subMttoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subMttoStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
     y -= 16;
+
+    rect(MARGIN, y - 16, CONTENT_W, 16, { border: BORDER });
+    text("Guaraníes:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
+    text(montoEnLetrasGuaranies(subtotalMtto), MARGIN + 60, y - 11, { size: 7.5 });
+    y -= 24;
   }
 
-  // Total IVA incluido + Dólares
-  rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { border: BORDER });
-  text("TOTAL IVA INCLUIDO", MARGIN + 4, y - 11, { bold: true, size: 8 });
-  rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { fill: ACCENT_LIGHT });
-  const totalStr = fmtNum(totalFinal);
-  text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
-  y -= 16;
+  // Tabla de repuestos (U$S): Ítem | Descripción | Modelo del equipo | Cant. | Costo x Unidad U$S
+  if (lineas.length > 0) {
+    if (lineasMantenimiento.length > 0) {
+      ensureSpace(30);
+      text("Repuestos", MARGIN, y, { bold: true, size: 9 });
+      y -= 14;
+    }
 
-  rect(MARGIN, y - 16, CONTENT_W, 16, { border: BORDER });
-  text("Dólares Americanos:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
-  text(montoEnLetras(totalFinal), MARGIN + 110, y - 11, { size: 7.5 });
-  y -= 24;
+    function drawTableHeader() {
+      const startX = MARGIN;
+      rect(startX, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+      let cx = startX;
+      const headers = [
+        ["Ítem", colItem], ["Descripción", colDescripcion], ["Modelo del equipo", colModelo],
+        ["Cant.", colCant], ["Costo x Unidad U$S", colCosto],
+      ];
+      headers.forEach(([label, w]) => {
+        const lw = bold.widthOfTextAtSize(label, 6.5);
+        text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+        cx += w;
+      });
+      y -= 20;
+    }
+    drawTableHeader();
+
+    let subtotal = 0;
+    for (const linea of lineas) {
+      const cant = Number(linea.cantidad) || 0;
+      const costo = Number(linea.costoUnitario) || 0;
+      subtotal += cant * costo;
+
+      const descLines = wrapText(font, linea.descripcion, 6.5, colDescripcion - 6);
+      const rowH2 = Math.max(descLines.length * 8 + 6, 22);
+      ensureSpace(rowH2 + 20);
+      if (y === PAGE_H - MARGIN) drawTableHeader();
+
+      let cx = MARGIN;
+      rect(cx, y - rowH2, colItem, rowH2, { border: BORDER });
+      centerText(linea.item || "", cx, y, colItem, rowH2);
+      cx += colItem;
+
+      rect(cx, y - rowH2, colDescripcion, rowH2, { border: BORDER });
+      const descBlockH = descLines.length * 8;
+      const descTop = y - (rowH2 - descBlockH) / 2 - 6;
+      descLines.forEach((line, i) => text(line, cx + 3, descTop - i * 8, { size: 6.5 }));
+      cx += colDescripcion;
+
+      rect(cx, y - rowH2, colModelo, rowH2, { border: BORDER });
+      centerText(linea.modeloEquipo || "", cx, y, colModelo, rowH2);
+      cx += colModelo;
+
+      rect(cx, y - rowH2, colCant, rowH2, { border: BORDER });
+      centerText(String(cant), cx, y, colCant, rowH2);
+      cx += colCant;
+
+      rect(cx, y - rowH2, colCosto, rowH2, { border: BORDER });
+      centerText(fmtNum(costo), cx, y, colCosto, rowH2);
+
+      y -= rowH2;
+    }
+
+    ensureSpace(150);
+
+    const incluirInstalacion = tipo === "reparacion" && !!presupuesto.incluirInstalacion;
+    const instalacionMonto = incluirInstalacion ? Number(presupuesto.instalacionMonto) || 0 : 0;
+    const totalFinal = subtotal + instalacionMonto;
+
+    // Sub-total
+    const colTotalLedger = colCosto;
+    rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { fill: ACCENT_LIGHT });
+    text("Sub-total", MARGIN + 4, y - 11, { bold: true, size: 8, color: ACCENT });
+    rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { fill: ACCENT_LIGHT });
+    const subStr = fmtNum(subtotal);
+    text(subStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(subStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+    y -= 16;
+
+    // Instalación (opcional)
+    if (incluirInstalacion) {
+      rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { border: BORDER });
+      text("Instalación (opcional)", MARGIN + 4, y - 11, { size: 8 });
+      rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { border: BORDER });
+      const instStr = fmtNum(instalacionMonto);
+      text(instStr, MARGIN + CONTENT_W - 4 - font.widthOfTextAtSize(instStr, 8), y - 11, { size: 8 });
+      y -= 16;
+    }
+
+    // Total IVA incluido + Dólares
+    rect(MARGIN, y - 16, CONTENT_W - colTotalLedger, 16, { border: BORDER });
+    text("TOTAL IVA INCLUIDO", MARGIN + 4, y - 11, { bold: true, size: 8 });
+    rect(MARGIN + CONTENT_W - colTotalLedger, y - 16, colTotalLedger, 16, { fill: ACCENT_LIGHT });
+    const totalStr = fmtNum(totalFinal);
+    text(totalStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalStr, 8), y - 11, { bold: true, size: 8, color: ACCENT });
+    y -= 16;
+
+    rect(MARGIN, y - 16, CONTENT_W, 16, { border: BORDER });
+    text("Dólares Americanos:", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
+    text(montoEnLetras(totalFinal), MARGIN + 110, y - 11, { size: 7.5 });
+    y -= 24;
+  }
 
   // Plazo estimado
   const plazoLines = wrapText(font, presupuesto.plazoEstimado || "", 8, CONTENT_W - 90);
@@ -686,7 +783,8 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
 
   // Texto legal
   ensureSpace(60);
-  const legalLines = wrapText(font, LEGAL_TEXT_REPARACION, 6.5, CONTENT_W - 10);
+  const legalText = tipo === "mantenimiento" ? LEGAL_TEXT_MANTENIMIENTO : LEGAL_TEXT_REPARACION;
+  const legalLines = wrapText(font, legalText, 6.5, CONTENT_W - 10);
   const legalH = legalLines.length * 8 + 8;
   rect(MARGIN, y - legalH, CONTENT_W, legalH, { border: BORDER });
   legalLines.forEach((line, i) => text(line, MARGIN + 4, y - 10 - i * 8, { size: 6.5 }));
@@ -720,6 +818,7 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
 
 export async function downloadPresupuestoReparacionPdf(presupuesto) {
   const bytes = await generatePresupuestoReparacionPdf(presupuesto);
-  const nombre = `Presupuesto_Reparacion_${(presupuesto.cliente || "cliente").replace(/\s+/g, "_")}_${presupuesto.fecha || ""}.pdf`;
+  const prefijo = presupuesto.tipo === "mantenimiento" ? "Presupuesto_Mantenimiento" : "Presupuesto_Reparacion";
+  const nombre = `${prefijo}_${(presupuesto.cliente || "cliente").replace(/\s+/g, "_")}_${presupuesto.fecha || ""}.pdf`;
   downloadBlob(bytes, nombre, "application/pdf");
 }

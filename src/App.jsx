@@ -708,7 +708,7 @@ function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion
 
 // Campanita de alertas — visible en cualquier pestaña (no solo en Resumen), agrupa lo mismo que
 // ya se calcula ahí (garantías a contactar/reenviar, stock bajo) para no duplicar esa lógica.
-function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr }) {
+function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr, align = "right" }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -742,7 +742,7 @@ function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr 
       </button>
       {open && (
         <div
-          className="absolute right-0 mt-1 rounded-lg overflow-y-auto z-50"
+          className={`absolute mt-1 rounded-lg overflow-y-auto z-50 ${align === "left" ? "left-0" : "right-0"}`}
           style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}`, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", width: 280, maxHeight: 360 }}
         >
           {total === 0 ? (
@@ -1483,6 +1483,7 @@ export default function App() {
               <AlertasBell
                 alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
                 onIr={(t) => { navigateTo(t); setNavOpen(false); }}
+                align="left"
               />
             </div>
           </div>

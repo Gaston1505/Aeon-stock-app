@@ -606,6 +606,106 @@ function SearchBox({ value, onChange, placeholder }) {
   );
 }
 
+// Búsqueda global — se suma a la búsqueda de cada pestaña, no la reemplaza. Cruza varias
+// colecciones a la vez y, al elegir un resultado, navega a la pestaña correspondiente con ese
+// texto ya cargado en SU propio buscador (reutiliza el filtro que ya tiene cada pestaña).
+function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion, clientes, onIr }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const query = q.trim().toLowerCase();
+  const grupos = useMemo(() => {
+    if (query.length < 2) return [];
+    const match = (v) => (v || "").toLowerCase().includes(query);
+    return [
+      {
+        label: "Equipos", tab: "equipos",
+        items: equipos.filter((e) => match(e.codigo) || match(e.serie) || match(e.modelo)).slice(0, 6)
+          .map((e) => ({ id: e.id, filtro: e.codigo, texto: `${e.codigo} — ${e.modelo}` })),
+      },
+      {
+        label: "Catálogo de productos", tab: "catalogo",
+        items: productos.filter((p) => match(p.nombre) || match(p.descripcion)).slice(0, 6)
+          .map((p) => ({ id: p.id, filtro: p.nombre, texto: p.nombre })),
+      },
+      {
+        label: "Cotizaciones", tab: "cotizaciones",
+        items: cotizaciones.filter((c) => match(c.cliente) || match(c.obra) || match(c.categoria)).slice(0, 6)
+          .map((c) => ({ id: c.id, filtro: c.cliente, texto: `${c.cliente}${c.obra ? " — " + c.obra : ""}` })),
+      },
+      {
+        label: "Presupuestos de reparación", tab: "presupuestos-reparacion",
+        items: presupuestosReparacion.filter((p) => match(p.cliente) || match(p.obra) || match(p.equipoAfectado)).slice(0, 6)
+          .map((p) => ({ id: p.id, filtro: p.cliente, texto: `${p.cliente}${p.obra ? " — " + p.obra : ""}` })),
+      },
+      {
+        label: "Clientes", tab: "clientes",
+        items: clientes.filter((c) => match(c.nombre) || match(c.telefono)).slice(0, 6)
+          .map((c) => ({ id: c.id, filtro: c.nombre, texto: `${c.nombre}${c.telefono ? " — " + c.telefono : ""}` })),
+      },
+    ].filter((g) => g.items.length > 0);
+  }, [query, equipos, productos, cotizaciones, presupuestosReparacion, clientes]);
+
+  const totalResultados = grupos.reduce((acc, g) => acc + g.items.length, 0);
+
+  const elegir = (tab, filtro) => {
+    onIr(tab, filtro || "");
+    setOpen(false);
+    setQ("");
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <div className="relative">
+        <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: MUTED }} />
+        <input
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Buscar en toda la app..."
+          className="w-full text-sm pl-8 pr-3 py-2 rounded-md border outline-none"
+          style={inputStyle}
+        />
+      </div>
+      {open && query.length >= 2 && (
+        <div
+          className="absolute left-0 right-0 mt-1 rounded-lg overflow-y-auto z-50"
+          style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}`, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", maxHeight: 360 }}
+        >
+          {totalResultados === 0 ? (
+            <p className="text-xs px-3 py-3" style={{ color: MUTED }}>Sin resultados para "{q}".</p>
+          ) : (
+            grupos.map((g) => (
+              <div key={g.label}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1" style={{ color: MUTED }}>{g.label}</p>
+                {g.items.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => elegir(g.tab, item.filtro)}
+                    className="w-full text-left text-sm px-3 py-1.5 hover:bg-gray-50"
+                    style={{ color: INK }}
+                  >
+                    {item.texto}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Código interno = modelo + secuencia por unidad de ese modelo (ej. "ASAFB-12HRN1-01"), en vez
 // de un contador global sin relación con el producto — así el código ya dice qué es de un vistazo,
 // y una vez que empiecen a llegar series reales de fábrica, cada unidad de un mismo modelo se
@@ -1235,7 +1335,7 @@ export default function App() {
   // Navegación desde un StatCard: soporta un destino compuesto "tab:extra" (hoy solo
   // "catalogo:repuestos", para que el card de Repuestos del Resumen abra el Catálogo
   // directamente en modo Repuestos en vez del tab de Repuestos suelto, ya en desuso).
-  const navigateTo = (target) => {
+  const navigateTo = (target, filtro) => {
     if (target === "catalogo:repuestos") {
       setCatalogoModoInicial("repuestos");
       setTab("catalogo");
@@ -1243,6 +1343,7 @@ export default function App() {
       setCatalogoModoInicial(null);
       setTab(target);
     }
+    if (filtro !== undefined) setQuery(filtro);
   };
 
   const NAV = [
@@ -1293,6 +1394,13 @@ export default function App() {
         >
           <div className="px-4 py-4 border-b" style={{ borderColor: BORDER }}>
             <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-20 w-auto" />
+          </div>
+          <div className="px-4 py-3 border-b" style={{ borderColor: BORDER }}>
+            <GlobalSearch
+              equipos={equipos} productos={productos} cotizaciones={cotizaciones}
+              presupuestosReparacion={presupuestosReparacion} clientes={clientes}
+              onIr={(t, f) => { navigateTo(t, f); setNavOpen(false); }}
+            />
           </div>
           <nav className="flex-1 py-2 overflow-y-auto">
             {NAV.map((n) => {

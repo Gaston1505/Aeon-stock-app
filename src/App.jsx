@@ -2492,30 +2492,30 @@ function MuestrasView({ muestras, query, onQuery, onUpdateField }) {
       {filtered.length === 0 ? (
         <EmptyState icon={Star} title="No hay muestras cargadas" subtitle="Los equipos clasificados como Muestra van a aparecer acá." />
       ) : (
-        <div className="rounded-lg border overflow-hidden" style={{ borderColor: BORDER }}>
-          <table className="w-full text-sm">
+        <div className="overflow-auto rounded-lg border" style={{ borderColor: BORDER, maxHeight: "80vh" }}>
+          <table className="text-sm" style={{ minWidth: 720 }}>
             <thead>
-              <tr style={{ backgroundColor: "#FAFBFC" }}>
+              <tr>
                 {["Producto", "Código", "Cantidad", "Estado", "Sin marca", "Comentario"].map((h) => (
-                  <th key={h} className="text-left font-medium px-3 py-2.5 border-b" style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>{h}</th>
+                  <th key={h} className="text-left font-medium px-3 py-2 border-b sticky top-0 z-10 whitespace-nowrap" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((e) => (
                 <tr key={e.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                  <td className="px-3 py-2.5" style={{ color: INK }}>{e.modelo}</td>
-                  <td className="px-3 py-2.5"><CodeTag>{e.codigo}</CodeTag></td>
-                  <td className="px-3 py-2.5" style={{ color: INK }}>{e.cantidad || 1}</td>
-                  <td className="px-3 py-2.5"><StatusBadge estado={e.estado} /></td>
-                  <td className="px-3 py-2.5 text-center">
+                  <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.modelo}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap"><CodeTag>{e.codigo}</CodeTag></td>
+                  <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.cantidad || 1}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge estado={e.estado} /></td>
+                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
                     <input
                       type="checkbox" checked={!!e.sinMarca}
                       onChange={(ev) => onUpdateField(e.id, "sinMarca", ev.target.checked)}
                       title="Muestra de fábrica sin logo de la marca"
                     />
                   </td>
-                  <td className="px-3 py-2.5" style={{ minWidth: 260 }}>
+                  <td className="px-3 py-1.5" style={{ minWidth: 240 }}>
                     <ComentarioEditor value={e.notas} onSave={(v) => onUpdateField(e.id, "notas", v)} />
                   </td>
                 </tr>

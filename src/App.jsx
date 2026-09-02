@@ -54,6 +54,19 @@ const DESTINOS_PLAYA = [
   { value: "muestra", label: "Muestra (exhibición de calidad)", estado: "Muestra" },
 ];
 
+// Destinos para "Reubicar" un equipo ya cargado (vía escaneo) — cambia estado + ubicación
+// directo sobre su ficha. "playa" es un caso especial: no es un estado de equipo sino que
+// convierte la unidad en un ingreso a la colección de Zona de playa (ver enviarEquipoAPlayaPorEscaneo).
+const REUBICAR_DESTINOS_EQUIPO = [
+  { value: "En depósito", label: "Depósito (sin clasificar)" },
+  { value: "Apto para venta", label: "Stock vendible" },
+  { value: "Apto para venta con descuento", label: "Stock vendible con descuento" },
+  { value: "Muestra", label: "Muestra (exhibición)" },
+  { value: "Pendiente de reparación", label: "Banco de recuperables" },
+  { value: "playa", label: "Zona de playa" },
+  { value: "Dado de baja", label: "Dado de baja" },
+];
+
 // Categorías desde donde se puede dar salida a un producto — cada una filtra un pool distinto
 const CATEGORIAS_ORIGEN = [
   { value: "muestras", label: "Muestras", type: "equipo", estados: ["Muestra"] },
@@ -924,6 +937,29 @@ export default function App() {
     updateItem(COLLECTIONS.playa, item.id, { notas: item.notas ? `${item.notas}\n${linea}` : linea });
   };
 
+  // Reubicar por escaneo: cambia estado/ubicación de un equipo ya cargado, dejando historial en notas.
+  const reubicarEquipoPorEscaneo = (equipo, nuevoEstado, nuevaUbicacion, nota) => {
+    const linea = `[${fmtDate(todayISO())}] Reubicado por escaneo: ${equipo.estado} → ${nuevoEstado}${nota ? " — " + nota : ""}`;
+    updateItem(COLLECTIONS.equipos, equipo.id, {
+      estado: nuevoEstado,
+      ubicacion: nuevaUbicacion,
+      notas: equipo.notas ? `${equipo.notas}\n${linea}` : linea,
+    });
+  };
+
+  // Reubicar por escaneo a Zona de playa: el equipo deja de ser una ficha rastreada y pasa a
+  // ser un ingreso de playa (mismo destino/cantidad que un ingreso manual).
+  const enviarEquipoAPlayaPorEscaneo = (equipo, origen, nota) => {
+    addPlaya({
+      descripcion: equipo.modelo, origen: origen || "Técnico",
+      fecha: todayISO(), cantidad: 1,
+      notas: nota ? `${nota} (desde equipo ${equipo.codigo} por escaneo)` : `Reubicado por escaneo desde equipo ${equipo.codigo}`,
+    });
+    const restante = (Number(equipo.cantidad) || 1) - 1;
+    if (restante > 0) updateItem(COLLECTIONS.equipos, equipo.id, { cantidad: restante });
+    else deleteItem(COLLECTIONS.equipos, equipo.id);
+  };
+
   const handleImportarCatalogo = async (file) => {
     setImportandoCatalogo(true);
     setImportResultado("");
@@ -1210,9 +1246,14 @@ export default function App() {
             onNew={() => setDrawer("equipo")}
             newLabel="Nuevo equipo"
             extraActions={
-              <SecondaryButton onClick={() => setDrawer("escaneo")}>
-                <ScanLine size={14} /> Cargar por escaneo
-              </SecondaryButton>
+              <>
+                <SecondaryButton onClick={() => setDrawer("escaneo")}>
+                  <ScanLine size={14} /> Cargar por escaneo
+                </SecondaryButton>
+                <SecondaryButton onClick={() => setDrawer("escanear-equipo")}>
+                  <Search size={14} /> Buscar por escaneo
+                </SecondaryButton>
+              </>
             }
           >
             <Table
@@ -1400,6 +1441,15 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "escaneo"} onClose={() => setDrawer(null)} title="Cargar por escaneo">
         <EscaneoUnidadesForm onSave={(d) => { addEquiposPorEscaneo(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "escanear-equipo"} onClose={() => setDrawer(null)} title="Buscar equipo por escaneo">
+        <EscanearEquipoForm
+          equipos={equipos} playa={playa} productos={productos}
+          onSalida={addMovimiento}
+          onReubicar={reubicarEquipoPorEscaneo}
+          onEnviarPlaya={enviarEquipoAPlayaPorEscaneo}
+          onClose={() => setDrawer(null)}
+        />
       </Drawer>
       <Drawer open={drawer === "movimiento"} onClose={() => setDrawer(null)} title="Nueva salida">
         <MovimientoForm equipos={equipos} playa={playa} productos={productos} onSave={(d) => { addMovimiento(d); setDrawer(null); }} />
@@ -2738,12 +2788,19 @@ function EscaneoUnidadesForm({ onSave }) {
   );
 }
 
-function MovimientoForm({ equipos, playa, productos, onSave }) {
+// categoría de origen (de CATEGORIAS_ORIGEN) desde la que se puede dar salida a un equipo dado su estado actual.
+function categoriaOrigenParaEquipo(equipo) {
+  return CATEGORIAS_ORIGEN.find((c) => c.type === "equipo" && c.estados.includes(equipo.estado));
+}
+
+// `preset` (opcional): { categoria, sourceId } — precarga categoría y producto ya elegidos (ej.
+// viniendo de "Buscar por escaneo"), sin bloquear los selects por si el usuario quiere cambiarlos.
+function MovimientoForm({ equipos, playa, productos, onSave, preset }) {
   const [fecha, setFecha] = useState(todayISO());
-  const [categoria, setCategoria] = useState("");
-  const [sourceId, setSourceId] = useState("");
+  const [categoria, setCategoria] = useState(preset ? preset.categoria : "");
+  const [sourceId, setSourceId] = useState(preset ? preset.sourceId : "");
   const [cantidad, setCantidad] = useState(1);
-  const [motivo, setMotivo] = useState("");
+  const [motivo, setMotivo] = useState(preset ? (MOTIVO_DEFAULT[preset.categoria] || "") : "");
   const [cliente, setCliente] = useState("");
   const [monto, setMonto] = useState("");
   const [remito, setRemito] = useState("");
@@ -2917,6 +2974,232 @@ function MovimientoForm({ equipos, playa, productos, onSave }) {
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar salida</PrimaryButton>
+    </div>
+  );
+}
+
+// Buscar un equipo ya cargado por código o N° de serie (pistola o cámara) y, una vez
+// encontrado, elegir qué hacer: darle salida (reusa MovimientoForm) o reubicarlo.
+function EscanearEquipoForm({ equipos, playa, productos, onSalida, onReubicar, onEnviarPlaya, onClose }) {
+  const [paso, setPaso] = useState("scan"); // scan | encontrado | salida | reubicar
+  const [scanInput, setScanInput] = useState("");
+  const [equipo, setEquipo] = useState(null);
+  const [error, setError] = useState("");
+
+  const [camaraActiva, setCamaraActiva] = useState(false);
+  const [camaraError, setCamaraError] = useState("");
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const detectorRef = useRef(null);
+  const intervalRef = useRef(null);
+
+  const detenerCamara = () => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    setCamaraActiva(false);
+  };
+
+  const buscar = (valor) => {
+    const v = (valor || "").trim();
+    if (!v) return;
+    const match = equipos.find((e) => (e.codigo || "").toLowerCase() === v.toLowerCase())
+      || equipos.find((e) => (e.serie || "").toLowerCase() === v.toLowerCase());
+    if (!match) {
+      setError(`No se encontró ningún equipo con código o N° de serie "${v}".`);
+      return;
+    }
+    setError("");
+    detenerCamara();
+    setEquipo(match);
+    setPaso("encontrado");
+  };
+
+  const registrarScan = () => { buscar(scanInput); setScanInput(""); };
+  const handleKeyDown = (e) => { if (e.key === "Enter") { e.preventDefault(); registrarScan(); } };
+
+  const iniciarCamara = async () => {
+    setCamaraError("");
+    if (!("BarcodeDetector" in window)) {
+      setCamaraError("Este navegador no soporta lectura de códigos por cámara (probá con Chrome en Android). Usá la pistola o escribí el código a mano.");
+      return;
+    }
+    try {
+      detectorRef.current = new window.BarcodeDetector({ formats: FORMATOS_BARCODE });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      setCamaraActiva(true);
+    } catch (err) {
+      setCamaraError("No se pudo acceder a la cámara. Revisá que le hayas dado permiso al navegador.");
+    }
+  };
+
+  useEffect(() => {
+    if (!camaraActiva || !streamRef.current || !videoRef.current || !detectorRef.current) return;
+    const video = videoRef.current;
+    video.srcObject = streamRef.current;
+    video.play().catch(() => {});
+    intervalRef.current = setInterval(async () => {
+      if (video.readyState < 2) return;
+      try {
+        const codigos = await detectorRef.current.detect(video);
+        if (codigos.length > 0) buscar(codigos[0].rawValue);
+      } catch (e) {
+        // Cuadro no decodificable — se sigue intentando en el próximo ciclo.
+      }
+    }, 350);
+    return () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [camaraActiva]);
+
+  useEffect(() => () => { if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); }, []);
+
+  const escanearOtro = () => { setEquipo(null); setPaso("scan"); setError(""); };
+
+  if (paso === "scan") {
+    return (
+      <div>
+        <div className="flex items-center gap-1 mb-2">
+          <p className="text-xs font-semibold" style={{ color: ACCENT }}>Escanear equipo</p>
+          <InfoTip>
+            <p><strong>1.</strong> Tocá "Escanear con la cámara" y aceptá el permiso, o usá la pistola lectora.</p>
+            <p><strong>2.</strong> Apuntá al código interno o N° de serie de un equipo ya cargado.</p>
+            <p><strong>3.</strong> Te muestra su ficha y elegís qué hacer: darle salida o reubicarlo (playa, stock vendible, muestra, etc.).</p>
+            <p style={{ color: MUTED }}>Sin cámara compatible podés escribir el código a mano acá abajo y Enter.</p>
+          </InfoTip>
+        </div>
+        <div className="mb-2">
+          {!camaraActiva ? (
+            <SecondaryButton onClick={iniciarCamara}><Camera size={14} /> Escanear con la cámara</SecondaryButton>
+          ) : (
+            <SecondaryButton onClick={detenerCamara}><X size={14} /> Cerrar cámara</SecondaryButton>
+          )}
+        </div>
+        {camaraError && <p className="text-xs mb-2" style={{ color: "#B45309" }}>{camaraError}</p>}
+        {camaraActiva && (
+          <div className="mb-3 rounded-lg overflow-hidden border" style={{ borderColor: BORDER }}>
+            <video ref={videoRef} muted playsInline className="w-full" style={{ maxHeight: 260, backgroundColor: "#000" }} />
+          </div>
+        )}
+        <Field label="Código interno / N° de serie">
+          <input
+            autoFocus
+            value={scanInput}
+            onChange={(e) => setScanInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Apuntá la pistola acá y escaneá — o tipeá el código y Enter"
+            className="w-full text-sm px-3 py-2 rounded-md border outline-none"
+            style={{ borderColor: BORDER, color: INK }}
+          />
+        </Field>
+        {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      </div>
+    );
+  }
+
+  if (paso === "encontrado" && equipo) {
+    const cat = categoriaOrigenParaEquipo(equipo);
+    return (
+      <div>
+        <div className="mb-4 p-3 rounded-lg border" style={{ borderColor: BORDER }}>
+          <div className="flex items-center justify-between mb-1.5">
+            <CodeTag>{equipo.codigo}</CodeTag>
+            <StatusBadge estado={equipo.estado} />
+          </div>
+          <p className="text-sm font-medium" style={{ color: INK }}>{equipo.modelo}</p>
+          <p className="text-xs mt-1" style={{ color: MUTED }}>
+            {equipo.serie ? `N° de serie: ${equipo.serie} — ` : ""}Ubicación: {equipo.ubicacion || "—"} — Cantidad: {equipo.cantidad || 1}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2">
+          {cat ? (
+            <PrimaryButton onClick={() => setPaso("salida")}><ArrowUpFromLine size={14} /> Dar salida</PrimaryButton>
+          ) : (
+            <p className="text-xs" style={{ color: "#B45309" }}>
+              Este equipo está en estado "{equipo.estado}" — no se le puede dar salida directa desde acá.
+            </p>
+          )}
+          <SecondaryButton onClick={() => setPaso("reubicar")}><ArrowRight size={14} /> Reubicar</SecondaryButton>
+          <SecondaryButton onClick={escanearOtro}><ScanLine size={14} /> Escanear otro</SecondaryButton>
+        </div>
+      </div>
+    );
+  }
+
+  if (paso === "salida" && equipo) {
+    const cat = categoriaOrigenParaEquipo(equipo);
+    return (
+      <div>
+        <button onClick={() => setPaso("encontrado")} className="text-xs mb-3" style={{ color: ACCENT }}>← Volver</button>
+        <MovimientoForm
+          equipos={equipos} playa={playa} productos={productos}
+          preset={{ categoria: cat.value, sourceId: equipo.id }}
+          onSave={(data) => { onSalida(data); onClose(); }}
+        />
+      </div>
+    );
+  }
+
+  if (paso === "reubicar" && equipo) {
+    return (
+      <ReubicarEquipoForm
+        equipo={equipo}
+        onVolver={() => setPaso("encontrado")}
+        onEnviarPlaya={(origen, nota) => { onEnviarPlaya(equipo, origen, nota); onClose(); }}
+        onCambiarEstado={(nuevoEstado, nuevaUbicacion, nota) => { onReubicar(equipo, nuevoEstado, nuevaUbicacion, nota); onClose(); }}
+      />
+    );
+  }
+
+  return null;
+}
+
+function ReubicarEquipoForm({ equipo, onEnviarPlaya, onCambiarEstado, onVolver }) {
+  const [destino, setDestino] = useState("");
+  const [ubicacion, setUbicacion] = useState(equipo.ubicacion || "");
+  const [origenPlaya, setOrigenPlaya] = useState(ORIGENES_PLAYA[0]);
+  const [nota, setNota] = useState("");
+  const [error, setError] = useState("");
+
+  const opciones = REUBICAR_DESTINOS_EQUIPO.filter((d) => d.value !== equipo.estado);
+
+  const submit = () => {
+    if (!destino) { setError("Elegí a dónde reubicarlo."); return; }
+    if (destino === "playa") { onEnviarPlaya(origenPlaya, nota); return; }
+    onCambiarEstado(destino, ubicacion, nota);
+  };
+
+  return (
+    <div>
+      <button onClick={onVolver} className="text-xs mb-3" style={{ color: ACCENT }}>← Volver</button>
+      <div className="mb-4 p-3 rounded-lg border" style={{ borderColor: BORDER }}>
+        <div className="flex items-center justify-between mb-1.5">
+          <CodeTag>{equipo.codigo}</CodeTag>
+          <StatusBadge estado={equipo.estado} />
+        </div>
+        <p className="text-sm font-medium" style={{ color: INK }}>{equipo.modelo}</p>
+      </div>
+      <Field label="Reubicar a">
+        <Select value={destino} onChange={(e) => setDestino(e.target.value)}>
+          <option value="">Elegir destino...</option>
+          {opciones.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+        </Select>
+      </Field>
+      {destino === "playa" ? (
+        <>
+          <p className="text-xs mb-3" style={{ color: MUTED }}>
+            Pasa a la Zona de playa como un ingreso nuevo — deja de ser una ficha de equipo rastreada.
+          </p>
+          <Field label="Origen">
+            <Select value={origenPlaya} onChange={(e) => setOrigenPlaya(e.target.value)}>
+              {ORIGENES_PLAYA.map((o) => <option key={o}>{o}</option>)}
+            </Select>
+          </Field>
+        </>
+      ) : destino && (
+        <Field label="Ubicación"><TextInput value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} /></Field>
+      )}
+      <Field label="Nota (opcional)"><TextInput value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Por qué se reubica" /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Confirmar reubicación</PrimaryButton>
     </div>
   );
 }

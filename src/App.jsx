@@ -883,6 +883,8 @@ export default function App() {
   const [cotizacionParaVenta, setCotizacionParaVenta] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
   const [envioEditando, setEnvioEditando] = useState(null);
+  const [comprometerTarget, setComprometerTarget] = useState(null);
+  const [llegadaTarget, setLlegadaTarget] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
@@ -1266,6 +1268,63 @@ export default function App() {
   const updateTransito = (id, data) => updateItem(COLLECTIONS.transito, id, data);
   const deleteTransito = (id) => deleteItem(COLLECTIONS.transito, id);
 
+  // Compromete cantidad de una línea de tránsito a nombre de un cliente/obra — todavía no es
+  // Venta comprometida real (el envío no llegó), es solo una reserva sobre el propio envío.
+  const comprometerLineaTransito = (envio, lineaIdx, compromiso) => {
+    const nuevasLineas = (envio.lineas || []).map((l, i) =>
+      i === lineaIdx ? { ...l, comprometidos: [...(l.comprometidos || []), { id: randId(), ...compromiso }] } : l
+    );
+    updateTransito(envio.id, { lineas: nuevasLineas });
+  };
+  const quitarCompromisoTransito = (envio, lineaIdx, compromisoId) => {
+    const nuevasLineas = (envio.lineas || []).map((l, i) =>
+      i === lineaIdx ? { ...l, comprometidos: (l.comprometidos || []).filter((c) => c.id !== compromisoId) } : l
+    );
+    updateTransito(envio.id, { lineas: nuevasLineas });
+  };
+
+  // Llegada de un envío completo: libera todas sus líneas a Stock vendible de una (un equipo
+  // por línea, mismo patrón que derivarPlaya) y, si se pide, convierte cada compromiso que
+  // tenía cada línea en una Venta comprometida real sobre el equipo recién creado — el
+  // "comprometido" del equipo se fija ya en la creación para no pisarse con el snapshot local
+  // de equipos, que todavía no tiene el doc nuevo en el momento de crear la reserva.
+  const darLlegadaTransito = (envio, datos) => {
+    const fechaLlegada = datos.fechaLlegada || todayISO();
+    const convertir = datos.convertirComprometidos !== false;
+    let equiposSimulados = [...equipos];
+    for (const linea of envio.lineas || []) {
+      const codigo = nextCodigoParaModelo(equiposSimulados, linea.modelo);
+      equiposSimulados = [...equiposSimulados, { codigo }];
+      const comprometidosLinea = convertir ? (linea.comprometidos || []) : [];
+      const comprometidoInicial = comprometidosLinea.reduce((acc, c) => acc + (Number(c.cantidad) || 0), 0);
+      addItem(COLLECTIONS.equipos, {
+        codigo, serie: "", modelo: linea.modelo,
+        fechaIngreso: fechaLlegada, estado: "Apto para venta",
+        ubicacion: "Depósito principal",
+        cantidad: Number(linea.cantidad) || 1,
+        comprometido: comprometidoInicial,
+        notas: "",
+      }).then((ref) => {
+        if (!ref) return;
+        for (const comp of comprometidosLinea) {
+          addItem(COLLECTIONS.ventasComprometidas, {
+            estado: "Comprometida",
+            fecha: fechaLlegada, razonSocial: comp.cliente, obra: comp.obra,
+            equipoId: ref.id, modelo: linea.modelo, codigo,
+            cantidad: comp.cantidad, monto: (Number(comp.precioUnit) || 0) * (Number(comp.cantidad) || 0),
+            fechaEntrega: "", cotizacionId: comp.cotizacionId || "",
+          });
+        }
+      });
+      addItem(COLLECTIONS.entradas, {
+        fecha: fechaLlegada, codigo,
+        tipo: "Importación inicial", origen: `Tránsito${envio.contenedor ? ` — ${envio.contenedor}` : ""}`,
+        motivo: "Llegada de contenedor", estadoResultante: "Apto para venta", responsable: "",
+      });
+    }
+    updateTransito(envio.id, { estado: "Llegado", fechaLlegada });
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -1542,11 +1601,13 @@ export default function App() {
     transito: {
       label: "Tránsito",
       rows: () => transito.map((t) => ({
-        "Contenedor": t.contenedor, "Llegada estimada": t.fechaEstimadaLlegada,
+        "Contenedor": t.contenedor, "Estado": t.estado === "Llegado" ? "Llegado" : "En tránsito",
+        "Llegada estimada": t.fechaEstimadaLlegada, "Llegada real": t.fechaLlegada || "",
         "Unidades": sumCantidad(t.lineas || []), "Costo total U$S": costoTotalEnvio(t), "Notas": t.notas,
       })),
       columnasPdf: [
-        { key: "Contenedor", label: "Contenedor" }, { key: "Llegada estimada", label: "Llegada estimada", width: 70 },
+        { key: "Contenedor", label: "Contenedor" }, { key: "Estado", label: "Estado", width: 55 },
+        { key: "Llegada estimada", label: "Llegada estimada", width: 70 },
         { key: "Unidades", label: "Unidades", width: 50 }, { key: "Costo total U$S", label: "Costo total U$S", width: 80 },
       ],
     },
@@ -2047,6 +2108,9 @@ export default function App() {
             onNew={() => { setEnvioEditando(null); setDrawer("transito"); }}
             onEdit={(t) => { setEnvioEditando(t); setDrawer("transito"); }}
             onDelete={deleteTransito}
+            onComprometer={(t, lineaIdx) => { setComprometerTarget({ envio: t, lineaIdx }); setDrawer("comprometer-transito"); }}
+            onQuitarCompromiso={(t, lineaIdx, compromisoId) => quitarCompromisoTransito(t, lineaIdx, compromisoId)}
+            onDarLlegada={(t) => { setLlegadaTarget(t); setDrawer("llegada-transito"); }}
           />
         )}
 
@@ -2152,6 +2216,37 @@ export default function App() {
           }}
         />
       </Drawer>
+      <Drawer
+        open={drawer === "comprometer-transito"} onClose={() => { setDrawer(null); setComprometerTarget(null); }}
+        title="Comprometer mercadería en tránsito"
+      >
+        {comprometerTarget && (
+          <ComprometerLineaTransitoForm
+            envio={comprometerTarget.envio} lineaIdx={comprometerTarget.lineaIdx}
+            cotizaciones={cotizaciones} comprometidas={comprometidas} transito={transito}
+            onGuardar={(compromiso) => {
+              comprometerLineaTransito(comprometerTarget.envio, comprometerTarget.lineaIdx, compromiso);
+              setDrawer(null);
+              setComprometerTarget(null);
+            }}
+          />
+        )}
+      </Drawer>
+      <Drawer
+        open={drawer === "llegada-transito"} onClose={() => { setDrawer(null); setLlegadaTarget(null); }}
+        title="Dar llegada a destino"
+      >
+        {llegadaTarget && (
+          <DarLlegadaTransitoForm
+            envio={llegadaTarget}
+            onConfirmar={(datos) => {
+              darLlegadaTransito(llegadaTarget, datos);
+              setDrawer(null);
+              setLlegadaTarget(null);
+            }}
+          />
+        )}
+      </Drawer>
       <Drawer open={drawer === "salida-cotizacion"} onClose={() => setDrawer(null)} title="Generar salida desde cotización">
         <SalidaDesdeCotizacionForm
           cotizaciones={cotizaciones}
@@ -2164,6 +2259,7 @@ export default function App() {
           cotizaciones={cotizaciones}
           equipos={equipos}
           comprometidas={comprometidas}
+          transito={transito}
           onGenerar={(cotizacion, lineas, datos) => { generarComprometidaDesdeCotizacion(cotizacion, lineas, datos); setDrawer(null); }}
         />
       </Drawer>
@@ -4552,10 +4648,62 @@ function yaComprometidoParaLinea(cotizacionId, codigoLinea, comprometidas) {
     .reduce((acc, c) => acc + (Number(c.cantidad) || 0), 0);
 }
 
+function randId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Mercadería comprometida en tránsito: cliente/obra ya asignados a una línea de un envío que
+// todavía no llegó a destino. No es stock físico todavía, así que no toca equipos.comprometido
+// hasta que el envío "Llega" (ver darLlegadaTransito) — hasta entonces es solo una reserva sobre
+// el propio envío.
+function comprometidoEnLineaTransito(linea) {
+  return (linea.comprometidos || []).reduce((acc, c) => acc + (Number(c.cantidad) || 0), 0);
+}
+function disponibleEnLineaTransito(linea) {
+  return Math.max(0, (Number(linea.cantidad) || 0) - comprometidoEnLineaTransito(linea));
+}
+// Cuánto de una línea de cotización ya está cubierto con mercadería en tránsito (envíos que
+// todavía no llegaron — una vez llegan, el compromiso ya es una Venta comprometida real y cuenta
+// del lado de yaComprometidoParaLinea, no de acá, para no contarlo dos veces).
+function comprometidoEnTransitoParaLinea(cotizacionId, codigoLinea, transitoEnvios) {
+  let total = 0;
+  for (const t of transitoEnvios) {
+    if (t.estado === "Llegado") continue;
+    for (const l of t.lineas || []) {
+      if (l.modelo !== codigoLinea) continue;
+      total += (l.comprometidos || [])
+        .filter((c) => c.cotizacionId === cotizacionId)
+        .reduce((acc, c) => acc + (Number(c.cantidad) || 0), 0);
+    }
+  }
+  return total;
+}
+// Cuánto queda sin asignar en tránsito para un modelo, sumando todas las líneas de todos los
+// envíos que todavía no llegaron.
+function disponibleEnTransitoParaModelo(modelo, transitoEnvios) {
+  let total = 0;
+  for (const t of transitoEnvios) {
+    if (t.estado === "Llegado") continue;
+    for (const l of t.lineas || []) {
+      if (l.modelo === modelo) total += disponibleEnLineaTransito(l);
+    }
+  }
+  return total;
+}
+// Pendiente real de una línea de cotización: lo contratado, menos lo ya retirado, menos lo ya
+// comprometido (sea contra stock físico o contra mercadería en tránsito) — para no ofrecer
+// comprometer de nuevo un saldo que ya tiene dueño por cualquiera de las dos vías.
+function pendienteCombinadaDeLinea(cot, l, comprometidas, transitoEnvios) {
+  const retiradas = cot.lineasRetiradas || {};
+  const yaFisico = yaComprometidoParaLinea(cot.id, l.codigo, comprometidas);
+  const yaTransito = comprometidoEnTransitoParaLinea(cot.id, l.codigo, transitoEnvios);
+  return Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0) - yaFisico - yaTransito);
+}
+
 // Genera ventas comprometidas a partir de una cotización Ganada, usando el precio YA
 // NEGOCIADO de esa cotización (precioUnit de cada línea) en vez del precio de lista del
 // catálogo — que sigue siendo la referencia para todo lo de stock, pero no para esto.
-function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGenerar }) {
+function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, transito, onGenerar }) {
   const [cotizacionId, setCotizacionId] = useState("");
   const [seleccion, setSeleccion] = useState({});
   const [cantidades, setCantidades] = useState({});
@@ -4563,18 +4711,14 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
   const [fechaEntrega, setFechaEntrega] = useState("");
   const [error, setError] = useState("");
 
-  const pendienteDeLinea = (cot, l) => {
-    const retiradas = cot.lineasRetiradas || {};
-    const yaComprometido = yaComprometidoParaLinea(cot.id, l.codigo, comprometidas);
-    return Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0) - yaComprometido);
-  };
+  const pendienteDeLinea = (cot, l) => pendienteCombinadaDeLinea(cot, l, comprometidas, transito);
 
   const cotizacionesGanadas = useMemo(() => {
     return cotizaciones
       .filter((c) => c.estado === "Ganada")
       .filter((c) => (c.lineas || []).some((l) => pendienteDeLinea(c, l) > 0))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  }, [cotizaciones, comprometidas]);
+  }, [cotizaciones, comprometidas, transito]);
 
   const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
 
@@ -4584,9 +4728,10 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
       const pendiente = pendienteDeLinea(cotizacion, l);
       const candidatos = candidatosParaLinea(equipos, l.codigo);
       const stockDisponible = candidatos.reduce((acc, e) => acc + e.disponible, 0);
-      return { ...l, pendiente, candidatos, stockDisponible };
+      const enTransito = comprometidoEnTransitoParaLinea(cotizacion.id, l.codigo, transito);
+      return { ...l, pendiente, candidatos, stockDisponible, enTransito };
     });
-  }, [cotizacion, equipos, comprometidas]);
+  }, [cotizacion, equipos, comprometidas, transito]);
 
   const handleCotizacion = (id) => {
     setCotizacionId(id);
@@ -4685,11 +4830,19 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
                       />
                     )}
                   </div>
-                  <div className="mt-1 pl-6" style={{ color: MUTED }}>
-                    {yaCompleto && "Ya está todo comprometido o entregado."}
-                    {!yaCompleto && sinStock && "Sin stock vendible disponible para comprometer."}
-                    {!yaCompleto && !sinStock && stockInsuficiente && `Pendiente: ${f.pendiente} · solo hay ${f.stockDisponible} disponible(s).`}
-                    {!yaCompleto && !sinStock && !stockInsuficiente && `Pendiente: ${f.pendiente} · disponible: ${f.stockDisponible}.`}
+                  <div className="mt-1 pl-6 flex items-center gap-1 flex-wrap" style={{ color: MUTED }}>
+                    <span>
+                      {yaCompleto && "Ya está todo comprometido o entregado."}
+                      {!yaCompleto && sinStock && "Sin stock vendible disponible para comprometer."}
+                      {!yaCompleto && !sinStock && stockInsuficiente && `Pendiente: ${f.pendiente} · solo hay ${f.stockDisponible} disponible(s).`}
+                      {!yaCompleto && !sinStock && !stockInsuficiente && `Pendiente: ${f.pendiente} · disponible: ${f.stockDisponible}.`}
+                    </span>
+                    {f.enTransito > 0 && (
+                      <InfoTip>
+                        <p><strong>{f.enTransito}</strong> unidad(es) de esta línea ya están reservadas contra mercadería en tránsito (todavía no llegó a depósito).</p>
+                        <p>El "pendiente" de acá ya descuenta esa reserva, para no comprometerla dos veces — se va a convertir en Venta comprometida real cuando el envío llegue.</p>
+                      </InfoTip>
+                    )}
                   </div>
                 </div>
               );
@@ -6648,13 +6801,161 @@ function ClienteForm({ onSave }) {
 // a mano, y cuando llega de verdad se pasa a Maestro de equipos como una entrada normal.
 // Un envío = un contenedor con varios modelos adentro, más los costos compartidos entre todos
 // ellos (fábrica, representante en China, flete, comisión, despacho, seguro).
-function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete }) {
-  const totalUnidades = transito.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
-  const totalCosto = transito.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
+function ComprometerLineaTransitoForm({ envio, lineaIdx, cotizaciones, comprometidas, transito, onGuardar }) {
+  const linea = envio.lineas[lineaIdx];
+  const disponible = disponibleEnLineaTransito(linea);
+  const [modo, setModo] = useState("cotizacion");
+  const [cotizacionId, setCotizacionId] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+  const [cliente, setCliente] = useState("");
+  const [obra, setObra] = useState("");
+  const [precioUnit, setPrecioUnit] = useState("");
+  const [error, setError] = useState("");
+
+  const cotizacionesConLinea = useMemo(() => {
+    return cotizaciones
+      .filter((c) => c.estado === "Ganada")
+      .filter((c) => (c.lineas || []).some((l) => l.codigo === linea.modelo && pendienteCombinadaDeLinea(c, l, comprometidas, transito) > 0))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [cotizaciones, comprometidas, transito]);
+
+  const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
+  const lineaCotizacion = cotizacion ? (cotizacion.lineas || []).find((l) => l.codigo === linea.modelo) : null;
+  const pendienteCotizacion = cotizacion && lineaCotizacion ? pendienteCombinadaDeLinea(cotizacion, lineaCotizacion, comprometidas, transito) : 0;
+
+  useEffect(() => {
+    if (modo === "cotizacion" && cotizacion && lineaCotizacion) {
+      setCantidad(Math.min(disponible, pendienteCotizacion) || 1);
+    }
+  }, [cotizacionId]);
+
+  const submit = () => {
+    const cant = Number(cantidad) || 0;
+    if (cant <= 0 || cant > disponible) {
+      setError(`Ingresá una cantidad válida (hasta ${disponible} disponible(s) en esta línea).`);
+      return;
+    }
+    if (modo === "cotizacion") {
+      if (!cotizacion || !lineaCotizacion) { setError("Elegí una cotización."); return; }
+      if (cant > pendienteCotizacion) { setError(`Esa cotización solo tiene ${pendienteCotizacion} pendiente(s) de este modelo.`); return; }
+      onGuardar({
+        cliente: cotizacion.cliente || "", obra: cotizacion.obra || "", cantidad: cant,
+        precioUnit: Number(lineaCotizacion.precioUnit) || 0, cotizacionId: cotizacion.id,
+      });
+    } else {
+      if (!cliente.trim()) { setError("Ingresá el cliente."); return; }
+      onGuardar({ cliente: cliente.trim(), obra: obra.trim(), cantidad: cant, precioUnit: Number(precioUnit) || 0, cotizacionId: "" });
+    }
+  };
+
+  return (
+    <div>
+      <p className="text-sm mb-3" style={{ color: MUTED }}>
+        {linea.modelo} · disponible en este envío: <strong style={{ color: INK }}>{disponible}</strong>
+      </p>
+      <div className="flex gap-2 mb-3">
+        <button
+          onClick={() => setModo("cotizacion")}
+          className="flex-1 text-xs px-2.5 py-2 rounded border font-medium"
+          style={{ borderColor: modo === "cotizacion" ? ACCENT : BORDER, backgroundColor: modo === "cotizacion" ? ACCENT_LIGHT : "#FFFFFF", color: modo === "cotizacion" ? ACCENT : MUTED }}
+        >
+          Desde cotización
+        </button>
+        <button
+          onClick={() => setModo("manual")}
+          className="flex-1 text-xs px-2.5 py-2 rounded border font-medium"
+          style={{ borderColor: modo === "manual" ? ACCENT : BORDER, backgroundColor: modo === "manual" ? ACCENT_LIGHT : "#FFFFFF", color: modo === "manual" ? ACCENT : MUTED }}
+        >
+          Cliente manual
+        </button>
+      </div>
+
+      {modo === "cotizacion" ? (
+        <>
+          <Field label="Cotización Ganada">
+            <Select value={cotizacionId} onChange={(e) => setCotizacionId(e.target.value)}>
+              <option value="">Seleccionar...</option>
+              {cotizacionesConLinea.map((c) => (
+                <option key={c.id} value={c.id}>{c.cliente || "(Sin cliente)"} — {c.obra || "(Sin obra)"} ({fmtDate(c.fecha)})</option>
+              ))}
+            </Select>
+            {cotizacionesConLinea.length === 0 && (
+              <p className="text-xs mt-1" style={{ color: "#B45309" }}>No hay cotizaciones Ganadas con saldo pendiente de este modelo.</p>
+            )}
+          </Field>
+          {cotizacion && lineaCotizacion && (
+            <p className="text-xs mb-2" style={{ color: MUTED }}>
+              Pendiente en esa cotización: {pendienteCotizacion} · precio negociado: U$S {Number(lineaCotizacion.precioUnit).toLocaleString()} c/u
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+          <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Opcional" /></Field>
+          <Field label="Precio unitario U$S"><TextInput type="number" value={precioUnit} onChange={(e) => setPrecioUnit(e.target.value)} placeholder="Opcional" /></Field>
+        </>
+      )}
+
+      <Field label="Cantidad a comprometer">
+        <TextInput type="number" min="1" max={disponible} value={cantidad} onChange={(e) => setCantidad(e.target.value)} />
+      </Field>
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Comprometer</PrimaryButton>
+    </div>
+  );
+}
+
+function DarLlegadaTransitoForm({ envio, onConfirmar }) {
+  const [fechaLlegada, setFechaLlegada] = useState(todayISO());
+  const [convertirComprometidos, setConvertirComprometidos] = useState(true);
+
+  const totalComprometidos = (envio.lineas || []).reduce((acc, l) => acc + comprometidoEnLineaTransito(l), 0);
+
+  return (
+    <div>
+      <p className="text-sm mb-3" style={{ color: MUTED }}>
+        Se va a dar de alta un equipo en Stock vendible por cada línea de este envío, con la cantidad total de cada una.
+      </p>
+      <Field label="Fecha de llegada"><TextInput type="date" value={fechaLlegada} onChange={(e) => setFechaLlegada(e.target.value)} /></Field>
+
+      <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+        {(envio.lineas || []).map((l, i) => {
+          const comprometido = comprometidoEnLineaTransito(l);
+          return (
+            <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <span style={{ color: INK }}>{l.modelo} · cant. {l.cantidad}</span>
+              {comprometido > 0 && (
+                <span style={{ color: MUTED }}> — {comprometido} comprometido(s): {(l.comprometidos || []).map((c) => `${c.cliente}${c.obra ? ` (${c.obra})` : ""} ×${c.cantidad}`).join(", ")}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {totalComprometidos > 0 && (
+        <label className="flex items-center gap-2 text-xs mb-3" style={{ color: INK }}>
+          <input type="checkbox" checked={convertirComprometidos} onChange={(e) => setConvertirComprometidos(e.target.checked)} />
+          Convertir automáticamente los {totalComprometidos} compromiso(s) en Ventas comprometidas
+        </label>
+      )}
+
+      <PrimaryButton onClick={() => onConfirmar({ fechaLlegada, convertirComprometidos })}>
+        Confirmar llegada y liberar a Stock vendible
+      </PrimaryButton>
+    </div>
+  );
+}
+
+function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada }) {
+  const enCamino = transito.filter((t) => t.estado !== "Llegado");
+  const totalUnidades = enCamino.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
+  const totalCosto = enCamino.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
   return (
     <Section
       title="Tránsito"
-      subtitle={`Envíos fabricándose o en camino desde China — todavía no es stock físico. ${transito.length} envío(s) · ${totalUnidades} unidad(es) · U$S ${totalCosto.toLocaleString()} en costos.`}
+      subtitle={`Envíos fabricándose o en camino desde China — todavía no es stock físico. ${enCamino.length} envío(s) en camino · ${totalUnidades} unidad(es) · U$S ${totalCosto.toLocaleString()} en costos.`}
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo envío"
     >
@@ -6665,14 +6966,24 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete }) {
           {transito.map((t) => {
             const unidades = sumCantidad(t.lineas || []);
             const costo = costoTotalEnvio(t);
+            const llegado = t.estado === "Llegado";
             return (
               <div key={t.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
                 <div className="flex items-start justify-between mb-1">
                   <div>
                     <p className="text-sm font-medium" style={{ color: INK }}>{t.contenedor || "Sin contenedor / referencia"}</p>
-                    <p className="text-xs" style={{ color: MUTED }}>Llegada estimada: {fmtDate(t.fechaEstimadaLlegada)}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>
+                      {llegado ? `Llegó el ${fmtDate(t.fechaLlegada)}` : `Llegada estimada: ${fmtDate(t.fechaEstimadaLlegada)}`}
+                    </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {llegado ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>Llegado</span>
+                    ) : (
+                      <button onClick={() => onDarLlegada(t)} className="text-xs px-2 py-1 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+                        Dar llegada
+                      </button>
+                    )}
                     <button onClick={() => onEdit(t)} className="p-1 rounded hover:bg-gray-100">
                       <Pencil size={13} style={{ color: MUTED }} />
                     </button>
@@ -6682,10 +6993,49 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete }) {
                   </div>
                 </div>
                 <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString()} en costos totales</p>
-                <div className="mt-1.5 space-y-0.5">
-                  {(t.lineas || []).map((l, i) => (
-                    <p key={i} className="text-xs" style={{ color: MUTED }}>· {l.modelo} — cant. {l.cantidad}</p>
-                  ))}
+                <div className="mt-1.5 space-y-1.5">
+                  {(t.lineas || []).map((l, i) => {
+                    const comprometido = comprometidoEnLineaTransito(l);
+                    const disponible = disponibleEnLineaTransito(l);
+                    return (
+                      <div key={i} className="text-xs" style={{ color: MUTED }}>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span>· {l.modelo} — cant. {l.cantidad}</span>
+                          {comprometido > 0 && (
+                            <>
+                              <span>· comprometido {comprometido} · disponible {disponible}</span>
+                              <InfoTip>
+                                <p>"Comprometido" es lo que ya tiene cliente/obra asignado en este envío, aunque todavía no llegó a depósito.</p>
+                                <p>"Disponible" es lo que queda de esta línea sin asignar. Cuando el envío llegue, cada compromiso se convierte en una Venta comprometida real sobre el equipo recién ingresado.</p>
+                              </InfoTip>
+                            </>
+                          )}
+                          {!llegado && disponible > 0 && (
+                            <button onClick={() => onComprometer(t, i)} className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+                              Comprometer
+                            </button>
+                          )}
+                        </div>
+                        {(l.comprometidos || []).length > 0 && (
+                          <div className="pl-3 mt-0.5 space-y-0.5">
+                            {l.comprometidos.map((c) => (
+                              <div key={c.id} className="flex items-center gap-1.5">
+                                <span>
+                                  {c.cliente}{c.obra ? ` — ${c.obra}` : ""} × {c.cantidad}
+                                  {c.cotizacionId ? " (desde cotización)" : " (manual)"}
+                                </span>
+                                {!llegado && (
+                                  <button onClick={() => onQuitarCompromiso(t, i, c.id)} title="Quitar compromiso">
+                                    <X size={11} style={{ color: MUTED }} />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 <details className="mt-2">
                   <summary className="text-xs cursor-pointer" style={{ color: ACCENT }}>Ver desglose de costos</summary>
@@ -6741,7 +7091,7 @@ function TransitoForm({ envio, productos, onSave }) {
       setError("Ingresá el modelo.");
       return;
     }
-    setLineas([...lineas, { modelo: modeloNuevo.trim(), cantidad: Number(cantidadNueva) || 1 }]);
+    setLineas([...lineas, { modelo: modeloNuevo.trim(), cantidad: Number(cantidadNueva) || 1, comprometidos: [] }]);
     setModeloNuevo("");
     setCantidadNueva(1);
     setError("");
@@ -6770,6 +7120,11 @@ function TransitoForm({ envio, productos, onSave }) {
 
   return (
     <div>
+      {envio?.estado === "Llegado" && (
+        <p className="text-xs mb-3 px-2.5 py-2 rounded" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
+          Este envío ya llegó a destino — cambiar las líneas acá no afecta el stock que ya se generó.
+        </p>
+      )}
       <Field label="N° de contenedor / referencia"><TextInput value={contenedor} onChange={(e) => setContenedor(e.target.value)} placeholder="Opcional" /></Field>
       <Field label="Fecha estimada de llegada"><TextInput type="date" value={fechaEstimadaLlegada} onChange={(e) => setFechaEstimadaLlegada(e.target.value)} /></Field>
 
@@ -6918,9 +7273,12 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
 function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [error, setError] = useState("");
+  // Un envío "Llegado" ya generó su equipo real en Stock vendible (parte de `mercaderia`) —
+  // si siguiera contando acá también, se duplicaría esa mercadería en el reporte.
+  const transitoEnCamino = useMemo(() => transito.filter((t) => t.estado !== "Llegado"), [transito]);
   const filasFisico = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
-  const filasModelosTransito = useMemo(() => agruparModelosTransito(transito), [transito]);
-  const costosTransito = useMemo(() => resumenCostosTransito(transito), [transito]);
+  const filasModelosTransito = useMemo(() => agruparModelosTransito(transitoEnCamino), [transitoEnCamino]);
+  const costosTransito = useMemo(() => resumenCostosTransito(transitoEnCamino), [transitoEnCamino]);
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
   const detalleCotizaciones = useMemo(

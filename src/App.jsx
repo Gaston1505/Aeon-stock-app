@@ -7361,10 +7361,11 @@ function TransitoForm({ envio, productos, onSave }) {
       <Field label="Representante en China U$S"><TextInput type="number" value={representanteChina} onChange={(e) => setRepresentanteChina(e.target.value)} placeholder="Opcional" /></Field>
       <div className="flex gap-2">
         <Field label="Flete U$S"><TextInput type="number" value={flete} onChange={(e) => handleFlete(e.target.value)} placeholder="Opcional" /></Field>
-        <Field label="Comisión (4,71% del flete) U$S">
+        <Field label="Comisión flete U$S">
           <TextInput type="number" value={comisionFlete} onChange={(e) => { setComisionFlete(e.target.value); comisionAutoRef.current = null; }} placeholder="Se calcula sola" />
         </Field>
       </div>
+      <p className="text-xs mb-3" style={{ color: MUTED }}>La comisión se sugiere sola (4,71% del flete) y se puede pisar a mano.</p>
       <div className="flex gap-2">
         <Field label="Despacho U$S"><TextInput type="number" value={despacho} onChange={(e) => setDespacho(e.target.value)} placeholder="Opcional" /></Field>
         <Field label="Seguro U$S"><TextInput type="number" value={seguro} onChange={(e) => setSeguro(e.target.value)} placeholder="Opcional" /></Field>

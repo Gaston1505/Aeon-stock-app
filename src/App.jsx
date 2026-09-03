@@ -4,7 +4,7 @@ import {
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
-  Ship, ClipboardList, Send,
+  Ship, ClipboardList, Send, FlaskConical,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db } from "./firebase";
@@ -885,6 +885,7 @@ export default function App() {
   const [envioEditando, setEnvioEditando] = useState(null);
   const [comprometerTarget, setComprometerTarget] = useState(null);
   const [llegadaTarget, setLlegadaTarget] = useState(null);
+  const [cotizacionPrefill, setCotizacionPrefill] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
@@ -1780,6 +1781,7 @@ export default function App() {
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
     { key: "clientes", label: "Clientes", icon: Phone },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
+    { key: "simulador", label: "Panel de simulación", icon: FlaskConical },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
     { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
     { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
@@ -2081,6 +2083,13 @@ export default function App() {
           />
         )}
 
+        {tab === "simulador" && (
+          <SimuladorView
+            productos={productos} equipos={equipos} transito={transito}
+            onConfirmar={(datos) => { setCotizacionPrefill(datos); setDrawer("cotizacion"); }}
+          />
+        )}
+
         {tab === "presupuestos-reparacion" && (
           <PresupuestosReparacionView
             presupuestos={filteredPresupuestosReparacion} query={query} onQuery={setQuery}
@@ -2184,11 +2193,15 @@ export default function App() {
           }}
         />
       </Drawer>
-      <Drawer open={drawer === "cotizacion"} onClose={() => setDrawer(null)} title="Nueva cotización">
+      <Drawer
+        open={drawer === "cotizacion"} onClose={() => { setDrawer(null); setCotizacionPrefill(null); }}
+        title="Nueva cotización"
+      >
         <CotizacionForm
           productos={productos} clientes={clientes}
+          initial={cotizacionPrefill}
           onGuardarCliente={upsertClienteTelefono}
-          onSave={(d) => { addCotizacion(d); setDrawer(null); }}
+          onSave={(d) => { addCotizacion(d); setDrawer(null); setCotizacionPrefill(null); }}
         />
       </Drawer>
       <Drawer open={drawer === "presupuesto-reparacion"} onClose={() => setDrawer(null)} title="Nuevo presupuesto de reparación">
@@ -5901,14 +5914,14 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
 const FECHA_ENTREGA_DEFAULT = "Una vez aprobado el presupuesto la entrega se concreta de 150 a 200 dias";
 const OBS_DEFAULT = "Productos a retirar de depósito.";
 
-function CotizacionForm({ productos, clientes, onGuardarCliente, onSave }) {
+function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial }) {
   const [fecha, setFecha] = useState(todayISO());
-  const [cliente, setCliente] = useState("");
+  const [cliente, setCliente] = useState(initial?.cliente || "");
   const [telefono, setTelefono] = useState("");
   const telefonoAutoRef = useRef(null);
-  const [obra, setObra] = useState("");
+  const [obra, setObra] = useState(initial?.obra || "");
   const [clienteReal, setClienteReal] = useState("");
-  const [categoria, setCategoria] = useState("");
+  const [categoria, setCategoria] = useState(initial?.categoria || "");
   const [comentarios, setComentarios] = useState("");
   const [incluirDescuento, setIncluirDescuento] = useState(false);
   const [descuento, setDescuento] = useState("");
@@ -5918,7 +5931,7 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave }) {
   const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
   const [formaPago, setFormaPago] = useState("A conversar");
   const [obs, setObs] = useState(OBS_DEFAULT);
-  const [lineas, setLineas] = useState([]);
+  const [lineas, setLineas] = useState(initial?.lineas || []);
   const [productoId, setProductoId] = useState("");
   const [cantidadNueva, setCantidadNueva] = useState(1);
   const [precioNuevo, setPrecioNuevo] = useState("");
@@ -6000,6 +6013,11 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave }) {
 
   return (
     <div>
+      {initial && (
+        <p className="text-xs mb-3 px-2.5 py-2 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+          Precargado desde el Panel de simulación — revisá los datos antes de guardar.
+        </p>
+      )}
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Cliente (constructora/desarrolladora — sale en el PDF)">
         <TextInput value={cliente} list="clientes-datalist" onChange={(e) => handleClienteChange(e.target.value)} />
@@ -6093,6 +6111,179 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave }) {
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar cotización</PrimaryButton>
+    </div>
+  );
+}
+
+// Panel de simulación: un ejercicio de "si me piden esto, con qué lo cubro" contra el stock y
+// el tránsito reales — pero 100% ficticio y client-side, nada se guarda en Firestore hasta que
+// se confirma como cotización real (ver onConfirmar, que abre CotizacionForm precargado).
+function SimuladorView({ productos, equipos, transito, onConfirmar }) {
+  const [cliente, setCliente] = useState("");
+  const [obra, setObra] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [lineas, setLineas] = useState([]);
+  const [productoId, setProductoId] = useState("");
+  const [cantidadNueva, setCantidadNueva] = useState(1);
+  const [precioNuevo, setPrecioNuevo] = useState("");
+  const [error, setError] = useState("");
+
+  const productoSel = productos.find((p) => p.id === productoId);
+
+  const productosPorGrupo = useMemo(() => {
+    const grupos = new Map();
+    for (const p of productos) {
+      const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
+      const key = path || "Otros";
+      if (!grupos.has(key)) grupos.set(key, []);
+      grupos.get(key).push(p);
+    }
+    return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [productos]);
+
+  const handleProducto = (id) => {
+    setProductoId(id);
+    const p = productos.find((x) => x.id === id);
+    setCantidadNueva(1);
+    setPrecioNuevo(p ? String(Number(p.precioLista) || 0) : "");
+  };
+
+  const agregarLinea = () => {
+    if (!productoSel) {
+      setError("Elegí un producto del catálogo.");
+      return;
+    }
+    setLineas([...lineas, {
+      codigo: productoSel.nombre, descripcion: productoSel.descripcion, foto: productoSel.foto,
+      especLabel: productoSel.especLabel, especValor: productoSel.especValor,
+      fichaTecnicaData: productoSel.fichaTecnicaData || "",
+      cantidad: Number(cantidadNueva) || 1, precioUnit: Number(precioNuevo) || 0,
+    }]);
+    setProductoId("");
+    setCantidadNueva(1);
+    setPrecioNuevo("");
+    setError("");
+  };
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  // El corazón del ejercicio: para cada línea, primero se tira del stock físico disponible,
+  // lo que sobra se tira del tránsito sin asignar, y lo que todavía sobra es lo que habría
+  // que mandar a producir — nunca se mezclan los tres números entre sí.
+  const filas = useMemo(() => {
+    return lineas.map((l) => {
+      const cantidad = Number(l.cantidad) || 0;
+      const stockDisponible = candidatosParaLinea(equipos, l.codigo).reduce((acc, e) => acc + e.disponible, 0);
+      const transitoDisponible = disponibleEnTransitoParaModelo(l.codigo, transito);
+      const cubiertoStock = Math.min(cantidad, stockDisponible);
+      const restante1 = cantidad - cubiertoStock;
+      const cubiertoTransito = Math.min(restante1, transitoDisponible);
+      const faltanteProducir = restante1 - cubiertoTransito;
+      return { ...l, cantidad, stockDisponible, transitoDisponible, cubiertoStock, cubiertoTransito, faltanteProducir };
+    });
+  }, [lineas, equipos, transito]);
+
+  const totalFaltante = filas.reduce((acc, f) => acc + f.faltanteProducir, 0);
+  const todoCubierto = filas.length > 0 && totalFaltante === 0;
+
+  const confirmar = () => {
+    if (!cliente.trim()) {
+      setError("Ingresá el cliente para confirmar como cotización.");
+      return;
+    }
+    if (lineas.length === 0) {
+      setError("Agregá al menos un producto.");
+      return;
+    }
+    onConfirmar({ cliente: cliente.trim(), obra: obra.trim(), categoria: categoria.trim(), lineas });
+  };
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold" style={{ color: INK }}>Panel de simulación</h2>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+          Ejercicio de "si me piden esto, con qué lo cubro" — no reserva stock ni guarda nada hasta que lo confirmes como cotización real.
+        </p>
+      </div>
+
+      <div className="mb-4 px-3 py-2 rounded-lg text-sm flex items-start gap-2" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
+        <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+        <span>Esto es ficticio: mientras no lo confirmes como cotización, no cuenta para Reporte Seguro, Reporte Joel ni ningún otro cálculo real de la app.</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+        <Field label="Cliente (para confirmar como cotización)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+        <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Categoría"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Opcional" /></Field>
+      </div>
+
+      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Productos a simular</p>
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <Field label="Producto del catálogo">
+          <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
+            <option value="">Seleccionar...</option>
+            {productosPorGrupo.map(([grupo, items]) => (
+              <optgroup key={grupo} label={grupo}>
+                {items.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </optgroup>
+            ))}
+          </Select>
+        </Field>
+        {productoSel && (
+          <>
+            <div className="flex gap-2">
+              <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
+              <Field label="Precio Unit. U$S"><TextInput type="number" value={precioNuevo} onChange={(e) => setPrecioNuevo(e.target.value)} /></Field>
+            </div>
+            <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar al ejercicio</SecondaryButton>
+          </>
+        )}
+      </div>
+
+      {filas.length > 0 && (
+        <div className="mb-4 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {filas.map((f, i) => {
+            const completoConTransito = f.faltanteProducir === 0 && f.cubiertoTransito > 0;
+            const estado = f.faltanteProducir > 0
+              ? { label: "Falta producir", bg: "#FDECEC", color: "#B91C1C" }
+              : completoConTransito
+                ? { label: "Se completa con tránsito", bg: "#FDF1E0", color: "#B45309" }
+                : { label: "Cubierto con stock", bg: "#E9F7EF", color: "#15803D" };
+            return (
+              <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="min-w-0">
+                    <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
+                    <span style={{ color: MUTED }}> · pedido {f.cantidad}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.label}</span>
+                    <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+                  </div>
+                </div>
+                <p className="mt-1" style={{ color: MUTED }}>
+                  Stock disponible en depósito: {f.stockDisponible} → cubre {f.cubiertoStock}
+                  {f.cubiertoTransito > 0 && <> · en tránsito: {f.transitoDisponible} → cubre {f.cubiertoTransito}</>}
+                  {f.faltanteProducir > 0 && (
+                    <strong style={{ color: "#B91C1C" }}> · faltan {f.faltanteProducir} — es el mínimo a mandar a producir para completar el pedido</strong>
+                  )}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {filas.length > 0 && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: todoCubierto ? "#E9F7EF" : "#FDECEC", color: todoCubierto ? "#15803D" : "#B91C1C" }}>
+          {todoCubierto
+            ? "Con stock + tránsito alcanza para cubrir todo el pedido simulado."
+            : `Faltan ${totalFaltante} unidad(es) en total que ni el depósito ni lo que ya viene en camino cubren — eso es lo que habría que mandar a producir.`}
+        </div>
+      )}
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={confirmar} disabled={filas.length === 0}>Confirmar como cotización real</PrimaryButton>
     </div>
   );
 }

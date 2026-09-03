@@ -163,6 +163,39 @@ function calcularTotalCotizacion(c) {
   return subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
 }
 
+// Rentabilidad de una cotización: por cada línea, cruza el precio YA NEGOCIADO contra el costo
+// cargado en el catálogo (puesto en PY si está, si no origen) — el descuento general, si tiene,
+// se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo). La
+// instalación no tiene costo cargado en ningún lado de la app, así que entra como margen puro.
+function calcularRentabilidadCotizacion(c, productos) {
+  const lineas = c.lineas || [];
+  const descuentoPct = c.incluirDescuento ? (Number(c.descuento) || 0) : 0;
+  const factorDescuento = 1 - descuentoPct / 100;
+
+  const filas = lineas.map((l) => {
+    const cantidad = Number(l.cantidad) || 0;
+    const precioUnit = Number(l.precioUnit) || 0;
+    const ventaNeta = cantidad * precioUnit * factorDescuento;
+    const producto = (productos || []).find((p) => p.nombre === l.codigo);
+    const costoUnit = producto ? (Number(producto.costoPy) || Number(producto.costoOrigen) || 0) : 0;
+    const sinCosto = !producto || costoUnit === 0;
+    const costoTotal = cantidad * costoUnit;
+    const margen = ventaNeta - costoTotal;
+    const margenPct = ventaNeta > 0 ? (margen / ventaNeta) * 100 : 0;
+    return { codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct, sinCosto };
+  });
+
+  const ventaProductos = filas.reduce((acc, f) => acc + f.ventaNeta, 0);
+  const costoProductos = filas.reduce((acc, f) => acc + f.costoTotal, 0);
+  const instalacionMonto = c.incluirInstalacion ? (Number(c.instalacionMonto) || 0) : 0;
+  const ventaTotal = ventaProductos + instalacionMonto;
+  const costoTotal = costoProductos;
+  const margenTotal = ventaTotal - costoTotal;
+  const margenTotalPct = ventaTotal > 0 ? (margenTotal / ventaTotal) * 100 : 0;
+
+  return { filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, descuentoPct };
+}
+
 // Estado de cumplimiento de la salida de depósito para una cotización Ganada — cuánto de lo
 // cotizado ya salió físicamente (via "Generar desde cotización" en Salidas), null si no aplica.
 function estadoSalidaCotizacion(c) {
@@ -2124,7 +2157,7 @@ export default function App() {
 
         {tab === "cotizaciones" && (
           <CotizacionesView
-            cotizaciones={filteredCotizaciones} query={query} onQuery={setQuery}
+            cotizaciones={filteredCotizaciones} productos={productos} query={query} onQuery={setQuery}
             onNew={() => setDrawer("cotizacion")}
             onDelete={deleteCotizacion}
             onUpdate={updateCotizacion}
@@ -6458,12 +6491,51 @@ const SALIDA_COTIZACION_BADGE = {
   pendiente: { label: "Sin salida", bg: "#F2F3F4", color: "#686D73" },
 };
 
-function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function RentabilidadCotizacionView({ c, productos }) {
+  const r = useMemo(() => calcularRentabilidadCotizacion(c, productos), [c, productos]);
+  const colorMargen = (m) => (m >= 0 ? "#15803D" : "#B91C1C");
+  const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return (
+    <div className="mt-2 p-2.5 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2">
+        <div><p style={{ color: MUTED }}>Venta</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.ventaTotal)}</p></div>
+        <div><p style={{ color: MUTED }}>Costo</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.costoTotal)}</p></div>
+        <div><p style={{ color: MUTED }}>Margen</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>U$S {fmt(r.margenTotal)}</p></div>
+        <div><p style={{ color: MUTED }}>Margen %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{r.margenTotalPct.toFixed(1)}%</p></div>
+      </div>
+      {r.descuentoPct > 0 && (
+        <p className="text-xs mb-1.5" style={{ color: MUTED }}>Incluye el descuento del {r.descuentoPct}% prorrateado en todos los productos.</p>
+      )}
+      {r.instalacionMonto > 0 && (
+        <p className="text-xs mb-1.5" style={{ color: MUTED }}>Instalación U$S {fmt(r.instalacionMonto)} sumada a la venta — sin costo cargado, margen 100%.</p>
+      )}
+      <div className="rounded border overflow-hidden" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+        {r.filas.map((f, i) => (
+          <div key={i} className="px-2 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
+              <span style={{ color: f.sinCosto ? "#B45309" : colorMargen(f.margen) }}>
+                {f.sinCosto ? "Sin costo cargado" : `${f.margenPct.toFixed(1)}%`}
+              </span>
+            </div>
+            <p style={{ color: MUTED }}>
+              {f.cantidad} × U$S {f.precioUnit.toLocaleString()} = U$S {fmt(f.ventaNeta)}
+              {!f.sinCosto && ` · costo U$S ${fmt(f.costoTotal)} · margen U$S ${fmt(f.margen)}`}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
   const estadoSalida = estadoSalidaCotizacion(c);
   const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;
+  const [verRentabilidad, setVerRentabilidad] = useState(false);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: esActiva ? "#FFFFFF" : "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start justify-between mb-1">
@@ -6535,12 +6607,20 @@ function CotizacionCard({ c, esActiva, onDelete, onUpdate, onDescargarPdf, onDes
             </button>
           </>
         )}
+        <button
+          onClick={() => setVerRentabilidad(!verRentabilidad)}
+          className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+          style={{ borderColor: BORDER, color: INK }}
+        >
+          <TrendingUp size={13} /> {verRentabilidad ? "Ocultar rentabilidad" : "Rentabilidad"}
+        </button>
       </div>
+      {verRentabilidad && <RentabilidadCotizacionView c={c} productos={productos} />}
     </div>
   );
 }
 
-function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = grupo.versiones.slice(1);
   return (
@@ -6554,7 +6634,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
         )}
       </div>
       <CotizacionCard
-        c={grupo.activa} esActiva
+        c={grupo.activa} esActiva productos={productos}
         onDelete={onDelete} onUpdate={onUpdate}
         onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -6564,7 +6644,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
         <div className="mt-2 pl-3 border-l-2 space-y-2" style={{ borderColor: BORDER }}>
           {historial.map((v) => (
             <CotizacionCard
-              key={v.id} c={v} esActiva={false}
+              key={v.id} c={v} esActiva={false} productos={productos}
               onDelete={onDelete} onUpdate={onUpdate}
               onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -6577,7 +6657,7 @@ function ObraGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFicha
   );
 }
 
-function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -6595,7 +6675,7 @@ function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFi
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {grupo.obras.map((o) => (
           <ObraGrupo
-            key={o.obra} grupo={o}
+            key={o.obra} grupo={o} productos={productos}
             onDelete={onDelete} onUpdate={onUpdate}
             onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -6607,7 +6687,7 @@ function ClienteGrupo({ grupo, onDelete, onUpdate, onDescargarPdf, onDescargarFi
   );
 }
 
-function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
 
@@ -6636,7 +6716,7 @@ function CotizacionesView({ cotizaciones, query, onQuery, onNew, onDelete, onUpd
           <div className="space-y-3">
             {grupos.map((g) => (
               <ClienteGrupo
-                key={g.cliente} grupo={g}
+                key={g.cliente} grupo={g} productos={productos}
                 onDelete={onDelete} onUpdate={onUpdate}
                 onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}

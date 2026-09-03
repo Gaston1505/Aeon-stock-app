@@ -1878,7 +1878,7 @@ export default function App() {
       <Drawer open={drawer === "cliente"} onClose={() => setDrawer(null)} title="Nuevo cliente">
         <ClienteForm onSave={(d) => { addCliente(d); setDrawer(null); }} />
       </Drawer>
-      <Drawer open={drawer === "transito"} onClose={() => setDrawer(null)} title="Nuevo tránsito">
+      <Drawer open={drawer === "transito"} onClose={() => setDrawer(null)} title="Nuevo envío">
         <TransitoForm onSave={(d) => { addTransito(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "salida-cotizacion"} onClose={() => setDrawer(null)} title="Generar salida desde cotización">

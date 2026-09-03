@@ -16,7 +16,7 @@ import {
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
-  downloadListaPdf,
+  downloadListaPdf, downloadGarantiaPdf,
 } from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
@@ -532,6 +532,46 @@ function ConfirmDialog({ state, onResolve }) {
   );
 }
 
+function GenerarFichaVentaPrompt({ cotizacion, onGenerar, onDismiss }) {
+  if (!cotizacion) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ backgroundColor: "rgba(15,23,32,0.75)" }}
+      onClick={onDismiss}
+    >
+      <div
+        className="rounded-xl p-5 w-full"
+        style={{ backgroundColor: "#FFFFFF", maxWidth: 360 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-sm font-medium" style={{ color: INK }}>
+          Retiro registrado para {cotizacion.cliente} — {cotizacion.obra}
+        </p>
+        <p className="text-sm mt-1.5" style={{ color: MUTED }}>
+          Todavía no tiene una ficha de Venta y garantía. ¿Querés generarla ahora?
+        </p>
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={onDismiss}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={{ backgroundColor: "#FFFFFF", color: MUTED, border: `0.5px solid ${BORDER}` }}
+          >
+            Ahora no
+          </button>
+          <button
+            onClick={onGenerar}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}
+          >
+            Generar ficha
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PhotoViewer({ src, onClose }) {
   if (!src) return null;
   return (
@@ -839,6 +879,8 @@ export default function App() {
   };
   const [retiroTarget, setRetiroTarget] = useState(null);
   const [pagoTarget, setPagoTarget] = useState(null);
+  const [promptFichaVenta, setPromptFichaVenta] = useState(null);
+  const [cotizacionParaVenta, setCotizacionParaVenta] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
   const [envioEditando, setEnvioEditando] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
@@ -990,6 +1032,20 @@ export default function App() {
   const updateVentaEstado = (id, field, value) => updateItem(COLLECTIONS.ventas, id, { [field]: value });
   const deleteVenta = (id) => deleteItem(COLLECTIONS.ventas, id);
 
+  // Ficha de Venta y garantía a partir de una cotización Ganada: una ficha por obra, con
+  // todos los modelos/cantidades de la cotización — el service (12/24 meses) se cuenta desde
+  // esta única fecha de venta para toda la obra.
+  const generarVentaDesdeCotizacion = (cotizacion, datos) => {
+    const fechaVenta = datos.fechaVenta || todayISO();
+    addVenta({
+      cliente: cotizacion.cliente, obra: cotizacion.obra, cotizacionId: cotizacion.id,
+      fechaVenta,
+      lineas: (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad })),
+      vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24),
+      estadoService1: "Pendiente", estadoService2: "Pendiente",
+    });
+  };
+
   // Venta comprometida: reserva stock (queda físicamente en depósito, pero no disponible para otra salida)
   const addComprometida = (data) => {
     const equipo = equipos.find((e) => e.id === data.equipoId);
@@ -1049,6 +1105,7 @@ export default function App() {
       lugarSalida: data.lugarSalida || "", empresaCliente: data.empresaCliente || "", rucCliente: data.rucCliente || "",
       firmaNombre: data.firmaNombre || "", firmaCedula: data.firmaCedula || "", fotoRemito: data.fotoRemito || "",
       observaciones: data.observaciones ? `Retiro parcial de venta comprometida — ${data.observaciones}` : "Retiro parcial de venta comprometida",
+      cotizacionId: c.cotizacionId || "",
     });
 
     const cantidadRetirada = (Number(c.cantidadRetirada) || 0) + cantidadEvento;
@@ -1141,6 +1198,18 @@ export default function App() {
     } catch (e) {
       console.error("Error compartiendo fichas técnicas", e);
       setPdfError("No se pudo compartir el PDF de fichas técnicas. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleDescargarGarantiaPdf = async (venta) => {
+    setDescargandoId(venta.id + ":garantia");
+    setPdfError("");
+    try {
+      await downloadGarantiaPdf(venta);
+    } catch (e) {
+      console.error("Error generando certificado de garantía", e);
+      setPdfError("No se pudo generar el certificado de garantía. Probá de nuevo.");
     }
     setDescargandoId(null);
   };
@@ -1310,7 +1379,9 @@ export default function App() {
       "Motivo": e.motivo, "Estado resultante": e.estadoResultante, "Responsable": e.responsable,
     })));
     const wsVentas = XLSX.utils.json_to_sheet(ventas.map((v) => ({
-      "Código": v.codigo, "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
+      "Modelos": (v.lineas || []).map((l) => `${l.cantidad}x ${l.modelo}`).join(", "),
+      "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
+      "Desde cotización": v.cotizacionId ? "Sí" : "No",
       "Vto. service 1 (12m)": v.vtoService1, "Vto. service 2 (24m)": v.vtoService2,
       "Estado service 1": v.estadoService1, "Estado service 2": v.estadoService2,
       "Contactado service 1": v.contactadoService1 ? "Sí" : "No", "Fecha contacto service 1": v.fechaContactoService1 || "",
@@ -1393,12 +1464,13 @@ export default function App() {
     ventas: {
       label: "Ventas y garantías",
       rows: () => ventas.map((v) => ({
-        "Código": v.codigo, "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
-        "Vto. service 1": v.vtoService1, "Vto. service 2": v.vtoService2,
+        "Modelos": (v.lineas || []).map((l) => `${l.cantidad}x ${l.modelo}`).join(", "),
+        "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
         "Estado service 1": v.estadoService1, "Estado service 2": v.estadoService2,
       })),
       columnasPdf: [
-        { key: "Código", label: "Código", width: 80 }, { key: "Cliente", label: "Cliente" }, { key: "Obra", label: "Obra" },
+        { key: "Cliente", label: "Cliente" }, { key: "Obra", label: "Obra" },
+        { key: "Modelos", label: "Modelos", width: 150 },
         { key: "Fecha venta", label: "Fecha venta", width: 60 }, { key: "Estado service 1", label: "Service 1" }, { key: "Estado service 2", label: "Service 2" },
       ],
     },
@@ -1511,7 +1583,7 @@ export default function App() {
 
   const filteredVentas = useMemo(() => {
     const q = query.toLowerCase();
-    return ventas.filter((v) => !q || [v.codigo, v.cliente, v.obra].some((v2) => (v2 || "").toLowerCase().includes(q)));
+    return ventas.filter((v) => !q || [v.cliente, v.obra, ...(v.lineas || []).map((l) => l.modelo)].some((v2) => (v2 || "").toLowerCase().includes(q)));
   }, [ventas, query]);
 
   const filteredPlaya = useMemo(() => {
@@ -1896,30 +1968,19 @@ export default function App() {
         )}
 
         {tab === "ventas" && (
-          <Section
-            title="Ventas y garantías"
-            subtitle="Vencimientos de service para mantener vigente la garantía extendida a 36 meses."
+          <VentasView
+            ventas={filteredVentas} movimientos={movimientos}
             query={query} onQuery={setQuery}
             onNew={() => setDrawer("venta")}
-            newLabel="Nueva venta"
-          >
-            <Table
-              columns={[
-                { key: "codigo", label: "Código" }, { key: "cliente", label: "Cliente" }, { key: "obra", label: "Obra" },
-                { key: "fechaVenta", label: "Fecha venta" }, { key: "vtoService1", label: "Service 1 (12m)" },
-                { key: "vtoService2", label: "Service 2 (24m)" },
-              ]}
-              rows={filteredVentas}
-              onDelete={deleteVenta}
-              renderCell={(key, row) => {
-                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
-                if (key === "fechaVenta") return fmtDate(row.fechaVenta);
-                if (key === "vtoService1") return <ServiceCell venta={row} field="Service1" label={fmtDate(row.vtoService1)} onUpdate={updateVentaEstado} onGestionar={(v, f) => setGestion({ venta: v, field: f })} />;
-                if (key === "vtoService2") return <ServiceCell venta={row} field="Service2" label={fmtDate(row.vtoService2)} onUpdate={updateVentaEstado} onGestionar={(v, f) => setGestion({ venta: v, field: f })} />;
-                return row[key] || "—";
-              }}
-            />
-          </Section>
+            onNewDesdeCotizacion={() => { setCotizacionParaVenta(null); setDrawer("venta-cotizacion"); }}
+            onDelete={deleteVenta}
+            onUpdateField={updateVentaEstado}
+            onGestionar={(v, f) => setGestion({ venta: v, field: f })}
+            onVerFoto={setFotoView}
+            onDescargarGarantia={handleDescargarGarantiaPdf}
+            descargandoId={descargandoId}
+            pdfError={pdfError}
+          />
         )}
 
         {tab === "recuperables" && (
@@ -2025,7 +2086,17 @@ export default function App() {
         <EntradaForm equipos={equipos} onSave={(d) => { addEntrada(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "venta"} onClose={() => setDrawer(null)} title="Nueva venta">
-        <VentaForm equipos={equipos} onSave={(d) => { addVenta(d); setDrawer(null); }} />
+        <VentaForm productos={productos} onSave={(d) => { addVenta(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer
+        open={drawer === "venta-cotizacion"}
+        onClose={() => { setDrawer(null); setCotizacionParaVenta(null); }}
+        title="Generar ficha de venta y garantía desde cotización"
+      >
+        <VentaDesdeCotizacionForm
+          cotizaciones={cotizaciones} ventas={ventas} cotizacionInicial={cotizacionParaVenta}
+          onGenerar={(cotizacion, datos) => { generarVentaDesdeCotizacion(cotizacion, datos); setDrawer(null); setCotizacionParaVenta(null); }}
+        />
       </Drawer>
       <Drawer open={drawer === "comprometida"} onClose={() => setDrawer(null)} title="Nueva venta comprometida">
         <ComprometidaForm equipos={equipos} productos={productos} onSave={(d) => { addComprometida(d); setDrawer(null); }} />
@@ -2109,10 +2180,23 @@ export default function App() {
         {retiroTarget && (
           <RetiroParcialForm
             comprometida={comprometidas.find((c) => c.id === retiroTarget)}
-            onSave={(d) => { retirarParcial(retiroTarget, d); setRetiroTarget(null); }}
+            onSave={(d) => {
+              const c = comprometidas.find((x) => x.id === retiroTarget);
+              retirarParcial(retiroTarget, d);
+              setRetiroTarget(null);
+              if (c?.cotizacionId && !ventas.some((v) => v.cotizacionId === c.cotizacionId)) {
+                const cot = cotizaciones.find((x) => x.id === c.cotizacionId);
+                if (cot) setPromptFichaVenta(cot);
+              }
+            }}
           />
         )}
       </Drawer>
+      <GenerarFichaVentaPrompt
+        cotizacion={promptFichaVenta}
+        onDismiss={() => setPromptFichaVenta(null)}
+        onGenerar={() => { setCotizacionParaVenta(promptFichaVenta); setPromptFichaVenta(null); setDrawer("venta-cotizacion"); }}
+      />
       <Drawer open={!!pagoTarget} onClose={() => setPagoTarget(null)} title="Pagos">
         {pagoTarget && (
           <PagosForm
@@ -3131,6 +3215,125 @@ const COMPROMETIDA_BADGE = {
   Completada: { color: "#0D9488", bg: "#E3F5F3" },
   Retirada: { color: "#15803D", bg: "#E9F7EF" },
 };
+
+function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, descargandoId, pdfError }) {
+  const handleContrato = async (venta, file) => {
+    if (!file) return;
+    const data = await readFileAsDataUrl(file);
+    onUpdateField(venta.id, "contratoData", data);
+    onUpdateField(venta.id, "contratoNombre", file.name);
+  };
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Ventas y garantías</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            Fichas de obra vendida — contrato firmado, remitos vinculados y certificado de garantía, con seguimiento de service a 12 y 24 meses.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchBox value={query} onChange={onQuery} />
+          <SecondaryButton onClick={onNewDesdeCotizacion}><ShieldCheck size={14} /> Generar desde cotización</SecondaryButton>
+          <PrimaryButton onClick={onNew}><Plus size={15} /> Nueva venta</PrimaryButton>
+        </div>
+      </div>
+
+      {pdfError && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{pdfError}</p>}
+
+      {ventas.length === 0 ? (
+        <EmptyState icon={ShieldCheck} title="No hay ventas registradas" subtitle="Generá una ficha desde una cotización Ganada o cargala manualmente." />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {ventas.map((v) => {
+            const remitos = v.cotizacionId ? movimientos.filter((m) => m.cotizacionId === v.cotizacionId) : [];
+            const descargando = descargandoId === v.id + ":garantia";
+            return (
+              <div key={v.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <div className="flex items-start justify-between mb-1">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: INK }}>{v.cliente}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>{v.obra}</p>
+                    {v.cotizacionId && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-block mt-1" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+                        Desde cotización
+                      </span>
+                    )}
+                  </div>
+                  <button onClick={() => onDelete(v.id)} className="p-1 rounded hover:bg-gray-100" title="Eliminar">
+                    <Trash2 size={14} style={{ color: MUTED }} />
+                  </button>
+                </div>
+
+                <p className="text-xs mt-1.5" style={{ color: MUTED }}>Fecha de venta: {fmtDate(v.fechaVenta)}</p>
+
+                {(v.lineas || []).length > 0 && (
+                  <ul className="text-xs mt-1.5 space-y-0.5" style={{ color: INK }}>
+                    {v.lineas.map((l, i) => (
+                      <li key={i}>{l.cantidad}× {l.modelo}{l.descripcion ? ` — ${l.descripcion}` : ""}</li>
+                    ))}
+                  </ul>
+                )}
+
+                <div className="mt-2.5 space-y-1.5">
+                  <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                  <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                </div>
+
+                {remitos.length > 0 && (
+                  <div className="mt-2.5">
+                    <p className="text-xs font-medium" style={{ color: INK }}>Remitos vinculados</p>
+                    <ul className="text-xs mt-1 space-y-1" style={{ color: MUTED }}>
+                      {remitos.map((m) => (
+                        <li key={m.id} className="flex items-center gap-1.5">
+                          <span>{fmtDate(m.fecha)} · {m.cantidad}× {m.modelo}{m.remito ? ` · N° ${m.remito}` : ""}</span>
+                          {m.fotoRemito && (
+                            <button onClick={() => onVerFoto(m.fotoRemito)} title="Ver foto del remito" style={{ color: ACCENT }}>
+                              <Camera size={12} />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => onDescargarGarantia(v)}
+                    disabled={descargando}
+                    className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
+                    style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargando ? 0.6 : 1 }}
+                  >
+                    <ShieldCheck size={13} /> {descargando ? "Generando..." : "Certificado de garantía"}
+                  </button>
+                  {v.contratoData ? (
+                    <a
+                      href={v.contratoData} target="_blank" rel="noreferrer"
+                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                      style={{ borderColor: BORDER, color: ACCENT }}
+                    >
+                      <FileSignature size={13} /> Ver contrato
+                    </a>
+                  ) : (
+                    <label
+                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1 cursor-pointer"
+                      style={{ borderColor: BORDER, color: MUTED }}
+                    >
+                      <FileSignature size={13} /> Adjuntar contrato firmado
+                      <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleContrato(v, e.target.files?.[0])} />
+                    </label>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onPago }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
@@ -4539,20 +4742,41 @@ function EntradaForm({ equipos, onSave }) {
   );
 }
 
-function VentaForm({ equipos, onSave }) {
-  const [codigo, setCodigo] = useState("");
+function VentaForm({ productos, onSave }) {
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
   const [fechaVenta, setFechaVenta] = useState(todayISO());
+  const [modeloNuevo, setModeloNuevo] = useState("");
+  const [cantidadNueva, setCantidadNueva] = useState(1);
+  const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
 
+  const modelosCatalogo = useMemo(() => [...new Set((productos || []).map((p) => p.nombre))].sort(), [productos]);
+
+  const agregarLinea = () => {
+    if (!modeloNuevo.trim()) {
+      setError("Ingresá el modelo.");
+      return;
+    }
+    const producto = (productos || []).find((p) => p.nombre === modeloNuevo.trim());
+    setLineas([...lineas, { modelo: modeloNuevo.trim(), descripcion: producto?.descripcion || "", cantidad: Number(cantidadNueva) || 1 }]);
+    setModeloNuevo("");
+    setCantidadNueva(1);
+    setError("");
+  };
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
   const submit = () => {
-    if (!codigo || !cliente.trim()) {
-      setError("Elegí el equipo e ingresá el cliente.");
+    if (!cliente.trim()) {
+      setError("Ingresá el cliente.");
+      return;
+    }
+    if (lineas.length === 0) {
+      setError("Agregá al menos un modelo vendido.");
       return;
     }
     onSave({
-      codigo, cliente, obra, fechaVenta,
+      cliente, obra, fechaVenta, lineas,
       vtoService1: addMonthsISO(fechaVenta, 12),
       vtoService2: addMonthsISO(fechaVenta, 24),
       estadoService1: "Pendiente", estadoService2: "Pendiente",
@@ -4561,20 +4785,91 @@ function VentaForm({ equipos, onSave }) {
 
   return (
     <div>
-      <Field label="Equipo">
-        <Select value={codigo} onChange={(e) => setCodigo(e.target.value)}>
-          <option value="">Seleccionar equipo...</option>
-          {equipos.map((eq) => <option key={eq.id} value={eq.codigo}>{eq.codigo} — {eq.modelo}</option>)}
-        </Select>
-      </Field>
       <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label="Fecha de venta"><TextInput type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Modelos vendidos</p>
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <div className="flex gap-2">
+          <Field label="Modelo">
+            <TextInput value={modeloNuevo} list="modelos-venta-datalist" onChange={(e) => setModeloNuevo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" />
+          </Field>
+          <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
+        </div>
+        <datalist id="modelos-venta-datalist">
+          {modelosCatalogo.map((m) => <option key={m} value={m} />)}
+        </datalist>
+        <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar modelo</SecondaryButton>
+      </div>
+      {lineas.length > 0 && (
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {lineas.map((l, i) => (
+            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <span style={{ color: INK }}>{l.modelo} · cant. {l.cantidad}</span>
+              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <p className="text-xs mb-3" style={{ color: MUTED }}>
         Los vencimientos de service (12 y 24 meses) se calculan automáticamente a partir de la fecha de venta.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar venta</PrimaryButton>
+    </div>
+  );
+}
+
+function VentaDesdeCotizacionForm({ cotizaciones, ventas, cotizacionInicial, onGenerar }) {
+  const [cotizacionId, setCotizacionId] = useState(cotizacionInicial?.id || "");
+  const [fechaVenta, setFechaVenta] = useState(todayISO());
+  const [error, setError] = useState("");
+
+  const ganadas = useMemo(() => cotizaciones.filter((c) => c.estado === "Ganada"), [cotizaciones]);
+  const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
+  const yaTieneFicha = cotizacionId && ventas.some((v) => v.cotizacionId === cotizacionId);
+
+  const submit = () => {
+    if (!cotizacion) {
+      setError("Elegí una cotización.");
+      return;
+    }
+    onGenerar(cotizacion, { fechaVenta });
+  };
+
+  return (
+    <div>
+      <Field label="Cotización Ganada">
+        <Select value={cotizacionId} onChange={(e) => setCotizacionId(e.target.value)}>
+          <option value="">Seleccionar cotización...</option>
+          {ganadas.map((c) => <option key={c.id} value={c.id}>{c.cliente} — {c.obra} ({fmtDate(c.fecha)})</option>)}
+        </Select>
+      </Field>
+      <Field label="Fecha de venta"><TextInput type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} /></Field>
+
+      {cotizacion && (
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {(cotizacion.lineas || []).map((l, i) => (
+            <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <span style={{ color: INK }}>{l.cantidad}× {l.codigo}</span>
+              {l.descripcion && <span style={{ color: MUTED }}> — {l.descripcion}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {yaTieneFicha && (
+        <p className="text-xs mb-3" style={{ color: "#B45309" }}>
+          Ya existe una ficha de venta y garantía para esta cotización — se generará una adicional.
+        </p>
+      )}
+      <p className="text-xs mb-3" style={{ color: MUTED }}>
+        Se crea una ficha con todos los modelos y cantidades de la cotización. Los vencimientos de service (12 y 24 meses) se calculan desde la fecha de venta.
+      </p>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Generar ficha de venta y garantía</PrimaryButton>
     </div>
   );
 }

@@ -838,6 +838,169 @@ export async function downloadPresupuestoReparacionPdf(presupuesto) {
   downloadBlob(bytes, nombreArchivoPresupuesto(presupuesto), "application/pdf");
 }
 
+// ---------- Certificado de garantía (obra vendida desde una cotización Ganada) ----------
+export async function generateGarantiaPdf(venta) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const lineas = venta.lineas || [];
+
+  const colModelo = 150;
+  const colCant = 50;
+  const colDescripcion = CONTENT_W - colModelo - colCant;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 7, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+
+  // Header
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+
+  y -= 14;
+
+  // Title bar
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const title = "CERTIFICADO DE GARANTÍA";
+  const titleW = bold.widthOfTextAtSize(title, 10);
+  text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
+  y -= 18;
+
+  // Cliente / Obra / Fecha de venta
+  const rowH = 16;
+  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+  text("Cliente:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text(venta.cliente || "", MARGIN + 60, y - 11, { size: 8 });
+  y -= rowH;
+  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+  text("Obra:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text(venta.obra || "", MARGIN + 60, y - 11, { size: 8 });
+  y -= rowH;
+  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+  text("Fecha de venta:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+  text(fmtFecha(venta.fechaVenta), MARGIN + 90, y - 11, { size: 8 });
+  y -= rowH;
+
+  y -= 10;
+
+  // Intro
+  const introLines = wrapText(
+    font,
+    "Quantum Investments S.A. (AEON) certifica que los siguientes equipos, vendidos e instalados en la obra " +
+      "indicada arriba, cuentan con la garantía de fábrica detallada al pie de este documento.",
+    7.5, CONTENT_W
+  );
+  introLines.forEach((line, i) => text(line, MARGIN, y - i * 10, { size: 7.5, color: MUTED }));
+  y -= introLines.length * 10 + 10;
+
+  // Tabla de equipos: Modelo | Descripción | Cantidad
+  ensureSpace(40);
+  function drawHeader() {
+    const startX = MARGIN;
+    rect(startX, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
+    let cx = startX;
+    [["Modelo", colModelo], ["Descripción", colDescripcion], ["Cantidad", colCant]].forEach(([label, w]) => {
+      centerText(label, cx, y, w, 18, { bold: true, color: ACCENT });
+      cx += w;
+    });
+    y -= 18;
+  }
+  drawHeader();
+  lineas.forEach((l) => {
+    ensureSpace(16);
+    if (y === PAGE_H - MARGIN) drawHeader();
+    const h = 16;
+    rect(MARGIN, y - h, colModelo, h, { border: BORDER });
+    text(l.modelo || "", MARGIN + 4, y - 11, { size: 7.5 });
+    rect(MARGIN + colModelo, y - h, colDescripcion, h, { border: BORDER });
+    text(l.descripcion || "", MARGIN + colModelo + 4, y - 11, { size: 7.5 });
+    rect(MARGIN + colModelo + colDescripcion, y - h, colCant, h, { border: BORDER });
+    centerText(String(l.cantidad ?? ""), MARGIN + colModelo + colDescripcion, y, colCant, h, { size: 7.5 });
+    y -= h;
+  });
+
+  y -= 14;
+
+  // Vencimientos de service
+  ensureSpace(40);
+  rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
+  text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
+  text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
+  text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
+  text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
+  y -= 32 + 14;
+
+  // Texto legal
+  ensureSpace(60);
+  const legalLines = wrapText(font, LEGAL_TEXT, 6.5, CONTENT_W - 10);
+  const legalH = legalLines.length * 8 + 8;
+  rect(MARGIN, y - legalH, CONTENT_W, legalH, { border: BORDER });
+  legalLines.forEach((line, i) => text(line, MARGIN + 4, y - 10 - i * 8, { size: 6.5 }));
+  y -= legalH + 30;
+
+  // Firma AEON
+  ensureSpace(40);
+  const aeonLineX = PAGE_W - MARGIN - 160;
+  page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
+  y -= 11;
+  const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
+  text(COMPANY.firmante, aeonLineX + 80 - nameW / 2, y, { size: 8 });
+  y -= 10;
+  const razW = font.widthOfTextAtSize(COMPANY.razonSocial, 7.5);
+  text(COMPANY.razonSocial, aeonLineX + 80 - razW / 2, y, { size: 7.5 });
+  y -= 9;
+  const rucW = font.widthOfTextAtSize(COMPANY.ruc, 7.5);
+  text(COMPANY.ruc, aeonLineX + 80 - rucW / 2, y, { size: 7.5 });
+
+  return pdf.save();
+}
+
+export function nombreArchivoGarantia(venta) {
+  return `Garantia_${(venta.cliente || "cliente").replace(/\s+/g, "_")}_${(venta.obra || "").replace(/\s+/g, "_")}.pdf`;
+}
+
+export async function downloadGarantiaPdf(venta) {
+  const bytes = await generateGarantiaPdf(venta);
+  downloadBlob(bytes, nombreArchivoGarantia(venta), "application/pdf");
+}
+
 // ---------- Reporte de muestras (declaración mensual para el seguro) ----------
 // `filas`: [{ modelo, codigo, cantidad, sinMarca, valorUnitario }]
 export async function generateReporteMuestrasPdf(filas, fecha) {

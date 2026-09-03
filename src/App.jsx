@@ -6261,11 +6261,13 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
                     <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
                   </div>
                 </div>
-                <p className="mt-1" style={{ color: MUTED }}>
-                  Stock disponible en depósito: {f.stockDisponible} → cubre {f.cubiertoStock}
-                  {f.cubiertoTransito > 0 && <> · en tránsito: {f.transitoDisponible} → cubre {f.cubiertoTransito}</>}
+                <p className="mt-1">
+                  <span style={{ color: "#15803D" }}>Depósito: {f.stockDisponible} disponible → cubre {f.cubiertoStock}</span>
+                  {f.cubiertoTransito > 0 && (
+                    <span style={{ color: "#B45309" }}> · Tránsito: {f.transitoDisponible} disponible → cubre {f.cubiertoTransito}</span>
+                  )}
                   {f.faltanteProducir > 0 && (
-                    <strong style={{ color: "#B91C1C" }}> · faltan {f.faltanteProducir} — es el mínimo a mandar a producir para completar el pedido</strong>
+                    <strong style={{ color: "#B91C1C" }}> · Faltan {f.faltanteProducir} — mínimo a mandar a producir en China para completar el pedido</strong>
                   )}
                 </p>
               </div>

@@ -2110,7 +2110,7 @@ export default function App() {
 
         {tab === "catalogo" && (
           <CatalogoView
-            productos={filteredProductos} query={query} onQuery={setQuery}
+            productos={filteredProductos} transito={transito} query={query} onQuery={setQuery}
             modoInicial={catalogoModoInicial}
             onNew={(modo) => { setProductoEditando(null); setNuevoProductoDefaults(modo === "repuestos" ? { categoriaPrincipal: "Repuestos" } : null); setDrawer("producto"); }}
             onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
@@ -4774,6 +4774,23 @@ function disponibleEnTransitoParaModelo(modelo, transitoEnvios) {
   }
   return total;
 }
+
+// Repuestos "en camino" (envíos que todavía no llegaron) agregados por código de pieza — para
+// poder mostrarlos en el Catálogo aunque el repuesto real recién se crea cuando el envío llega.
+function repuestosEnTransitoPorCodigo(transitoEnvios) {
+  const mapa = new Map();
+  for (const t of transitoEnvios) {
+    if (t.estado === "Llegado") continue;
+    for (const r of t.repuestos || []) {
+      const key = (r.codigoPieza || "").trim();
+      if (!key) continue;
+      if (!mapa.has(key)) mapa.set(key, { cantidad: 0, modeloAsociado: r.modeloAsociado, descripcion: r.descripcion });
+      mapa.get(key).cantidad += Number(r.cantidad) || 0;
+    }
+  }
+  return mapa;
+}
+
 // Pendiente real de una línea de cotización: lo contratado, menos lo ya retirado, menos lo ya
 // comprometido (sea contra stock físico o contra mercadería en tránsito) — para no ofrecer
 // comprometer de nuevo un saldo que ya tiene dueño por cualquiera de las dos vías.
@@ -5695,26 +5712,38 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <CodeTag>{p.nombre}</CodeTag>
-            <div className="flex items-center gap-1 shrink-0">
-              <button onClick={() => onEdit(p)} className="p-1 rounded hover:bg-gray-100" title="Editar producto">
-                <Pencil size={13} style={{ color: MUTED }} />
-              </button>
-              <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100" title="Eliminar producto">
-                <Trash2 size={13} style={{ color: MUTED }} />
-              </button>
-            </div>
+            {!p.esVirtual && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => onEdit(p)} className="p-1 rounded hover:bg-gray-100" title="Editar producto">
+                  <Pencil size={13} style={{ color: MUTED }} />
+                </button>
+                <button onClick={() => onDelete(p)} className="p-1 rounded hover:bg-gray-100" title="Eliminar producto">
+                  <Trash2 size={13} style={{ color: MUTED }} />
+                </button>
+              </div>
+            )}
           </div>
           {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
         {p.stockDisponible != null && (
           <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: p.stockDisponible > 0 ? "#E9F7EF" : "#FBEAEA", color: p.stockDisponible > 0 ? "#15803D" : "#B91C1C" }}>
             Stock: {p.stockDisponible}
           </span>
         )}
+        {Number(p.enTransito) > 0 && (
+          <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: "#FDF1E0", color: "#B45309" }}>
+            En tránsito: {p.enTransito}
+          </span>
+        )}
       </div>
+      {p.esVirtual && (
+        <p className="text-xs mt-1.5 px-2 py-1 rounded" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
+          Todavía no está en el catálogo — se da de alta solo cuando confirmes "Dar llegada" en Tránsito.
+        </p>
+      )}
       {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
       {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
 
@@ -5863,14 +5892,41 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
   );
 }
 
-function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
+function CatalogoView({ productos, transito, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
   const fileInputRef = useRef(null);
   const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
 
+  // Repuestos que ya vienen en camino (todavía no llegaron) — se cruzan por código de pieza
+  // para que se vean en el catálogo aunque el repuesto real recién se cree cuando el envío llegue.
+  const transitoPorCodigo = useMemo(() => repuestosEnTransitoPorCodigo(transito || []), [transito]);
+
+  const productosConTransito = useMemo(() => {
+    if (modo !== "repuestos") return productos;
+    const reales = productos.map((p) => {
+      if (p.categoriaPrincipal !== "Repuestos" || !p.codigoFabrica) return p;
+      const info = transitoPorCodigo.get(p.codigoFabrica);
+      return info ? { ...p, enTransito: info.cantidad } : p;
+    });
+    const codigosCatalogo = new Set(
+      productos.filter((p) => p.categoriaPrincipal === "Repuestos" && p.codigoFabrica).map((p) => p.codigoFabrica)
+    );
+    const virtuales = [];
+    transitoPorCodigo.forEach((info, codigo) => {
+      if (codigosCatalogo.has(codigo)) return;
+      virtuales.push({
+        id: `transito-${codigo}`, nombre: `${info.modeloAsociado || "Repuesto"} — pieza ${codigo}`,
+        categoriaPrincipal: "Repuestos", subcategoria2: info.modeloAsociado || "",
+        descripcion: info.descripcion || "", codigoFabrica: codigo,
+        stockDisponible: null, enTransito: info.cantidad, esVirtual: true,
+      });
+    });
+    return [...reales, ...virtuales];
+  }, [productos, modo, transitoPorCodigo]);
+
   const productosFiltrados = useMemo(
-    () => productos.filter((p) => (p.categoriaPrincipal === "Repuestos") === (modo === "repuestos")),
-    [productos, modo]
+    () => productosConTransito.filter((p) => (p.categoriaPrincipal === "Repuestos") === (modo === "repuestos")),
+    [productosConTransito, modo]
   );
 
   const buscando = query.trim().length > 0;

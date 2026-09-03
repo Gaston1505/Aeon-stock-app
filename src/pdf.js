@@ -1133,8 +1133,9 @@ export async function downloadReporteFisicoPdf(filas, fecha, titulo) {
 
 // ---------- Reporte para Joel: físico en Paraguay + en tránsito, separados ----------
 // `filasFisico`: [{ categoria, modelo, cantidad, valorUnitario }]
-// `filasTransito`: [{ modelo, cantidad, costo }]
-export async function generateReporteJoelPdf(filasFisico, filasTransito, fecha) {
+// `filasModelosTransito`: [{ modelo, cantidad }] — modelos/unidades en tránsito, sin plata.
+// `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.
+export async function generateReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -1266,19 +1267,18 @@ export async function generateReporteJoelPdf(filasFisico, filasTransito, fecha) 
   text(totalFisicoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalFisicoStr, 7.5), y - 11, { bold: true, size: 7.5, color: ACCENT });
   y -= 30;
 
-  // Sección 2: en tránsito
-  const colModeloT = 220;
-  const colCantT = 60;
-  const colCostoT = CONTENT_W - colModeloT - colCantT;
+  // Sección 2: en tránsito — modelos (sin plata, un envío trae varios modelos juntos)
+  const colModeloT = 300;
+  const colCantT = CONTENT_W - colModeloT;
 
   ensureSpace(30);
-  text("En tránsito (fabricándose / en camino desde China)", MARGIN, y, { bold: true, size: 9 });
+  text("En tránsito — modelos", MARGIN, y, { bold: true, size: 9 });
   y -= 14;
 
-  function drawHeaderTransito() {
+  function drawHeaderModelosTransito() {
     rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
     let cx = MARGIN;
-    const headers = [["Modelo", colModeloT], ["Cant.", colCantT], ["Costo/valor U$S", colCostoT]];
+    const headers = [["Modelo", colModeloT], ["Cant.", colCantT]];
     headers.forEach(([label, w]) => {
       const lw = bold.widthOfTextAtSize(label, 6.5);
       text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
@@ -1287,51 +1287,70 @@ export async function generateReporteJoelPdf(filasFisico, filasTransito, fecha) 
     y -= 20;
   }
 
-  let totalValorTransito = 0;
-  if (filasTransito.length === 0) {
+  if (filasModelosTransito.length === 0) {
     ensureSpace(20);
     text("No hay envíos en tránsito cargados.", MARGIN, y, { size: 7.5, color: MUTED });
     y -= 20;
   } else {
-    drawHeaderTransito();
-    let totalCantTransito = 0;
-    for (const t of filasTransito) {
+    drawHeaderModelosTransito();
+    for (const f of filasModelosTransito) {
       const rowH = 18;
       ensureSpace(rowH + 20);
-      if (y === PAGE_H - MARGIN) drawHeaderTransito();
-
-      const cant = Number(t.cantidad) || 0;
-      const costo = Number(t.costo) || 0;
-      totalCantTransito += cant;
-      totalValorTransito += costo;
+      if (y === PAGE_H - MARGIN) drawHeaderModelosTransito();
 
       let cx = MARGIN;
       rect(cx, y - rowH, colModeloT, rowH, { border: BORDER });
-      text(t.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+      text(f.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
       cx += colModeloT;
 
       rect(cx, y - rowH, colCantT, rowH, { border: BORDER });
-      centerText(String(cant), cx, y, colCantT, rowH);
-      cx += colCantT;
-
-      rect(cx, y - rowH, colCostoT, rowH, { border: BORDER });
-      centerText(costo ? `U$S ${fmtNum(costo)}` : "—", cx, y, colCostoT, rowH, { size: 6 });
+      centerText(String(Number(f.cantidad) || 0), cx, y, colCantT, rowH);
 
       y -= rowH;
     }
-
-    ensureSpace(24);
-    const colLabelTotalT = colModeloT + colCantT;
-    rect(MARGIN, y - 16, colLabelTotalT, 16, { fill: ACCENT_LIGHT });
-    text(`Sub-total tránsito: ${totalCantTransito} unidad(es)`, MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
-    rect(MARGIN + colLabelTotalT, y - 16, colCostoT, 16, { fill: ACCENT_LIGHT });
-    const totalTransitoStr = `U$S ${fmtNum(totalValorTransito)}`;
-    text(totalTransitoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalTransitoStr, 7.5), y - 11, { bold: true, size: 7.5, color: ACCENT });
-    y -= 24;
+    y -= 10;
   }
 
+  // Sección 3: en tránsito — costos (compartidos entre todos los modelos del envío, no se reparten)
+  const colConcepto = 300;
+  const colMonto = CONTENT_W - colConcepto;
+
+  ensureSpace(30);
+  text("En tránsito — costos", MARGIN, y, { bold: true, size: 9 });
+  y -= 14;
+
+  ensureSpace(20 + costosTransito.filas.length * 16);
+  rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+  let cxCosto = MARGIN;
+  [["Concepto", colConcepto], ["Monto U$S", colMonto]].forEach(([label, w]) => {
+    const lw = bold.widthOfTextAtSize(label, 6.5);
+    text(label, cxCosto + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+    cxCosto += w;
+  });
+  y -= 20;
+
+  for (const f of costosTransito.filas) {
+    const rowH = 16;
+    ensureSpace(rowH);
+    let cx = MARGIN;
+    rect(cx, y - rowH, colConcepto, rowH, { border: BORDER });
+    text(f.concepto, cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+    cx += colConcepto;
+    rect(cx, y - rowH, colMonto, rowH, { border: BORDER });
+    centerText(f.monto ? `U$S ${fmtNum(f.monto)}` : "—", cx, y, colMonto, rowH, { size: 6.5 });
+    y -= rowH;
+  }
+
+  ensureSpace(20);
+  rect(MARGIN, y - 16, colConcepto, 16, { fill: ACCENT_LIGHT });
+  text("Total tránsito", MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+  rect(MARGIN + colConcepto, y - 16, colMonto, 16, { fill: ACCENT_LIGHT });
+  const totalTransitoStr = `U$S ${fmtNum(costosTransito.total)}`;
+  text(totalTransitoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalTransitoStr, 7.5), y - 11, { bold: true, size: 7.5, color: ACCENT });
+  y -= 30;
+
   // Total general
-  const granTotal = totalValorFisico + totalValorTransito;
+  const granTotal = totalValorFisico + costosTransito.total;
   ensureSpace(24);
   rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
   const granTotalStr = `Total general (físico + tránsito): U$S ${fmtNum(granTotal)}`;
@@ -1345,7 +1364,7 @@ export function nombreArchivoReporteJoel(fecha) {
   return `Reporte_Joel_${fecha || ""}.pdf`;
 }
 
-export async function downloadReporteJoelPdf(filasFisico, filasTransito, fecha) {
-  const bytes = await generateReporteJoelPdf(filasFisico, filasTransito, fecha);
+export async function downloadReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha) {
+  const bytes = await generateReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha);
   downloadBlob(bytes, nombreArchivoReporteJoel(fecha), "application/pdf");
 }

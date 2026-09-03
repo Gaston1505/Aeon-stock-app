@@ -1801,11 +1801,14 @@ export default function App() {
         )}
 
         {tab === "reporte-seguro" && (
-          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguay} />
+          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguay} comprometidas={comprometidas} />
         )}
 
         {tab === "reporte-joel" && (
-          <ReporteJoelView mercaderia={mercaderiaFisicaParaguay} transito={transito} />
+          <ReporteJoelView
+            mercaderia={mercaderiaFisicaParaguay} transito={transito}
+            comprometidas={comprometidas} cotizaciones={cotizaciones}
+          />
         )}
         </div>
       </div>
@@ -2004,16 +2007,155 @@ function agruparMercaderia(mercaderia) {
   return [...mapa.values()].sort((a, b) => a.categoria.localeCompare(b.categoria) || a.modelo.localeCompare(b.modelo));
 }
 
-// Agrupa el tránsito por modelo — varios lotes/contenedores del mismo modelo quedan en una fila.
-function agruparTransito(transito) {
+// Cada envío de Tránsito trae varios modelos juntos en un mismo contenedor, con estos costos
+// compartidos entre todos ellos — no tiene sentido repartirlos por unidad, por eso el reporte
+// para Joel los muestra aparte (desglosados) en vez de mezclarlos con el valor de cada modelo.
+const CONCEPTOS_COSTO_TRANSITO = [
+  { key: "adelantoFabrica", label: "Adelanto a fábrica" },
+  { key: "pagoFinalFabrica", label: "Pago final a fábrica" },
+  { key: "representanteChina", label: "Representante en China" },
+  { key: "flete", label: "Flete" },
+  { key: "comisionFlete", label: "Comisión flete (4,71%)" },
+  { key: "despacho", label: "Despacho" },
+  { key: "seguro", label: "Seguro" },
+];
+const COMISION_FLETE_PORCENTAJE = 0.0471;
+
+function costoTotalEnvio(t) {
+  return CONCEPTOS_COSTO_TRANSITO.reduce((acc, c) => acc + (Number(t[c.key]) || 0), 0);
+}
+
+// Modelos + cantidades de todos los envíos en tránsito, agregados — sin plata, solo unidades.
+function agruparModelosTransito(transitoEnvios) {
   const mapa = new Map();
-  for (const t of transito) {
-    if (!mapa.has(t.modelo)) mapa.set(t.modelo, { modelo: t.modelo, cantidad: 0, costo: 0 });
-    const row = mapa.get(t.modelo);
-    row.cantidad += Number(t.cantidad) || 0;
-    row.costo += Number(t.costo) || 0;
+  for (const t of transitoEnvios) {
+    for (const l of t.lineas || []) {
+      if (!mapa.has(l.modelo)) mapa.set(l.modelo, { modelo: l.modelo, cantidad: 0 });
+      mapa.get(l.modelo).cantidad += Number(l.cantidad) || 0;
+    }
   }
   return [...mapa.values()].sort((a, b) => a.modelo.localeCompare(b.modelo));
+}
+
+// Costos de tránsito sumados por concepto entre todos los envíos, más el total general.
+function resumenCostosTransito(transitoEnvios) {
+  const filas = CONCEPTOS_COSTO_TRANSITO.map((c) => ({
+    concepto: c.label,
+    monto: transitoEnvios.reduce((acc, t) => acc + (Number(t[c.key]) || 0), 0),
+  }));
+  const total = filas.reduce((acc, f) => acc + f.monto, 0);
+  return { filas, total };
+}
+
+// Clasifica una venta comprometida cruzando cuánto se entregó (retirado) contra cuánto se
+// cobró (pagos) — usado tanto por el cuadro de "comprometida en depósito" (Seguro/Joel) como
+// por "Plata por cobrar" (Joel). Categorías: cerrado (100% entregado y cobrado), entregado y
+// por cobrar, entrega parcial sin pago, entrega parcial con adelanto, adelanto sin entrega.
+function clasificarComprometida(c) {
+  const cantidad = Number(c.cantidad) || 0;
+  const retirado = Number(c.cantidadRetirada) || 0;
+  const monto = Number(c.monto) || 0;
+  const pagado = (c.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+  const entregaCompleta = cantidad > 0 && retirado >= cantidad;
+  const entregaParcial = retirado > 0 && retirado < cantidad;
+  const pagoCompleto = monto > 0 && pagado >= monto;
+  const sinPago = pagado <= 0;
+
+  let categoria = "sin_movimiento";
+  if (entregaCompleta && pagoCompleto) categoria = "cerrado";
+  else if (entregaCompleta) categoria = "entregado_por_cobrar";
+  else if (entregaParcial && sinPago) categoria = "parcial_sin_pago";
+  else if (entregaParcial) categoria = "parcial_con_adelanto";
+  else if (!sinPago) categoria = "adelanto_sin_entrega";
+
+  return { ...c, retirado, saldo: Math.max(0, cantidad - retirado), pagado, saldoPago: Math.max(0, monto - pagado), categoria };
+}
+
+const CATEGORIAS_PLATA_COBRAR = [
+  { key: "entregado_por_cobrar", label: "Entregado y por cobrar" },
+  { key: "parcial_sin_pago", label: "Entrega parcial, sin ningún pago" },
+  { key: "parcial_con_adelanto", label: "Entrega parcial, con algún adelanto" },
+  { key: "adelanto_sin_entrega", label: "Adelanto pagado, sin entrega" },
+];
+
+// Cuadro reutilizado por Reporte Seguro y Reporte Joel: mercadería comprometida que todavía
+// está físicamente en el depósito (ya cuenta en el total físico de arriba) junto con su estado
+// de pago — para no confundir "sigue en el depósito" con "ya es plata cobrada".
+function ComprometidaPagoBox({ comprometidas }) {
+  const enDeposito = useMemo(
+    () => comprometidas.map(clasificarComprometida).filter((c) => c.saldo > 0),
+    [comprometidas]
+  );
+  if (enDeposito.length === 0) return null;
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
+      <div className="flex items-center gap-2 mb-2">
+        <Lock size={15} style={{ color: "#B45309" }} />
+        <h3 className="text-sm font-semibold" style={{ color: "#92400E" }}>Mercadería comprometida todavía en depósito</h3>
+        <InfoTip>
+          <p>Estas unidades ya están sumadas en el total físico de arriba — siguen en el depósito, solo que reservadas para una venta comprometida.</p>
+          <p>Acá te aclaramos si esa venta ya está cobrada, parcial, o sin ningún pago, para no confundir "está en el depósito" con "ya es plata cobrada".</p>
+        </InfoTip>
+      </div>
+      <div className="space-y-1">
+        {enDeposito.map((c) => (
+          <p key={c.id} className="text-sm" style={{ color: "#92400E" }}>
+            · {c.razonSocial} — {c.obra} — {c.modelo} × {c.saldo} en depósito —{" "}
+            {c.saldoPago <= 0
+              ? "pagado por completo"
+              : c.pagado > 0
+                ? `pago parcial: U$S ${c.pagado.toLocaleString()} de U$S ${(Number(c.monto) || 0).toLocaleString()}`
+                : "sin pago"}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// "Plata por cobrar" para Joel: cruza entrega vs. cobro de cada venta comprometida. Los
+// proyectos 100% entregados y cobrados quedan aparte, como referencia (no suman saldo).
+function PlataPorCobrarSection({ comprometidas }) {
+  const clasificadas = useMemo(() => comprometidas.map(clasificarComprometida), [comprometidas]);
+  const cerrados = clasificadas.filter((c) => c.categoria === "cerrado");
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-1 mb-2">
+        <p className="text-xs font-semibold" style={{ color: ACCENT }}>Plata por cobrar</p>
+        <InfoTip>
+          <p>Se arma con Ventas comprometidas, cruzando cuánto se entregó (retiros registrados) contra cuánto se cobró (Pagos).</p>
+          <p><strong>Entregado y por cobrar:</strong> ya se llevó todo, falta cobrar total o parcial.</p>
+          <p><strong>Entrega parcial sin pago:</strong> se entregó algo, no se cobró nada todavía.</p>
+          <p><strong>Entrega parcial con adelanto:</strong> se entregó algo y ya hay algún pago.</p>
+          <p><strong>Adelanto sin entrega:</strong> ya pagaron algo, todavía no se entregó nada.</p>
+        </InfoTip>
+      </div>
+      {CATEGORIAS_PLATA_COBRAR.map((cat) => {
+        const items = clasificadas.filter((c) => c.categoria === cat.key);
+        if (items.length === 0) return null;
+        const totalSaldo = items.reduce((acc, c) => acc + c.saldoPago, 0);
+        return (
+          <div key={cat.key} className="mb-3">
+            <p className="text-xs font-medium mb-1" style={{ color: INK }}>{cat.label} — saldo por cobrar U$S {totalSaldo.toLocaleString()}</p>
+            {items.map((c) => (
+              <p key={c.id} className="text-xs" style={{ color: MUTED }}>
+                · {c.razonSocial} — {c.obra} — {c.modelo} · {c.retirado} de {c.cantidad} entregado · saldo por cobrar U$S {c.saldoPago.toLocaleString()}
+              </p>
+            ))}
+          </div>
+        );
+      })}
+      {cerrados.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-1" style={{ color: MUTED }}>Proyectos cerrados (entregado y cobrado 100%) — referencia</p>
+          {cerrados.map((c) => (
+            <p key={c.id} className="text-xs" style={{ color: MUTED }}>· {c.razonSocial} — {c.obra} — U$S {(Number(c.monto) || 0).toLocaleString()}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function VentasCerradasPanel({ ventasCerradas }) {
@@ -5747,75 +5889,173 @@ function ClienteForm({ onSave }) {
 
 // Mercadería fabricándose o en camino desde China — todavía no es stock físico real. Se carga
 // a mano, y cuando llega de verdad se pasa a Maestro de equipos como una entrada normal.
+// Un envío = un contenedor con varios modelos adentro, más los costos compartidos entre todos
+// ellos (fábrica, representante en China, flete, comisión, despacho, seguro).
 function TransitoView({ transito, query, onQuery, onNew, onDelete }) {
-  const totalUnidades = sumCantidad(transito);
-  const totalValor = transito.reduce((acc, t) => acc + (Number(t.costo) || 0), 0);
+  const totalUnidades = transito.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
+  const totalCosto = transito.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
   return (
     <Section
       title="Tránsito"
-      subtitle={`Mercadería fabricándose o en camino desde China — todavía no es stock físico. ${transito.length} lote(s) · ${totalUnidades} unidad(es) · U$S ${totalValor.toLocaleString()} en camino.`}
+      subtitle={`Envíos fabricándose o en camino desde China — todavía no es stock físico. ${transito.length} envío(s) · ${totalUnidades} unidad(es) · U$S ${totalCosto.toLocaleString()} en costos.`}
       query={query} onQuery={onQuery}
-      onNew={onNew} newLabel="Nuevo tránsito"
+      onNew={onNew} newLabel="Nuevo envío"
     >
       {transito.length === 0 ? (
         <EmptyState icon={Ship} title="No hay envíos en tránsito" subtitle="Cargá acá lo que se está fabricando o viene en camino desde China." />
       ) : (
-        <Table
-          columns={[
-            { key: "modelo", label: "Modelo" }, { key: "cantidad", label: "Cantidad" },
-            { key: "fechaEstimadaLlegada", label: "Llegada estimada" }, { key: "contenedor", label: "Contenedor / Ref." },
-            { key: "costo", label: "Costo U$S" }, { key: "notas", label: "Notas" },
-          ]}
-          rows={transito}
-          onDelete={onDelete}
-          renderCell={(key, row) => {
-            if (key === "fechaEstimadaLlegada") return fmtDate(row.fechaEstimadaLlegada);
-            if (key === "costo") return row.costo ? `U$S ${Number(row.costo).toLocaleString()}` : "—";
-            return row[key] || "—";
-          }}
-        />
+        <div className="space-y-3">
+          {transito.map((t) => {
+            const unidades = sumCantidad(t.lineas || []);
+            const costo = costoTotalEnvio(t);
+            return (
+              <div key={t.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <div className="flex items-start justify-between mb-1">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: INK }}>{t.contenedor || "Sin contenedor / referencia"}</p>
+                    <p className="text-xs" style={{ color: MUTED }}>Llegada estimada: {fmtDate(t.fechaEstimadaLlegada)}</p>
+                  </div>
+                  <button onClick={() => onDelete(t.id)} className="p-1 rounded hover:bg-gray-100">
+                    <Trash2 size={13} style={{ color: MUTED }} />
+                  </button>
+                </div>
+                <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString()} en costos totales</p>
+                <div className="mt-1.5 space-y-0.5">
+                  {(t.lineas || []).map((l, i) => (
+                    <p key={i} className="text-xs" style={{ color: MUTED }}>· {l.modelo} — cant. {l.cantidad}</p>
+                  ))}
+                </div>
+                <details className="mt-2">
+                  <summary className="text-xs cursor-pointer" style={{ color: ACCENT }}>Ver desglose de costos</summary>
+                  <div className="mt-1.5 space-y-0.5">
+                    {CONCEPTOS_COSTO_TRANSITO.map((c) => (
+                      <p key={c.key} className="text-xs" style={{ color: MUTED }}>{c.label}: U$S {(Number(t[c.key]) || 0).toLocaleString()}</p>
+                    ))}
+                  </div>
+                </details>
+                {t.notas && <p className="text-xs mt-2" style={{ color: MUTED }}>{t.notas}</p>}
+              </div>
+            );
+          })}
+        </div>
       )}
     </Section>
   );
 }
 
 function TransitoForm({ onSave }) {
-  const [modelo, setModelo] = useState("");
-  const [cantidad, setCantidad] = useState(1);
-  const [fechaEstimadaLlegada, setFechaEstimadaLlegada] = useState("");
   const [contenedor, setContenedor] = useState("");
-  const [costo, setCosto] = useState("");
+  const [fechaEstimadaLlegada, setFechaEstimadaLlegada] = useState("");
+  const [adelantoFabrica, setAdelantoFabrica] = useState("");
+  const [pagoFinalFabrica, setPagoFinalFabrica] = useState("");
+  const [representanteChina, setRepresentanteChina] = useState("");
+  const [flete, setFlete] = useState("");
+  const [comisionFlete, setComisionFlete] = useState("");
+  const comisionAutoRef = useRef(null);
+  const [despacho, setDespacho] = useState("");
+  const [seguro, setSeguro] = useState("");
   const [notas, setNotas] = useState("");
+  const [modeloNuevo, setModeloNuevo] = useState("");
+  const [cantidadNueva, setCantidadNueva] = useState(1);
+  const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
 
-  const submit = () => {
-    if (!modelo.trim()) {
+  // La comisión se sugiere sola (4,71% del flete) pero se puede pisar a mano — solo se
+  // recalcula mientras siga siendo la que se auto-completó, para no tapar un valor tipeado.
+  const handleFlete = (v) => {
+    setFlete(v);
+    const sugerido = (Number(v) || 0) * COMISION_FLETE_PORCENTAJE;
+    const sugeridoStr = sugerido ? sugerido.toFixed(2) : "";
+    if (comisionFlete === "" || comisionFlete === comisionAutoRef.current) {
+      setComisionFlete(sugeridoStr);
+      comisionAutoRef.current = sugeridoStr;
+    }
+  };
+
+  const agregarLinea = () => {
+    if (!modeloNuevo.trim()) {
       setError("Ingresá el modelo.");
       return;
     }
+    setLineas([...lineas, { modelo: modeloNuevo.trim(), cantidad: Number(cantidadNueva) || 1 }]);
+    setModeloNuevo("");
+    setCantidadNueva(1);
+    setError("");
+  };
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  const costoTotal = [adelantoFabrica, pagoFinalFabrica, representanteChina, flete, comisionFlete, despacho, seguro]
+    .reduce((acc, v) => acc + (Number(v) || 0), 0);
+
+  const submit = () => {
+    if (lineas.length === 0) {
+      setError("Agregá al menos un modelo.");
+      return;
+    }
     onSave({
-      modelo: modelo.trim(), cantidad: Number(cantidad) || 1,
-      fechaEstimadaLlegada, contenedor, costo: Number(costo) || 0, notas,
+      contenedor, fechaEstimadaLlegada, notas, lineas,
+      adelantoFabrica: Number(adelantoFabrica) || 0,
+      pagoFinalFabrica: Number(pagoFinalFabrica) || 0,
+      representanteChina: Number(representanteChina) || 0,
+      flete: Number(flete) || 0,
+      comisionFlete: Number(comisionFlete) || 0,
+      despacho: Number(despacho) || 0,
+      seguro: Number(seguro) || 0,
     });
   };
 
   return (
     <div>
-      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
-      <Field label="Cantidad"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
-      <Field label="Fecha estimada de llegada"><TextInput type="date" value={fechaEstimadaLlegada} onChange={(e) => setFechaEstimadaLlegada(e.target.value)} /></Field>
       <Field label="N° de contenedor / referencia"><TextInput value={contenedor} onChange={(e) => setContenedor(e.target.value)} placeholder="Opcional" /></Field>
-      <Field label="Costo / valor del lote U$S"><TextInput type="number" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="Opcional" /></Field>
+      <Field label="Fecha estimada de llegada"><TextInput type="date" value={fechaEstimadaLlegada} onChange={(e) => setFechaEstimadaLlegada(e.target.value)} /></Field>
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Modelos en este envío</p>
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <div className="flex gap-2">
+          <Field label="Modelo"><TextInput value={modeloNuevo} onChange={(e) => setModeloNuevo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+          <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
+        </div>
+        <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar modelo</SecondaryButton>
+      </div>
+      {lineas.length > 0 && (
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {lineas.map((l, i) => (
+            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <span style={{ color: INK }}>{l.modelo} · cant. {l.cantidad}</span>
+              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Costos del envío (compartidos entre todos los modelos)</p>
+      <div className="flex gap-2">
+        <Field label="Adelanto a fábrica U$S"><TextInput type="number" value={adelantoFabrica} onChange={(e) => setAdelantoFabrica(e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Pago final a fábrica U$S"><TextInput type="number" value={pagoFinalFabrica} onChange={(e) => setPagoFinalFabrica(e.target.value)} placeholder="Opcional" /></Field>
+      </div>
+      <Field label="Representante en China U$S"><TextInput type="number" value={representanteChina} onChange={(e) => setRepresentanteChina(e.target.value)} placeholder="Opcional" /></Field>
+      <div className="flex gap-2">
+        <Field label="Flete U$S"><TextInput type="number" value={flete} onChange={(e) => handleFlete(e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Comisión (4,71% del flete) U$S">
+          <TextInput type="number" value={comisionFlete} onChange={(e) => { setComisionFlete(e.target.value); comisionAutoRef.current = null; }} placeholder="Se calcula sola" />
+        </Field>
+      </div>
+      <div className="flex gap-2">
+        <Field label="Despacho U$S"><TextInput type="number" value={despacho} onChange={(e) => setDespacho(e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Seguro U$S"><TextInput type="number" value={seguro} onChange={(e) => setSeguro(e.target.value)} placeholder="Opcional" /></Field>
+      </div>
+      <p className="text-xs mb-3" style={{ color: MUTED }}>Costo total del envío: U$S {costoTotal.toLocaleString()}</p>
+
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar tránsito</PrimaryButton>
+      <PrimaryButton onClick={submit}>Guardar envío</PrimaryButton>
     </div>
   );
 }
 
 // Reporte de mercadería física en Paraguay para el seguro — equipos activos, repuestos y lo que
 // está en Zona de playa sin clasificar, agrupado por modelo con su valor de lista.
-function ReporteSeguroView({ mercaderia }) {
+function ReporteSeguroView({ mercaderia, comprometidas }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [error, setError] = useState("");
   const filas = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
@@ -5849,7 +6089,16 @@ function ReporteSeguroView({ mercaderia }) {
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Seguro</h2>
+          <div className="flex items-center gap-1">
+            <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Seguro</h2>
+            <InfoTip>
+              <p>Cuenta TODA la mercadería física en Paraguay, sin importar si está comprometida a una venta o no:</p>
+              <p><strong>Equipos:</strong> todos, salvo Vendido y Dado de baja (ya salieron del circuito).</p>
+              <p><strong>Repuestos:</strong> el Stock disponible cargado en cada uno del Catálogo.</p>
+              <p><strong>Zona de playa:</strong> todo lo que todavía no se clasificó.</p>
+              <p>El valor de cada fila sale del Precio de lista del Catálogo — si el modelo no matchea exacto, queda sin valor ("—") en vez de inventar un precio.</p>
+            </InfoTip>
+          </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Toda la mercadería física en Paraguay — equipos activos, repuestos y Zona de playa sin clasificar.
             {" "}{filas.length} modelo(s) · {totalCant} unidad(es) · U$S {totalValor.toLocaleString()}.
@@ -5863,6 +6112,7 @@ function ReporteSeguroView({ mercaderia }) {
       {error && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{error}</div>
       )}
+      <ComprometidaPagoBox comprometidas={comprometidas} />
       {filas.length === 0 ? (
         <EmptyState icon={ClipboardList} title="No hay mercadería física cargada" subtitle="Se arma solo con lo que ya está en Maestro de equipos, Repuestos y Zona de playa." />
       ) : (
@@ -5884,28 +6134,58 @@ function ReporteSeguroView({ mercaderia }) {
   );
 }
 
-// Reporte para Joel — físico en Paraguay + en tránsito, separados con su total cada uno y un
-// total general al final. Reutiliza la misma cuenta de mercadería física que el reporte de seguro.
-function ReporteJoelView({ mercaderia, transito }) {
+// Reporte para Joel — físico en Paraguay + en tránsito (modelos y costos, por separado), más
+// el resumen de cotizaciones y plata por cobrar. Reutiliza la misma cuenta de mercadería física
+// que el reporte de seguro, así los dos reportes nunca dan números distintos para lo mismo.
+function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [error, setError] = useState("");
   const filasFisico = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
-  const filasTransito = useMemo(() => agruparTransito(transito), [transito]);
+  const filasModelosTransito = useMemo(() => agruparModelosTransito(transito), [transito]);
+  const costosTransito = useMemo(() => resumenCostosTransito(transito), [transito]);
+  const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
+  const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
+  const detalleCotizaciones = useMemo(
+    () => gruposCotizacion.flatMap((g) => g.obras.map((o) => ({
+      cliente: g.cliente, obra: o.obra, monto: calcularTotalCotizacion(o.activa), estado: ESTADOS_COTIZACION.includes(o.activa.estado) ? o.activa.estado : "Pendiente",
+    }))),
+    [gruposCotizacion]
+  );
 
   const totalFisico = filasFisico.reduce((acc, f) => acc + f.cantidad * f.valorUnitario, 0);
-  const totalTransito = filasTransito.reduce((acc, f) => acc + f.costo, 0);
+  const unidadesTransito = filasModelosTransito.reduce((acc, f) => acc + f.cantidad, 0);
 
   const handleExcel = () => {
     const wb = XLSX.utils.book_new();
-    const wsFisico = XLSX.utils.json_to_sheet(filasFisico.map((f) => ({
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasFisico.map((f) => ({
       "Categoría": f.categoria, "Modelo": f.modelo, "Cantidad": f.cantidad,
       "Valor unitario U$S": f.valorUnitario, "Valor total U$S": f.cantidad * f.valorUnitario,
-    })));
-    const wsTransito = XLSX.utils.json_to_sheet(filasTransito.map((f) => ({
-      "Modelo": f.modelo, "Cantidad": f.cantidad, "Costo / valor U$S": f.costo,
-    })));
-    XLSX.utils.book_append_sheet(wb, wsFisico, "Físico Paraguay");
-    XLSX.utils.book_append_sheet(wb, wsTransito, "Tránsito");
+    }))), "Físico Paraguay");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasModelosTransito.map((f) => ({
+      "Modelo": f.modelo, "Cantidad": f.cantidad,
+    }))), "Tránsito - Modelos");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+      ...costosTransito.filas.map((f) => ({ "Concepto": f.concepto, "Monto U$S": f.monto })),
+      { "Concepto": "TOTAL", "Monto U$S": costosTransito.total },
+    ]), "Tránsito - Costos");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Resumen de cotizaciones"],
+      ["Total cotizado (U$S)", resumenCot.total],
+      ["Pendiente — cantidad / monto U$S", resumenCot.Pendiente.n, resumenCot.Pendiente.total],
+      ["Ganada — cantidad / monto U$S", resumenCot.Ganada.n, resumenCot.Ganada.total],
+      ["Perdida — cantidad / monto U$S", resumenCot.Perdida.n, resumenCot.Perdida.total],
+      [],
+      ["Cliente", "Obra", "Monto U$S", "Estado"],
+      ...detalleCotizaciones.map((d) => [d.cliente, d.obra, d.monto, d.estado]),
+    ]), "Cotizaciones");
+    const clasificadas = comprometidas.map(clasificarComprometida);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clasificadas
+      .filter((c) => c.categoria !== "sin_movimiento")
+      .map((c) => ({
+        "Categoría": CATEGORIAS_PLATA_COBRAR.find((cat) => cat.key === c.categoria)?.label || "Cerrado",
+        "Cliente": c.razonSocial, "Obra": c.obra, "Modelo": c.modelo,
+        "Entregado": c.retirado, "De": c.cantidad, "Saldo por cobrar U$S": c.saldoPago,
+      }))), "Plata por cobrar");
     XLSX.writeFile(wb, `Reporte_Joel_${todayISO()}.xlsx`);
   };
 
@@ -5913,7 +6193,7 @@ function ReporteJoelView({ mercaderia, transito }) {
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteJoelPdf(filasFisico, filasTransito, todayISO());
+      await downloadReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, todayISO());
     } catch (e) {
       console.error("Error generando reporte para Joel", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
@@ -5925,9 +6205,17 @@ function ReporteJoelView({ mercaderia, transito }) {
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Joel</h2>
+          <div className="flex items-center gap-1">
+            <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Joel</h2>
+            <InfoTip>
+              <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa).</p>
+              <p><strong>Tránsito:</strong> modelos y cantidades cargados en la pestaña Tránsito, más el desglose de todos los costos de esos envíos (fábrica, representante, flete, comisión, despacho, seguro) — no se reparten por modelo, van aparte.</p>
+              <p><strong>Cotizaciones:</strong> el mismo resumen Total/Pendiente/Ganada/Perdida de la pestaña Cotizaciones.</p>
+              <p><strong>Plata por cobrar:</strong> cruza entregas contra pagos de Ventas comprometidas.</p>
+            </InfoTip>
+          </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Físico en Paraguay + lo que está en tránsito desde China, por separado — total general U$S {(totalFisico + totalTransito).toLocaleString()}.
+            Físico en Paraguay (U$S {totalFisico.toLocaleString()}) + tránsito ({unidadesTransito} unidad(es), U$S {costosTransito.total.toLocaleString()} en costos) + cotizaciones + plata por cobrar.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -5938,6 +6226,7 @@ function ReporteJoelView({ mercaderia, transito }) {
       {error && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{error}</div>
       )}
+      <ComprometidaPagoBox comprometidas={comprometidas} />
 
       <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString()}</p>
       {filasFisico.length === 0 ? (
@@ -5960,21 +6249,66 @@ function ReporteJoelView({ mercaderia, transito }) {
         </div>
       )}
 
-      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>En tránsito — U$S {totalTransito.toLocaleString()}</p>
-      {filasTransito.length === 0 ? (
-        <p className="text-sm" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
+      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>En tránsito — modelos ({unidadesTransito} unidad(es))</p>
+      {filasModelosTransito.length === 0 ? (
+        <p className="text-sm mb-4" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
       ) : (
-        <Table
-          columns={[
-            { key: "modelo", label: "Modelo" }, { key: "cantidad", label: "Cantidad" }, { key: "costo", label: "Costo / valor U$S" },
-          ]}
-          rows={filasTransito.map((f, i) => ({ ...f, id: `t-${f.modelo}-${i}` }))}
-          renderCell={(key, row) => {
-            if (key === "costo") return row.costo ? `U$S ${row.costo.toLocaleString()}` : "—";
-            return row[key] ?? "—";
-          }}
-        />
+        <div className="mb-4">
+          <Table
+            columns={[{ key: "modelo", label: "Modelo" }, { key: "cantidad", label: "Cantidad" }]}
+            rows={filasModelosTransito.map((f, i) => ({ ...f, id: `tm-${f.modelo}-${i}` }))}
+          />
+        </div>
       )}
+
+      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>En tránsito — costos (U$S {costosTransito.total.toLocaleString()})</p>
+      {transito.length === 0 ? (
+        <p className="text-sm mb-6" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
+      ) : (
+        <div className="mb-6">
+          <Table
+            columns={[{ key: "concepto", label: "Concepto" }, { key: "monto", label: "Monto U$S" }]}
+            rows={costosTransito.filas.map((f, i) => ({ ...f, id: `tc-${i}` }))}
+            renderCell={(key, row) => (key === "monto" ? `U$S ${row.monto.toLocaleString()}` : row[key])}
+          />
+        </div>
+      )}
+
+      <div className="mb-6">
+        <div className="flex items-center gap-1 mb-2">
+          <p className="text-xs font-semibold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString()}</p>
+        </div>
+        <div className="flex items-center gap-3 text-xs mb-2 flex-wrap">
+          {ESTADOS_COTIZACION.map((estado) => (
+            <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
+              {estado}: {resumenCot[estado].n} · U$S {resumenCot[estado].total.toLocaleString()}
+            </span>
+          ))}
+        </div>
+        {detalleCotizaciones.length > 0 && (
+          <Table
+            columns={[
+              { key: "cliente", label: "Cliente" }, { key: "obra", label: "Obra" },
+              { key: "monto", label: "Monto U$S" }, { key: "estado", label: "Estado" },
+            ]}
+            rows={detalleCotizaciones.map((d, i) => ({ ...d, id: `cot-${i}` }))}
+            renderCell={(key, row) => {
+              if (key === "monto") return `U$S ${row.monto.toLocaleString()}`;
+              if (key === "estado") return (
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded font-medium"
+                  style={{ color: ESTADO_COTIZACION_BADGE[row.estado].color, backgroundColor: ESTADO_COTIZACION_BADGE[row.estado].bg }}
+                >
+                  {row.estado}
+                </span>
+              );
+              return row[key];
+            }}
+          />
+        )}
+      </div>
+
+      <PlataPorCobrarSection comprometidas={comprometidas} />
     </div>
   );
 }

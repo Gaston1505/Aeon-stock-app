@@ -6289,8 +6289,17 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
             { key: "cantidad", label: "Cantidad" }, { key: "valorUnitario", label: "Valor unit. U$S" },
             { key: "valorTotal", label: "Valor total U$S" },
           ]}
-          rows={filas.map((f, i) => ({ ...f, id: `${f.categoria}-${f.modelo}-${i}` }))}
+          rows={[
+            ...filas.map((f, i) => ({ ...f, id: `${f.categoria}-${f.modelo}-${i}` })),
+            { id: "total", esTotal: true, modelo: "TOTAL", cantidad: totalCant, valorTotal: totalValor },
+          ]}
           renderCell={(key, row) => {
+            if (row.esTotal) {
+              if (key === "categoria") return "";
+              if (key === "valorUnitario") return "";
+              if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString()}</strong>;
+              if (key === "modelo" || key === "cantidad") return <strong>{row[key]}</strong>;
+            }
             if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString()}` : "—";
             if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString()}` : "—"; }
             return row[key] ?? "—";
@@ -6406,8 +6415,16 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
               { key: "cantidad", label: "Cantidad" }, { key: "valorUnitario", label: "Valor unit. U$S" },
               { key: "valorTotal", label: "Valor total U$S" },
             ]}
-            rows={filasFisico.map((f, i) => ({ ...f, id: `f-${f.categoria}-${f.modelo}-${i}` }))}
+            rows={[
+              ...filasFisico.map((f, i) => ({ ...f, id: `f-${f.categoria}-${f.modelo}-${i}` })),
+              { id: "f-total", esTotal: true, modelo: "TOTAL", valorTotal: totalFisico },
+            ]}
             renderCell={(key, row) => {
+              if (row.esTotal) {
+                if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString()}</strong>;
+                if (key === "modelo") return <strong>{row.modelo}</strong>;
+                return "";
+              }
               if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString()}` : "—";
               if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString()}` : "—"; }
               return row[key] ?? "—";
@@ -6435,8 +6452,14 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
         <div className="mb-6">
           <Table
             columns={[{ key: "concepto", label: "Concepto" }, { key: "monto", label: "Monto U$S" }]}
-            rows={costosTransito.filas.map((f, i) => ({ ...f, id: `tc-${i}` }))}
-            renderCell={(key, row) => (key === "monto" ? `U$S ${row.monto.toLocaleString()}` : row[key])}
+            rows={[
+              ...costosTransito.filas.map((f, i) => ({ ...f, id: `tc-${i}` })),
+              { id: "tc-total", esTotal: true, concepto: "TOTAL", monto: costosTransito.total },
+            ]}
+            renderCell={(key, row) => {
+              if (row.esTotal) return key === "monto" ? <strong>U$S {row.monto.toLocaleString()}</strong> : <strong>{row.concepto}</strong>;
+              return key === "monto" ? `U$S ${row.monto.toLocaleString()}` : row[key];
+            }}
           />
         </div>
       )}
@@ -6458,8 +6481,16 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
               { key: "cliente", label: "Cliente" }, { key: "obra", label: "Obra" },
               { key: "monto", label: "Monto U$S" }, { key: "estado", label: "Estado" },
             ]}
-            rows={detalleCotizaciones.map((d, i) => ({ ...d, id: `cot-${i}` }))}
+            rows={[
+              ...detalleCotizaciones.map((d, i) => ({ ...d, id: `cot-${i}` })),
+              { id: "cot-total", esTotal: true, cliente: "TOTAL", monto: resumenCot.total },
+            ]}
             renderCell={(key, row) => {
+              if (row.esTotal) {
+                if (key === "monto") return <strong>U$S {row.monto.toLocaleString()}</strong>;
+                if (key === "cliente") return <strong>{row.cliente}</strong>;
+                return "";
+              }
               if (key === "monto") return `U$S ${row.monto.toLocaleString()}`;
               if (key === "estado") return (
                 <span

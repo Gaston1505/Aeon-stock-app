@@ -6212,11 +6212,12 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
         <span>Esto es ficticio: mientras no lo confirmes como cotización, no cuenta para Reporte Seguro, Reporte Joel ni ningún otro cálculo real de la app.</span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-        <Field label="Cliente (para confirmar como cotización)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
         <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Opcional" /></Field>
         <Field label="Categoría"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Opcional" /></Field>
       </div>
+      <p className="text-xs mb-4" style={{ color: MUTED }}>El cliente es obligatorio solo para confirmar el ejercicio como cotización real.</p>
 
       <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Productos a simular</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>

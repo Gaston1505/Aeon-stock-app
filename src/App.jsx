@@ -840,6 +840,7 @@ export default function App() {
   const [retiroTarget, setRetiroTarget] = useState(null);
   const [pagoTarget, setPagoTarget] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
+  const [envioEditando, setEnvioEditando] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
@@ -1178,9 +1179,11 @@ export default function App() {
   // Tránsito: mercadería fabricándose/en camino desde China, todavía no es stock físico real
   // — se traslada a Maestro de equipos recién cuando llega (manualmente, como una entrada más).
   const addTransito = (data) => addItem(COLLECTIONS.transito, data);
+  const updateTransito = (id, data) => updateItem(COLLECTIONS.transito, id, data);
   const deleteTransito = (id) => deleteItem(COLLECTIONS.transito, id);
 
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
+  const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
 
   const derivarPlaya = (item, destinoValue, extra) => {
@@ -1192,7 +1195,7 @@ export default function App() {
       fechaIngreso: item.fecha, estado: destino.estado,
       ubicacion: "Depósito principal",
       cantidad: (extra && extra.cantidad) || item.cantidad || 1,
-      notas: (extra && extra.notas) || item.notas || "",
+      notas: extra && extra.notas !== undefined ? extra.notas : (item.notas || ""),
     });
     addItem(COLLECTIONS.entradas, {
       fecha: todayISO(), codigo,
@@ -1217,12 +1220,13 @@ export default function App() {
   };
 
   // Reubicar por escaneo: cambia estado/ubicación de un equipo ya cargado, dejando historial en notas.
-  const reubicarEquipoPorEscaneo = (equipo, nuevoEstado, nuevaUbicacion, nota) => {
+  const reubicarEquipoPorEscaneo = (equipo, nuevoEstado, nuevaUbicacion, nota, limpiarHistorial) => {
     const linea = `[${fmtDate(todayISO())}] Reubicado por escaneo: ${equipo.estado} → ${nuevoEstado}${nota ? " — " + nota : ""}`;
+    const notasPrevias = limpiarHistorial ? "" : (equipo.notas || "");
     updateItem(COLLECTIONS.equipos, equipo.id, {
       estado: nuevoEstado,
       ubicacion: nuevaUbicacion,
-      notas: equipo.notas ? `${equipo.notas}\n${linea}` : linea,
+      notas: notasPrevias ? `${notasPrevias}\n${linea}` : linea,
     });
   };
 
@@ -1749,6 +1753,7 @@ export default function App() {
             onExtraerRepuesto={extraerRepuestoDePlaya}
             productosRepuestos={productos.filter((p) => p.categoriaPrincipal === "Repuestos")}
             onDelete={deletePlaya}
+            onUpdateField={updatePlayaField}
           />
         )}
 
@@ -1962,7 +1967,8 @@ export default function App() {
         {tab === "transito" && (
           <TransitoView
             transito={filteredTransito} query={query} onQuery={setQuery}
-            onNew={() => setDrawer("transito")}
+            onNew={() => { setEnvioEditando(null); setDrawer("transito"); }}
+            onEdit={(t) => { setEnvioEditando(t); setDrawer("transito"); }}
             onDelete={deleteTransito}
           />
         )}
@@ -2045,8 +2051,19 @@ export default function App() {
       <Drawer open={drawer === "cliente"} onClose={() => setDrawer(null)} title="Nuevo cliente">
         <ClienteForm onSave={(d) => { addCliente(d); setDrawer(null); }} />
       </Drawer>
-      <Drawer open={drawer === "transito"} onClose={() => setDrawer(null)} title="Nuevo envío">
-        <TransitoForm onSave={(d) => { addTransito(d); setDrawer(null); }} />
+      <Drawer
+        open={drawer === "transito"} onClose={() => { setDrawer(null); setEnvioEditando(null); }}
+        title={envioEditando ? "Editar envío" : "Nuevo envío"}
+      >
+        <TransitoForm
+          envio={envioEditando} productos={productos}
+          onSave={(d) => {
+            if (envioEditando) updateTransito(envioEditando.id, d);
+            else addTransito(d);
+            setDrawer(null);
+            setEnvioEditando(null);
+          }}
+        />
       </Drawer>
       <Drawer open={drawer === "salida-cotizacion"} onClose={() => setDrawer(null)} title="Generar salida desde cotización">
         <SalidaDesdeCotizacionForm
@@ -2873,21 +2890,33 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
   );
 }
 
-function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onDelete }) {
+function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onDelete, onUpdateField }) {
   const [destino, setDestino] = useState("");
   const [cantidad, setCantidad] = useState(item.cantidad || 1);
   const [error, setError] = useState("");
+  const [confirmandoHistorial, setConfirmandoHistorial] = useState(false);
 
   const [extrayendo, setExtrayendo] = useState(false);
   const [repuestoId, setRepuestoId] = useState("");
   const [cantidadExtraida, setCantidadExtraida] = useState(1);
 
+  // Al pasar a Stock vendible se crea una ficha de equipo nueva — si este ítem ya tenía
+  // comentario/trazabilidad cargado, preguntamos si lo pasamos o si arranca en blanco.
   const confirmar = () => {
     if (!destino) {
       setError("Elegí un destino primero.");
       return;
     }
-    onDerivar(item, destino, { cantidad: Number(cantidad) || 1 });
+    if (destino === "vendible" && (item.notas || "").trim()) {
+      setConfirmandoHistorial(true);
+      return;
+    }
+    onDerivar(item, destino, { cantidad: Number(cantidad) || 1, notas: item.notas || "" });
+  };
+
+  const confirmarConHistorial = (conservar) => {
+    onDerivar(item, destino, { cantidad: Number(cantidad) || 1, notas: conservar ? (item.notas || "") : "" });
+    setConfirmandoHistorial(false);
   };
 
   const confirmarExtraccion = () => {
@@ -2913,7 +2942,9 @@ function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onD
           <Trash2 size={14} style={{ color: MUTED }} />
         </button>
       </div>
-      {item.notas && <p className="text-xs mt-1 mb-2 whitespace-pre-line" style={{ color: MUTED }}>{item.notas}</p>}
+      <div className="mt-1.5 mb-2">
+        <NotasEditor value={item.notas} onSave={(v) => onUpdateField(item.id, "notas", v)} />
+      </div>
 
       <div className="flex items-center gap-2 mt-2">
         <Select value={destino} onChange={(e) => { setDestino(e.target.value); setError(""); }} style={{ ...inputStyle, padding: "4px 8px", fontSize: 12 }}>
@@ -2924,6 +2955,22 @@ function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onD
           <ArrowRight size={14} color="#FFFFFF" />
         </button>
       </div>
+
+      {confirmandoHistorial && (
+        <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#FEF3E2" }}>
+          <p className="text-xs mb-2" style={{ color: "#92400E" }}>
+            Este ítem tiene comentario/trazabilidad cargado — ¿lo pasamos a la ficha nueva en Stock vendible, o arranca en blanco?
+          </p>
+          <div className="flex gap-2">
+            <button onClick={() => confirmarConHistorial(true)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+              Conservar historial
+            </button>
+            <button onClick={() => confirmarConHistorial(false)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
+              Empezar en blanco
+            </button>
+          </div>
+        </div>
+      )}
 
       {!extrayendo ? (
         <button onClick={() => setExtrayendo(true)} className="text-xs font-medium mt-2.5" style={{ color: ACCENT }}>
@@ -2958,7 +3005,7 @@ function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onD
   );
 }
 
-function PlayaView({ playa, productosRepuestos, query, onQuery, onNew, onDerivar, onExtraerRepuesto, onDelete }) {
+function PlayaView({ playa, productosRepuestos, query, onQuery, onNew, onDerivar, onExtraerRepuesto, onDelete, onUpdateField }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -2981,6 +3028,7 @@ function PlayaView({ playa, productosRepuestos, query, onQuery, onNew, onDerivar
             <PlayaCard
               key={item.id} item={item} productosRepuestos={productosRepuestos}
               onDerivar={onDerivar} onExtraerRepuesto={onExtraerRepuesto} onDelete={onDelete}
+              onUpdateField={onUpdateField}
             />
           ))}
         </div>
@@ -3042,6 +3090,9 @@ function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpda
                   </Select>
                 </div>
               )}
+              <div className="mt-2">
+                <NotasEditor value={e.notas} onSave={(v) => onUpdateField(e.id, "notas", v)} placeholder="Comentario — ej: qué se le arregla, en qué está" />
+              </div>
             </div>
           ))}
         </div>
@@ -3167,6 +3218,33 @@ function ComentarioEditor({ value, onSave, placeholder = "Ej: en muestra por def
       onBlur={commit}
       placeholder={placeholder}
       className="w-full text-xs px-2 py-1.5 rounded border outline-none"
+      style={{ borderColor: editing ? ACCENT : BORDER, color: INK }}
+    />
+  );
+}
+
+// Como ComentarioEditor pero multilínea — para trazabilidad que se va acumulando con el
+// tiempo (Zona de playa, Banco de recuperables), a diferencia del comentario corto de Muestras.
+function NotasEditor({ value, onSave, placeholder = "Agregar comentario / trazabilidad..." }) {
+  const [draft, setDraft] = useState(value || "");
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => setDraft(value || ""), [value]);
+
+  const commit = () => {
+    setEditing(false);
+    if (draft !== value) onSave(draft);
+  };
+
+  return (
+    <textarea
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setEditing(true)}
+      onBlur={commit}
+      placeholder={placeholder}
+      rows={2}
+      className="w-full text-xs px-2 py-1.5 rounded border outline-none resize-y"
       style={{ borderColor: editing ? ACCENT : BORDER, color: INK }}
     />
   );
@@ -3941,13 +4019,25 @@ function ReubicarEquipoForm({ equipo, onEnviarPlaya, onCambiarEstado, onVolver }
   const [origenPlaya, setOrigenPlaya] = useState(ORIGENES_PLAYA[0]);
   const [nota, setNota] = useState("");
   const [error, setError] = useState("");
+  const [confirmandoHistorial, setConfirmandoHistorial] = useState(false);
 
   const opciones = REUBICAR_DESTINOS_EQUIPO.filter((d) => d.value !== equipo.estado);
 
+  // Al pasar a Stock vendible, si ya tiene historial cargado preguntamos si lo conservamos
+  // (se sigue acumulando en las notas) o si arranca en blanco — recién ahí.
   const submit = () => {
     if (!destino) { setError("Elegí a dónde reubicarlo."); return; }
     if (destino === "playa") { onEnviarPlaya(origenPlaya, nota); return; }
-    onCambiarEstado(destino, ubicacion, nota);
+    if (destino === "Apto para venta" && (equipo.notas || "").trim()) {
+      setConfirmandoHistorial(true);
+      return;
+    }
+    onCambiarEstado(destino, ubicacion, nota, false);
+  };
+
+  const confirmarConHistorial = (limpiar) => {
+    onCambiarEstado(destino, ubicacion, nota, limpiar);
+    setConfirmandoHistorial(false);
   };
 
   return (
@@ -3981,6 +4071,21 @@ function ReubicarEquipoForm({ equipo, onEnviarPlaya, onCambiarEstado, onVolver }
         <Field label="Ubicación"><TextInput value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} /></Field>
       )}
       <Field label="Nota (opcional)"><TextInput value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Por qué se reubica" /></Field>
+      {confirmandoHistorial && (
+        <div className="mb-3 p-2 rounded" style={{ backgroundColor: "#FEF3E2" }}>
+          <p className="text-xs mb-2" style={{ color: "#92400E" }}>
+            Este equipo ya tiene historial cargado — ¿lo conservamos al pasarlo a Stock vendible, o arranca en blanco?
+          </p>
+          <div className="flex gap-2">
+            <button onClick={() => confirmarConHistorial(false)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+              Conservar historial
+            </button>
+            <button onClick={() => confirmarConHistorial(true)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
+              Empezar en blanco
+            </button>
+          </div>
+        </div>
+      )}
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Confirmar reubicación</PrimaryButton>
     </div>
@@ -6058,7 +6163,7 @@ function ClienteForm({ onSave }) {
 // a mano, y cuando llega de verdad se pasa a Maestro de equipos como una entrada normal.
 // Un envío = un contenedor con varios modelos adentro, más los costos compartidos entre todos
 // ellos (fábrica, representante en China, flete, comisión, despacho, seguro).
-function TransitoView({ transito, query, onQuery, onNew, onDelete }) {
+function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete }) {
   const totalUnidades = transito.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
   const totalCosto = transito.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
   return (
@@ -6082,9 +6187,14 @@ function TransitoView({ transito, query, onQuery, onNew, onDelete }) {
                     <p className="text-sm font-medium" style={{ color: INK }}>{t.contenedor || "Sin contenedor / referencia"}</p>
                     <p className="text-xs" style={{ color: MUTED }}>Llegada estimada: {fmtDate(t.fechaEstimadaLlegada)}</p>
                   </div>
-                  <button onClick={() => onDelete(t.id)} className="p-1 rounded hover:bg-gray-100">
-                    <Trash2 size={13} style={{ color: MUTED }} />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => onEdit(t)} className="p-1 rounded hover:bg-gray-100">
+                      <Pencil size={13} style={{ color: MUTED }} />
+                    </button>
+                    <button onClick={() => onDelete(t.id)} className="p-1 rounded hover:bg-gray-100">
+                      <Trash2 size={13} style={{ color: MUTED }} />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString()} en costos totales</p>
                 <div className="mt-1.5 space-y-0.5">
@@ -6110,22 +6220,24 @@ function TransitoView({ transito, query, onQuery, onNew, onDelete }) {
   );
 }
 
-function TransitoForm({ onSave }) {
-  const [contenedor, setContenedor] = useState("");
-  const [fechaEstimadaLlegada, setFechaEstimadaLlegada] = useState("");
-  const [adelantoFabrica, setAdelantoFabrica] = useState("");
-  const [pagoFinalFabrica, setPagoFinalFabrica] = useState("");
-  const [representanteChina, setRepresentanteChina] = useState("");
-  const [flete, setFlete] = useState("");
-  const [comisionFlete, setComisionFlete] = useState("");
+function TransitoForm({ envio, productos, onSave }) {
+  const [contenedor, setContenedor] = useState(envio?.contenedor || "");
+  const [fechaEstimadaLlegada, setFechaEstimadaLlegada] = useState(envio?.fechaEstimadaLlegada || "");
+  const [adelantoFabrica, setAdelantoFabrica] = useState(envio ? String(envio.adelantoFabrica ?? "") : "");
+  const [pagoFinalFabrica, setPagoFinalFabrica] = useState(envio ? String(envio.pagoFinalFabrica ?? "") : "");
+  const [representanteChina, setRepresentanteChina] = useState(envio ? String(envio.representanteChina ?? "") : "");
+  const [flete, setFlete] = useState(envio ? String(envio.flete ?? "") : "");
+  const [comisionFlete, setComisionFlete] = useState(envio ? String(envio.comisionFlete ?? "") : "");
   const comisionAutoRef = useRef(null);
-  const [despacho, setDespacho] = useState("");
-  const [seguro, setSeguro] = useState("");
-  const [notas, setNotas] = useState("");
+  const [despacho, setDespacho] = useState(envio ? String(envio.despacho ?? "") : "");
+  const [seguro, setSeguro] = useState(envio ? String(envio.seguro ?? "") : "");
+  const [notas, setNotas] = useState(envio?.notas || "");
   const [modeloNuevo, setModeloNuevo] = useState("");
   const [cantidadNueva, setCantidadNueva] = useState(1);
-  const [lineas, setLineas] = useState([]);
+  const [lineas, setLineas] = useState(envio?.lineas || []);
   const [error, setError] = useState("");
+
+  const modelosCatalogo = useMemo(() => [...new Set((productos || []).map((p) => p.nombre))].sort(), [productos]);
 
   // La comisión se sugiere sola (4,71% del flete) pero se puede pisar a mano — solo se
   // recalcula mientras siga siendo la que se auto-completó, para no tapar un valor tipeado.
@@ -6179,9 +6291,14 @@ function TransitoForm({ onSave }) {
       <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Modelos en este envío</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <div className="flex gap-2">
-          <Field label="Modelo"><TextInput value={modeloNuevo} onChange={(e) => setModeloNuevo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+          <Field label="Modelo">
+            <TextInput value={modeloNuevo} list="modelos-catalogo-datalist" onChange={(e) => setModeloNuevo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" />
+          </Field>
           <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
         </div>
+        <datalist id="modelos-catalogo-datalist">
+          {modelosCatalogo.map((m) => <option key={m} value={m} />)}
+        </datalist>
         <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar modelo</SecondaryButton>
       </div>
       {lineas.length > 0 && (
@@ -6215,7 +6332,7 @@ function TransitoForm({ onSave }) {
 
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar envío</PrimaryButton>
+      <PrimaryButton onClick={submit}>{envio ? "Guardar cambios" : "Guardar envío"}</PrimaryButton>
     </div>
   );
 }

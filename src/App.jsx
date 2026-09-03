@@ -6165,6 +6165,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
     setError("");
   };
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+  const actualizarCantidad = (idx, v) => setLineas(lineas.map((l, i) => (i === idx ? { ...l, cantidad: Number(v) || 0 } : l)));
 
   // El corazón del ejercicio: para cada línea, primero se tira del stock físico disponible,
   // lo que sobra se tira del tránsito sin asignar, y lo que todavía sobra es lo que habría
@@ -6252,9 +6253,15 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
             return (
               <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex items-center gap-1.5">
                     <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
-                    <span style={{ color: MUTED }}> · pedido {f.cantidad}</span>
+                    <span style={{ color: MUTED }}>· pedido</span>
+                    <input
+                      type="number" min="1" value={f.cantidad}
+                      onChange={(e) => actualizarCantidad(i, e.target.value)}
+                      className="w-16 text-xs px-1.5 py-1 rounded border"
+                      style={{ borderColor: BORDER }}
+                    />
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className="px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.label}</span>

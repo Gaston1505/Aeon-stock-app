@@ -848,6 +848,20 @@ function nextCodigoParaModelo(equipos, modelo) {
   return `${base}-${String(max + 1).padStart(2, "0")}`;
 }
 
+// Próximo número de repuesto para un modelo (ej. "AE-AC-2T-30-ON-Rep-7") — mismo criterio de
+// numeración que ya usa el catálogo para repuestos cargados a mano.
+function nextRepNumero(productos, modeloAsociado) {
+  const prefix = `${(modeloAsociado || "").trim()}-Rep-`;
+  let max = 0;
+  (productos || []).forEach((p) => {
+    if ((p.nombre || "").startsWith(prefix)) {
+      const n = parseInt((p.nombre || "").slice(prefix.length), 10);
+      if (!isNaN(n)) max = Math.max(max, n);
+    }
+  });
+  return max + 1;
+}
+
 // ---------- Main App ----------
 export default function App() {
   const [tab, setTab] = useState("resumen");
@@ -885,6 +899,7 @@ export default function App() {
   const [envioEditando, setEnvioEditando] = useState(null);
   const [comprometerTarget, setComprometerTarget] = useState(null);
   const [llegadaTarget, setLlegadaTarget] = useState(null);
+  const [repuestoTarget, setRepuestoTarget] = useState(null);
   const [cotizacionPrefill, setCotizacionPrefill] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -1284,6 +1299,16 @@ export default function App() {
     updateTransito(envio.id, { lineas: nuevasLineas });
   };
 
+  // Repuestos que viajan en el mismo envío que los productos — a nivel del envío, no de una
+  // línea puntual, porque puede pasar que los repuestos que viajan no coincidan con los
+  // productos que viajan (repuestos de un modelo que ni siquiera está en este contenedor).
+  const agregarRepuestoTransito = (envio, repuesto) => {
+    updateTransito(envio.id, { repuestos: [...(envio.repuestos || []), { id: randId(), ...repuesto }] });
+  };
+  const quitarRepuestoTransito = (envio, repuestoId) => {
+    updateTransito(envio.id, { repuestos: (envio.repuestos || []).filter((r) => r.id !== repuestoId) });
+  };
+
   // Llegada de un envío completo: libera todas sus líneas a Stock vendible de una (un equipo
   // por línea, mismo patrón que derivarPlaya) y, si se pide, convierte cada compromiso que
   // tenía cada línea en una Venta comprometida real sobre el equipo recién creado — el
@@ -1322,6 +1347,33 @@ export default function App() {
         tipo: "Importación inicial", origen: `Tránsito${envio.contenedor ? ` — ${envio.contenedor}` : ""}`,
         motivo: "Llegada de contenedor", estadoResultante: "Apto para venta", responsable: "",
       });
+    }
+    // Repuestos del envío: suman al Stock disponible del repuesto ya existente en el catálogo
+    // (match por código de fábrica) o dan de alta uno nuevo si es la primera vez que llega.
+    let productosSimulados = [...productos];
+    for (const rep of envio.repuestos || []) {
+      const existente = productosSimulados.find(
+        (p) => p.categoriaPrincipal === "Repuestos" && rep.codigoPieza && p.codigoFabrica === rep.codigoPieza
+      );
+      if (existente) {
+        const nuevoStock = (Number(existente.stockDisponible) || 0) + (Number(rep.cantidad) || 0);
+        updateItem(COLLECTIONS.productos, existente.id, {
+          stockDisponible: nuevoStock,
+          costoOrigen: Number(rep.costoOrigen) || Number(existente.costoOrigen) || 0,
+        });
+        existente.stockDisponible = nuevoStock;
+      } else {
+        const n = nextRepNumero(productosSimulados, rep.modeloAsociado);
+        const nombre = `${(rep.modeloAsociado || "").trim()}-Rep-${n}`;
+        const nuevoProducto = {
+          nombre, categoriaPrincipal: "Repuestos", subcategoria2: rep.modeloAsociado || "",
+          descripcion: rep.descripcion || "", codigoFabrica: rep.codigoPieza || "",
+          costoOrigen: Number(rep.costoOrigen) || 0, costoPy: 0, precioLista: 0,
+          stockDisponible: Number(rep.cantidad) || 0,
+        };
+        addItem(COLLECTIONS.productos, nuevoProducto);
+        productosSimulados = [...productosSimulados, nuevoProducto];
+      }
     }
     updateTransito(envio.id, { estado: "Llegado", fechaLlegada });
   };
@@ -1450,8 +1502,10 @@ export default function App() {
       "Decisión service 2": v.decisionService2 || "", "Cita service 2": v.citaService2 ? `${fmtDate(v.citaService2.fecha)} ${v.citaService2.hora || ""}` : "",
     })));
     const wsRepuestos = XLSX.utils.json_to_sheet(productos.filter((p) => p.categoriaPrincipal === "Repuestos").map((p) => ({
-      "Código": p.nombre, "Descripción": p.descripcion, "Tipo de equipo": p.subcategoria, "Código de equipo": p.subcategoria2,
-      "Precio de lista U$S": p.precioLista, "Costo puesto en PY U$S": p.costoPy, "Stock disponible": p.stockDisponible,
+      "Código": p.nombre, "Código de pieza (fábrica)": p.codigoFabrica, "Descripción": p.descripcion,
+      "Tipo de equipo": p.subcategoria, "Código de equipo": p.subcategoria2,
+      "Costo origen U$S": p.costoOrigen, "Costo puesto en PY U$S": p.costoPy,
+      "Precio de lista U$S": p.precioLista, "Stock disponible": p.stockDisponible,
     })));
     const wsPlaya = XLSX.utils.json_to_sheet(playa.map((p) => ({
       "Fecha": p.fecha, "Descripción": p.descripcion, "Origen": p.origen, "Cantidad": p.cantidad || 1, "Notas": p.notas,
@@ -2120,6 +2174,8 @@ export default function App() {
             onComprometer={(t, lineaIdx) => { setComprometerTarget({ envio: t, lineaIdx }); setDrawer("comprometer-transito"); }}
             onQuitarCompromiso={(t, lineaIdx, compromisoId) => quitarCompromisoTransito(t, lineaIdx, compromisoId)}
             onDarLlegada={(t) => { setLlegadaTarget(t); setDrawer("llegada-transito"); }}
+            onAgregarRepuesto={(t) => { setRepuestoTarget(t); setDrawer("repuesto-transito"); }}
+            onQuitarRepuesto={(t, repuestoId) => quitarRepuestoTransito(t, repuestoId)}
           />
         )}
 
@@ -2256,6 +2312,21 @@ export default function App() {
               darLlegadaTransito(llegadaTarget, datos);
               setDrawer(null);
               setLlegadaTarget(null);
+            }}
+          />
+        )}
+      </Drawer>
+      <Drawer
+        open={drawer === "repuesto-transito"} onClose={() => { setDrawer(null); setRepuestoTarget(null); }}
+        title="Agregar repuesto al envío"
+      >
+        {repuestoTarget && (
+          <AgregarRepuestoTransitoForm
+            productos={productos}
+            onGuardar={(repuesto) => {
+              agregarRepuestoTransito(repuestoTarget, repuesto);
+              setDrawer(null);
+              setRepuestoTarget(null);
             }}
           />
         )}
@@ -5453,6 +5524,7 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [precioLista, setPrecioLista] = useState(producto ? String(producto.precioLista ?? "") : "");
   const [costoOrigen, setCostoOrigen] = useState(producto ? String(producto.costoOrigen ?? "") : "");
   const [costoPy, setCostoPy] = useState(producto ? String(producto.costoPy ?? "") : "");
+  const [codigoFabrica, setCodigoFabrica] = useState(producto?.codigoFabrica || "");
   const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
@@ -5510,6 +5582,7 @@ function ProductoForm({ producto, defaults, onSave }) {
         ordenNumerico: ordenNumerico === "" ? null : Number(ordenNumerico) || 0,
         precioLista: Number(precioLista) || 0,
         costoOrigen: Number(costoOrigen) || 0, costoPy: Number(costoPy) || 0,
+        codigoFabrica: codigoFabrica.trim(),
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
@@ -5554,6 +5627,11 @@ function ProductoForm({ producto, defaults, onSave }) {
       </Field>
 
       <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos de costo (no aparecen en la cotización)</p>
+      {esRepuesto && (
+        <Field label="Código de pieza (fábrica)">
+          <TextInput value={codigoFabrica} onChange={(e) => setCodigoFabrica(e.target.value)} placeholder="Opcional — para matchear llegadas de Tránsito" />
+        </Field>
+      )}
       <div className="flex gap-2">
         <Field label="Costo de origen U$S"><TextInput type="number" value={costoOrigen} onChange={(e) => setCostoOrigen(e.target.value)} /></Field>
         <Field label="Costo puesto en PY U$S"><TextInput type="number" value={costoPy} onChange={(e) => setCostoPy(e.target.value)} /></Field>
@@ -7142,6 +7220,12 @@ function DarLlegadaTransitoForm({ envio, onConfirmar }) {
         </label>
       )}
 
+      {(envio.repuestos || []).length > 0 && (
+        <p className="text-xs mb-3" style={{ color: MUTED }}>
+          También se van a sumar {envio.repuestos.length} repuesto(s) al Stock disponible del catálogo.
+        </p>
+      )}
+
       <PrimaryButton onClick={() => onConfirmar({ fechaLlegada, convertirComprometidos })}>
         Confirmar llegada y liberar a Stock vendible
       </PrimaryButton>
@@ -7149,7 +7233,58 @@ function DarLlegadaTransitoForm({ envio, onConfirmar }) {
   );
 }
 
-function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada }) {
+function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
+  const [modeloAsociado, setModeloAsociado] = useState("");
+  const [codigoPieza, setCodigoPieza] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+  const [costoOrigen, setCostoOrigen] = useState("");
+  const [error, setError] = useState("");
+
+  const modelosCatalogo = useMemo(
+    () => [...new Set((productos || []).map((p) => p.nombre))].sort(),
+    [productos]
+  );
+
+  const submit = () => {
+    if (!modeloAsociado.trim()) {
+      setError("Ingresá el modelo del producto al que corresponde este repuesto.");
+      return;
+    }
+    if (!descripcion.trim()) {
+      setError("Ingresá una descripción.");
+      return;
+    }
+    onGuardar({
+      modeloAsociado: modeloAsociado.trim(), codigoPieza: codigoPieza.trim(), descripcion: descripcion.trim(),
+      cantidad: Number(cantidad) || 1, costoOrigen: Number(costoOrigen) || 0,
+    });
+  };
+
+  return (
+    <div>
+      <p className="text-xs mb-3" style={{ color: MUTED }}>
+        Puede ser un repuesto de un modelo que no viaja en este mismo envío — solo sirve como referencia.
+      </p>
+      <Field label="Modelo del producto (referencia)">
+        <TextInput value={modeloAsociado} list="modelos-repuesto-datalist" onChange={(e) => setModeloAsociado(e.target.value)} placeholder="Ej: AE-AC-2T-30-ON" />
+      </Field>
+      <datalist id="modelos-repuesto-datalist">
+        {modelosCatalogo.map((m) => <option key={m} value={m} />)}
+      </datalist>
+      <Field label="Código de pieza (fábrica)"><TextInput value={codigoPieza} onChange={(e) => setCodigoPieza(e.target.value)} placeholder="Opcional" /></Field>
+      <Field label="Descripción"><TextInput value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ej: placa inferior" /></Field>
+      <div className="flex gap-2">
+        <Field label="Cantidad"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+        <Field label="Costo origen U$S"><TextInput type="number" value={costoOrigen} onChange={(e) => setCostoOrigen(e.target.value)} placeholder="Opcional" /></Field>
+      </div>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Agregar repuesto</PrimaryButton>
+    </div>
+  );
+}
+
+function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada, onAgregarRepuesto, onQuitarRepuesto }) {
   const enCamino = transito.filter((t) => t.estado !== "Llegado");
   const totalUnidades = enCamino.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
   const totalCosto = enCamino.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
@@ -7238,6 +7373,43 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                     );
                   })}
                 </div>
+                {((t.repuestos || []).length > 0 || !llegado) && (
+                  <details className="mt-2">
+                    <summary className="text-xs cursor-pointer" style={{ color: ACCENT }}>
+                      Repuestos en este envío ({(t.repuestos || []).length})
+                    </summary>
+                    <div className="mt-1.5">
+                      {!llegado && (
+                        <button
+                          onClick={() => onAgregarRepuesto(t)}
+                          className="text-xs px-1.5 py-0.5 rounded mb-2"
+                          style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}
+                        >
+                          + Agregar repuesto
+                        </button>
+                      )}
+                      {(t.repuestos || []).length === 0 ? (
+                        <p className="text-xs" style={{ color: MUTED }}>Todavía no se cargó ningún repuesto.</p>
+                      ) : (
+                        <div className="space-y-0.5 max-h-64 overflow-y-auto">
+                          {t.repuestos.map((r) => (
+                            <div key={r.id} className="flex items-center justify-between gap-1.5 text-xs">
+                              <span style={{ color: MUTED }}>
+                                · {r.modeloAsociado}{r.codigoPieza ? ` · pieza ${r.codigoPieza}` : ""} — {r.descripcion} · cant. {r.cantidad}
+                                {Number(r.costoOrigen) > 0 && ` · U$S ${Number(r.costoOrigen).toLocaleString()} c/u`}
+                              </span>
+                              {!llegado && (
+                                <button onClick={() => onQuitarRepuesto(t, r.id)} title="Quitar repuesto">
+                                  <X size={11} style={{ color: MUTED }} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                )}
                 <details className="mt-2">
                   <summary className="text-xs cursor-pointer" style={{ color: ACCENT }}>Ver desglose de costos</summary>
                   <div className="mt-1.5 space-y-0.5">

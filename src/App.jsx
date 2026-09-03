@@ -999,6 +999,21 @@ export default function App() {
     addItem(COLLECTIONS.ventasComprometidas, { estado: "Comprometida", ...data });
   };
 
+  // Genera una o más ventas comprometidas a partir de una cotización Ganada — una por cada
+  // lote de equipo usado, con el precio YA NEGOCIADO de esa línea (no el de lista).
+  const generarComprometidaDesdeCotizacion = (cotizacion, lineas, datos) => {
+    for (const linea of lineas) {
+      for (const batch of linea.batches) {
+        addComprometida({
+          fecha: datos.fecha, razonSocial: cotizacion.cliente, obra: cotizacion.obra,
+          equipoId: batch.equipoId, modelo: linea.codigo, codigo: batch.codigo,
+          cantidad: batch.cantidad, monto: (Number(linea.precioUnit) || 0) * batch.cantidad,
+          fechaEntrega: datos.fechaEntrega || "", cotizacionId: cotizacion.id,
+        });
+      }
+    }
+  };
+
   const cancelarComprometida = (id) => {
     const c = comprometidas.find((x) => x.id === id);
     if (!c) return;
@@ -1804,6 +1819,7 @@ export default function App() {
           <ComprometidasView
             comprometidas={filteredComprometidas} query={query} onQuery={setQuery}
             onNew={() => setDrawer("comprometida")}
+            onNewDesdeCotizacion={() => setDrawer("comprometida-cotizacion")}
             onCancelar={cancelarComprometida}
             onRetirar={(id) => setRetiroTarget(id)}
             onCerrar={cerrarComprometida}
@@ -2070,6 +2086,14 @@ export default function App() {
           cotizaciones={cotizaciones}
           equipos={equipos}
           onGenerar={(cotizacion, lineas, remitoData) => { generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData); setDrawer(null); }}
+        />
+      </Drawer>
+      <Drawer open={drawer === "comprometida-cotizacion"} onClose={() => setDrawer(null)} title="Generar venta comprometida desde cotización">
+        <ComprometidaDesdeCotizacionForm
+          cotizaciones={cotizaciones}
+          equipos={equipos}
+          comprometidas={comprometidas}
+          onGenerar={(cotizacion, lineas, datos) => { generarComprometidaDesdeCotizacion(cotizacion, lineas, datos); setDrawer(null); }}
         />
       </Drawer>
       <Drawer open={!!gestion} onClose={() => setGestion(null)} title={gestion ? `Seguimiento — ${gestion.field === "Service1" ? "Service 1 (12m)" : "Service 2 (24m)"}` : ""}>
@@ -3108,7 +3132,7 @@ const COMPROMETIDA_BADGE = {
   Retirada: { color: "#15803D", bg: "#E9F7EF" },
 };
 
-function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, onRetirar, onCerrar, onPago }) {
+function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onPago }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
   const totalMonto = pendientes.reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
 
@@ -3121,8 +3145,9 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
             Mercadería vendida pero todavía en depósito — reserva el stock para que no se use en otra salida. Se puede retirar en varias tandas.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
+          <SecondaryButton onClick={onNewDesdeCotizacion}><PackageCheck size={14} /> Generar desde cotización</SecondaryButton>
           <PrimaryButton onClick={onNew}><Plus size={15} /> Nueva venta comprometida</PrimaryButton>
         </div>
       </div>
@@ -3149,6 +3174,11 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onCancelar, o
                   <div>
                     <p className="text-sm font-medium" style={{ color: INK }}>{c.razonSocial}</p>
                     <p className="text-xs" style={{ color: MUTED }}>{c.obra}</p>
+                    {c.cotizacionId && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-block mt-1" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+                        Desde cotización
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs px-2 py-0.5 rounded" style={{ color: badge.color, backgroundColor: badge.bg }}>
                     {c.estado}
@@ -4307,6 +4337,166 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Generar salida</PrimaryButton>
+    </div>
+  );
+}
+
+// Cuánto de una línea de cotización ya está reservado en Ventas comprometidas (para no
+// comprometer dos veces el mismo saldo si esto se corre más de una vez sobre la misma cotización).
+function yaComprometidoParaLinea(cotizacionId, codigoLinea, comprometidas) {
+  return comprometidas
+    .filter((c) => c.cotizacionId === cotizacionId && c.modelo === codigoLinea)
+    .reduce((acc, c) => acc + (Number(c.cantidad) || 0), 0);
+}
+
+// Genera ventas comprometidas a partir de una cotización Ganada, usando el precio YA
+// NEGOCIADO de esa cotización (precioUnit de cada línea) en vez del precio de lista del
+// catálogo — que sigue siendo la referencia para todo lo de stock, pero no para esto.
+function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGenerar }) {
+  const [cotizacionId, setCotizacionId] = useState("");
+  const [seleccion, setSeleccion] = useState({});
+  const [cantidades, setCantidades] = useState({});
+  const [fecha, setFecha] = useState(todayISO());
+  const [fechaEntrega, setFechaEntrega] = useState("");
+  const [error, setError] = useState("");
+
+  const pendienteDeLinea = (cot, l) => {
+    const retiradas = cot.lineasRetiradas || {};
+    const yaComprometido = yaComprometidoParaLinea(cot.id, l.codigo, comprometidas);
+    return Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0) - yaComprometido);
+  };
+
+  const cotizacionesGanadas = useMemo(() => {
+    return cotizaciones
+      .filter((c) => c.estado === "Ganada")
+      .filter((c) => (c.lineas || []).some((l) => pendienteDeLinea(c, l) > 0))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [cotizaciones, comprometidas]);
+
+  const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
+
+  const filas = useMemo(() => {
+    if (!cotizacion) return [];
+    return (cotizacion.lineas || []).map((l) => {
+      const pendiente = pendienteDeLinea(cotizacion, l);
+      const candidatos = candidatosParaLinea(equipos, l.codigo);
+      const stockDisponible = candidatos.reduce((acc, e) => acc + e.disponible, 0);
+      return { ...l, pendiente, candidatos, stockDisponible };
+    });
+  }, [cotizacion, equipos, comprometidas]);
+
+  const handleCotizacion = (id) => {
+    setCotizacionId(id);
+    const c = cotizaciones.find((x) => x.id === id);
+    if (!c) { setSeleccion({}); setCantidades({}); return; }
+    const nuevaSel = {};
+    const nuevaCant = {};
+    for (const l of c.lineas || []) {
+      const pendiente = pendienteDeLinea(c, l);
+      const stockDisponible = candidatosParaLinea(equipos, l.codigo).reduce((acc, e) => acc + e.disponible, 0);
+      const aComprometer = Math.min(pendiente, stockDisponible);
+      nuevaSel[l.codigo] = aComprometer > 0;
+      nuevaCant[l.codigo] = aComprometer;
+    }
+    setSeleccion(nuevaSel);
+    setCantidades(nuevaCant);
+    setError("");
+  };
+
+  const toggleLinea = (codigo) => setSeleccion((s) => ({ ...s, [codigo]: !s[codigo] }));
+  const setCantidadLinea = (codigo, v) => setCantidades((c) => ({ ...c, [codigo]: v }));
+
+  const submit = () => {
+    if (!cotizacion) {
+      setError("Elegí una cotización.");
+      return;
+    }
+    const lineasParaGenerar = [];
+    for (const f of filas) {
+      if (!seleccion[f.codigo]) continue;
+      const cantidad = Math.min(Number(cantidades[f.codigo]) || 0, f.pendiente, f.stockDisponible);
+      if (cantidad <= 0) continue;
+      let restante = cantidad;
+      const batches = [];
+      for (const cand of f.candidatos) {
+        if (restante <= 0) break;
+        const tomar = Math.min(cand.disponible, restante);
+        if (tomar <= 0) continue;
+        batches.push({ equipoId: cand.id, codigo: cand.codigo, cantidad: tomar });
+        restante -= tomar;
+      }
+      if (batches.length > 0) {
+        lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnit, batches });
+      }
+    }
+    if (lineasParaGenerar.length === 0) {
+      setError("No hay productos seleccionados con stock disponible para comprometer.");
+      return;
+    }
+    onGenerar(cotizacion, lineasParaGenerar, { fecha, fechaEntrega });
+  };
+
+  return (
+    <div>
+      <Field label="Cotización Ganada">
+        <Select value={cotizacionId} onChange={(e) => handleCotizacion(e.target.value)}>
+          <option value="">Seleccionar...</option>
+          {cotizacionesGanadas.map((c) => (
+            <option key={c.id} value={c.id}>{c.cliente || "(Sin cliente)"} — {c.obra || "(Sin obra)"} ({fmtDate(c.fecha)})</option>
+          ))}
+        </Select>
+        {cotizacionesGanadas.length === 0 && (
+          <p className="text-xs mt-1" style={{ color: "#B45309" }}>No hay cotizaciones Ganadas con saldo pendiente de comprometer.</p>
+        )}
+      </Field>
+
+      {cotizacion && (
+        <>
+          <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+          <Field label="Fecha de entrega estimada"><TextInput type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} placeholder="Opcional" /></Field>
+
+          <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Líneas de la cotización</p>
+          <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+            {filas.map((f) => {
+              const sinStock = f.stockDisponible === 0;
+              const stockInsuficiente = f.stockDisponible > 0 && f.stockDisponible < f.pendiente;
+              const yaCompleto = f.pendiente === 0;
+              return (
+                <div key={f.codigo} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox" checked={!!seleccion[f.codigo]} disabled={sinStock || yaCompleto}
+                      onChange={() => toggleLinea(f.codigo)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium" style={{ color: INK }}>{f.descripcion || f.codigo}</span>
+                      <span style={{ color: MUTED }}> · {f.codigo} · U$S {Number(f.precioUnit).toLocaleString()} c/u</span>
+                    </div>
+                    {seleccion[f.codigo] && !sinStock && !yaCompleto && (
+                      <input
+                        type="number" min="1" max={Math.min(f.pendiente, f.stockDisponible)}
+                        value={cantidades[f.codigo] || 0}
+                        onChange={(e) => setCantidadLinea(f.codigo, e.target.value)}
+                        className="w-16 text-xs px-1.5 py-1 rounded border"
+                        style={{ borderColor: BORDER }}
+                      />
+                    )}
+                  </div>
+                  <div className="mt-1 pl-6" style={{ color: MUTED }}>
+                    {yaCompleto && "Ya está todo comprometido o entregado."}
+                    {!yaCompleto && sinStock && "Sin stock vendible disponible para comprometer."}
+                    {!yaCompleto && !sinStock && stockInsuficiente && `Pendiente: ${f.pendiente} · solo hay ${f.stockDisponible} disponible(s).`}
+                    {!yaCompleto && !sinStock && !stockInsuficiente && `Pendiente: ${f.pendiente} · disponible: ${f.stockDisponible}.`}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit} disabled={!cotizacion}>Generar venta(s) comprometida(s)</PrimaryButton>
     </div>
   );
 }

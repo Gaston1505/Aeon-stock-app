@@ -16,6 +16,7 @@ import {
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
+  downloadListaPdf,
 } from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
@@ -1320,6 +1321,160 @@ export default function App() {
     XLSX.writeFile(wb, `Aeon_Stock_${todayISO()}.xlsx`);
   };
 
+  // Exportación contextual: cada pestaña exporta solo lo suyo (Excel o PDF), no toda la app —
+  // eso queda reservado al botón de Resumen/Panel. Muestras, Reporte para Seguro y Reporte para
+  // Joel ya tienen su propio botón de exportación arriba de la pantalla, así que no aparecen acá.
+  const exportConfig = {
+    equipos: {
+      label: "Maestro de equipos",
+      rows: () => equipos.map((e) => ({
+        "Código interno": e.codigo, "N° de serie": e.serie, "Modelo": e.modelo,
+        "Fecha ingreso": e.fechaIngreso, "Estado": e.estado, "Ubicación": e.ubicacion,
+        "Cantidad": e.cantidad || 1, "Comprometido": e.comprometido || 0, "Sin marca": e.sinMarca ? "Sí" : "No",
+      })),
+      columnasPdf: [
+        { key: "Código interno", label: "Código" }, { key: "Modelo", label: "Modelo", width: 150 },
+        { key: "Estado", label: "Estado" }, { key: "Ubicación", label: "Ubicación" }, { key: "Cantidad", label: "Cant.", width: 40 },
+      ],
+    },
+    recuperables: {
+      label: "Banco de recuperables",
+      rows: () => equipos.filter((e) => RECUPERABLE_ESTADOS.includes(e.estado)).map((e) => ({
+        "Código interno": e.codigo, "Modelo": e.modelo, "Estado": e.estado, "Ubicación": e.ubicacion, "Cantidad": e.cantidad || 1,
+      })),
+      columnasPdf: [
+        { key: "Código interno", label: "Código" }, { key: "Modelo", label: "Modelo", width: 180 },
+        { key: "Estado", label: "Estado" }, { key: "Cantidad", label: "Cant.", width: 40 },
+      ],
+    },
+    movimientos: {
+      label: "Salidas",
+      rows: () => movimientos.map((m) => ({
+        "Fecha": m.fecha, "Categoría de origen": m.categoriaLabel, "Código": m.codigo, "Modelo": m.modelo,
+        "Cantidad": m.cantidad, "Motivo": m.motivo, "Cliente": m.cliente, "Obra": m.obra, "Monto U$S": m.monto,
+        "N° remito": m.remito, "Responsable": m.responsable,
+      })),
+      columnasPdf: [
+        { key: "Fecha", label: "Fecha", width: 55 }, { key: "Código", label: "Código", width: 70 },
+        { key: "Modelo", label: "Modelo", width: 110 }, { key: "Cantidad", label: "Cant.", width: 35 },
+        { key: "Motivo", label: "Motivo" }, { key: "Cliente", label: "Cliente" },
+      ],
+    },
+    entradas: {
+      label: "Entradas",
+      rows: () => entradas.map((e) => ({
+        "Fecha": e.fecha, "Código": e.codigo, "Tipo de entrada": e.tipo, "Origen": e.origen,
+        "Motivo": e.motivo, "Estado resultante": e.estadoResultante, "Responsable": e.responsable,
+      })),
+      columnasPdf: [
+        { key: "Fecha", label: "Fecha", width: 55 }, { key: "Código", label: "Código", width: 80 },
+        { key: "Tipo de entrada", label: "Tipo" }, { key: "Origen", label: "Origen" }, { key: "Estado resultante", label: "Estado resultante" },
+      ],
+    },
+    ventas: {
+      label: "Ventas y garantías",
+      rows: () => ventas.map((v) => ({
+        "Código": v.codigo, "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
+        "Vto. service 1": v.vtoService1, "Vto. service 2": v.vtoService2,
+        "Estado service 1": v.estadoService1, "Estado service 2": v.estadoService2,
+      })),
+      columnasPdf: [
+        { key: "Código", label: "Código", width: 80 }, { key: "Cliente", label: "Cliente" }, { key: "Obra", label: "Obra" },
+        { key: "Fecha venta", label: "Fecha venta", width: 60 }, { key: "Estado service 1", label: "Service 1" }, { key: "Estado service 2", label: "Service 2" },
+      ],
+    },
+    comprometidas: {
+      label: "Ventas comprometidas",
+      rows: () => comprometidas.map((c) => ({
+        "Fecha": c.fecha, "Razón social": c.razonSocial, "Obra": c.obra, "Modelo": c.modelo,
+        "Cantidad": c.cantidad, "Retirado": c.cantidadRetirada || 0, "Monto U$S": c.monto,
+        "Pagado U$S": (c.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0), "Estado": c.estado,
+      })),
+      columnasPdf: [
+        { key: "Razón social", label: "Cliente" }, { key: "Obra", label: "Obra" }, { key: "Modelo", label: "Modelo", width: 110 },
+        { key: "Cantidad", label: "Cant.", width: 35 }, { key: "Retirado", label: "Retirado", width: 45 },
+        { key: "Monto U$S", label: "Monto U$S", width: 60 }, { key: "Estado", label: "Estado", width: 65 },
+      ],
+    },
+    playa: {
+      label: "Zona de playa",
+      rows: () => playa.map((p) => ({
+        "Fecha": p.fecha, "Descripción": p.descripcion, "Origen": p.origen, "Cantidad": p.cantidad || 1, "Notas": p.notas,
+      })),
+      columnasPdf: [
+        { key: "Fecha", label: "Fecha", width: 55 }, { key: "Descripción", label: "Descripción" },
+        { key: "Origen", label: "Origen" }, { key: "Cantidad", label: "Cant.", width: 40 },
+      ],
+    },
+    catalogo: {
+      label: "Catálogo de productos",
+      rows: () => productos.map((p) => ({
+        "Nombre": p.nombre, "Categoría principal": p.categoriaPrincipal, "Subcategoría": p.subcategoria,
+        "Precio de lista U$S": p.precioLista, "Stock disponible": p.stockDisponible, "Stock mínimo": p.stockMinimo,
+      })),
+      columnasPdf: [
+        { key: "Nombre", label: "Nombre", width: 170 }, { key: "Categoría principal", label: "Categoría" },
+        { key: "Precio de lista U$S", label: "Precio U$S", width: 60 }, { key: "Stock disponible", label: "Stock", width: 50 },
+      ],
+    },
+    clientes: {
+      label: "Clientes",
+      rows: () => clientes.map((c) => ({ "Nombre": c.nombre, "Teléfono": c.telefono, "Notas": c.notas })),
+      columnasPdf: [
+        { key: "Nombre", label: "Nombre" }, { key: "Teléfono", label: "Teléfono / WhatsApp" }, { key: "Notas", label: "Notas" },
+      ],
+    },
+    cotizaciones: {
+      label: "Cotizaciones",
+      rows: () => cotizaciones.map((c) => ({
+        "Fecha": c.fecha, "Cliente": c.cliente, "Obra": c.obra, "Categoría": c.categoria,
+        "Monto U$S": calcularTotalCotizacion(c), "Estado": ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
+      })),
+      columnasPdf: [
+        { key: "Fecha", label: "Fecha", width: 55 }, { key: "Cliente", label: "Cliente" }, { key: "Obra", label: "Obra" },
+        { key: "Monto U$S", label: "Monto U$S", width: 65 }, { key: "Estado", label: "Estado", width: 65 },
+      ],
+    },
+    "presupuestos-reparacion": {
+      label: "Presupuestos de reparación",
+      rows: () => presupuestosReparacion.map((p) => ({
+        "Fecha": p.fecha, "Tipo": p.tipo === "mantenimiento" ? "Mantenimiento" : "Reparación",
+        "Cliente": p.cliente, "Obra": p.obra, "Equipo afectado": p.equipoAfectado,
+        "Repuestos U$S": (p.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.costoUnitario) || 0), 0),
+        "Mantenimiento Gs.": (p.lineasMantenimiento || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0), 0),
+      })),
+      columnasPdf: [
+        { key: "Fecha", label: "Fecha", width: 55 }, { key: "Tipo", label: "Tipo", width: 70 },
+        { key: "Cliente", label: "Cliente" }, { key: "Obra", label: "Obra" }, { key: "Equipo afectado", label: "Equipo afectado" },
+      ],
+    },
+    transito: {
+      label: "Tránsito",
+      rows: () => transito.map((t) => ({
+        "Contenedor": t.contenedor, "Llegada estimada": t.fechaEstimadaLlegada,
+        "Unidades": sumCantidad(t.lineas || []), "Costo total U$S": costoTotalEnvio(t), "Notas": t.notas,
+      })),
+      columnasPdf: [
+        { key: "Contenedor", label: "Contenedor" }, { key: "Llegada estimada", label: "Llegada estimada", width: 70 },
+        { key: "Unidades", label: "Unidades", width: 50 }, { key: "Costo total U$S", label: "Costo total U$S", width: 80 },
+      ],
+    },
+  };
+
+  const handleExportContextual = async (formato) => {
+    const cfg = exportConfig[tab];
+    if (!cfg) { exportExcel(); return; }
+    const rows = cfg.rows();
+    const prefijo = cfg.label.replace(/\s+/g, "_").replace(/[^\w-]/g, "");
+    if (formato === "excel") {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), cfg.label.slice(0, 31));
+      XLSX.writeFile(wb, `${prefijo}_${todayISO()}.xlsx`);
+    } else {
+      await downloadListaPdf(cfg.label.toUpperCase(), cfg.columnasPdf, rows, todayISO(), prefijo);
+    }
+  };
+
   const filteredEquipos = useMemo(() => {
     const q = query.toLowerCase();
     return equipos.filter((e) => !q || [e.codigo, e.serie, e.modelo, e.estado].some((v) => (v || "").toLowerCase().includes(q)));
@@ -1551,7 +1706,19 @@ export default function App() {
             })}
           </nav>
           <div className="px-4 py-3 border-t" style={{ borderColor: BORDER }}>
-            <SecondaryButton onClick={exportExcel}><Download size={14} /> Exportar Excel</SecondaryButton>
+            {["muestras", "reporte-seguro", "reporte-joel"].includes(tab) ? null : exportConfig[tab] ? (
+              <>
+                <p className="text-[10px] font-medium uppercase tracking-wide mb-1.5" style={{ color: MUTED }}>
+                  Exportar {exportConfig[tab].label}
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  <SecondaryButton onClick={() => handleExportContextual("excel")}><Download size={14} /> Excel</SecondaryButton>
+                  <SecondaryButton onClick={() => handleExportContextual("pdf")}><Download size={14} /> PDF</SecondaryButton>
+                </div>
+              </>
+            ) : (
+              <SecondaryButton onClick={exportExcel}><Download size={14} /> Exportar Excel (todo)</SecondaryButton>
+            )}
           </div>
         </div>
 

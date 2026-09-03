@@ -1368,3 +1368,104 @@ export async function downloadReporteJoelPdf(filasFisico, filasModelosTransito, 
   const bytes = await generateReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha);
   downloadBlob(bytes, nombreArchivoReporteJoel(fecha), "application/pdf");
 }
+
+// ---------- Lista genérica (exportación contextual por pestaña) ----------
+// `columnas`: [{ key, label, width? }] — sin width, se reparte el ancho disponible por partes iguales.
+// `filas`: array de objetos planos, cada uno con esas keys.
+export async function generateListaPdf(titulo, columnas, filas, fecha) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const anchoFijo = columnas.reduce((acc, c) => acc + (c.width || 0), 0);
+  const sinAncho = columnas.filter((c) => !c.width).length;
+  const anchoAuto = sinAncho > 0 ? (CONTENT_W - anchoFijo) / sinAncho : 0;
+  const cols = columnas.map((c) => ({ ...c, width: c.width || anchoAuto }));
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+
+  text("Fecha:", PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
+  text(fmtFecha(fecha), PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+
+  y -= 14;
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const titleW = bold.widthOfTextAtSize(titulo, 9.5);
+  text(titulo, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
+  y -= 18;
+  y -= 6;
+
+  function drawHeader() {
+    rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    cols.forEach((c) => {
+      const lw = bold.widthOfTextAtSize(c.label, 6.5);
+      text(c.label, cx + c.width / 2 - lw / 2, y - 12, { bold: true, size: 6.5, color: ACCENT });
+      cx += c.width;
+    });
+    y -= 18;
+  }
+  drawHeader();
+
+  for (const fila of filas) {
+    const rowH = 16;
+    ensureSpace(rowH + 18);
+    if (y === PAGE_H - MARGIN) drawHeader();
+    let cx = MARGIN;
+    cols.forEach((c) => {
+      rect(cx, y - rowH, c.width, rowH, { border: BORDER });
+      const val = fila[c.key];
+      text(val === undefined || val === null || val === "" ? "—" : String(val), cx + 3, y - rowH / 2 - 3, { size: 6 });
+      cx += c.width;
+    });
+    y -= rowH;
+  }
+
+  ensureSpace(20);
+  text(`Total: ${filas.length} registro(s)`, MARGIN, y - 4, { size: 7.5, color: MUTED });
+
+  return pdf.save();
+}
+
+export function nombreArchivoLista(prefijo, fecha) {
+  return `${prefijo}_${fecha || ""}.pdf`;
+}
+
+export async function downloadListaPdf(titulo, columnas, filas, fecha, prefijoArchivo) {
+  const bytes = await generateListaPdf(titulo, columnas, filas, fecha);
+  downloadBlob(bytes, nombreArchivoLista(prefijoArchivo, fecha), "application/pdf");
+}

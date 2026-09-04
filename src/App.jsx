@@ -2386,7 +2386,7 @@ export default function App() {
 
         {tab === "reporte-joel" && (
           <ReporteJoelView
-            mercaderia={mercaderiaFisicaParaguay} transito={transito}
+            mercaderia={mercaderiaFisicaParaguay} transito={transito} productos={productos}
             comprometidas={comprometidas} cotizaciones={cotizaciones}
           />
         )}
@@ -2713,6 +2713,32 @@ function resumenCostosTransito(transitoEnvios) {
   }));
   const total = filas.reduce((acc, f) => acc + f.monto, 0);
   return { filas, total };
+}
+
+// Valuación de lo que viene en tránsito (envíos que todavía no llegaron), sumando productos
+// (líneas) y repuestos juntos — para el "balance" de Reporte Joel: cuánto costó en origen,
+// cuánto termina costando puesto en PY (origen + costos compartidos del envío) y cuánto vale
+// si se vendiera a precio de lista. El costo de origen de un repuesto es el de esa compra
+// puntual (ya cargado en el propio repuesto de tránsito); el de un producto sale del catálogo.
+function valuacionTransito(transitoEnvios, productos, costosCompartidosTotal) {
+  let costoOrigen = 0;
+  let ventaPrecioLista = 0;
+  for (const t of transitoEnvios) {
+    if (t.estado === "Llegado") continue;
+    for (const l of t.lineas || []) {
+      const cant = Number(l.cantidad) || 0;
+      const p = productos.find((pp) => pp.nombre === l.modelo);
+      costoOrigen += cant * (Number(p?.costoOrigen) || 0);
+      ventaPrecioLista += cant * (Number(p?.precioLista) || 0);
+    }
+    for (const r of t.repuestos || []) {
+      const cant = Number(r.cantidad) || 0;
+      costoOrigen += cant * (Number(r.costoOrigen) || 0);
+      const p = r.codigoPieza ? productos.find((pp) => pp.categoriaPrincipal === "Repuestos" && pp.codigoFabrica === r.codigoPieza) : null;
+      ventaPrecioLista += cant * (Number(p?.precioLista) || 0);
+    }
+  }
+  return { costoOrigen, costoPuestoPy: costoOrigen + costosCompartidosTotal, ventaPrecioLista };
 }
 
 // Clasifica una venta comprometida cruzando cuánto se entregó (retirado) contra cuánto se
@@ -7943,7 +7969,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
 // Reporte para Joel — físico en Paraguay + en tránsito (modelos y costos, por separado), más
 // el resumen de cotizaciones y plata por cobrar. Reutiliza la misma cuenta de mercadería física
 // que el reporte de seguro, así los dos reportes nunca dan números distintos para lo mismo.
-function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) {
+function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotizaciones }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [compartiendo, setCompartiendo] = useState(false);
   const [error, setError] = useState("");
@@ -7962,13 +7988,36 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     return [...mapa.entries()].map(([categoria, valorTotal]) => ({ categoria, valorTotal }));
   }, [filasFisico]);
   const costosTransito = useMemo(() => resumenCostosTransito(transitoEnCamino), [transitoEnCamino]);
+  // Balance de lo que viene en camino: cuánto costó en origen, cuánto termina costando puesto
+  // en PY (origen + costos compartidos de arriba), y cuánto vale si se vende a precio de lista
+  // — sumando productos y repuestos de tránsito juntos.
+  const valuacionTransitoData = useMemo(
+    () => valuacionTransito(transitoEnCamino, productos, costosTransito.total),
+    [transitoEnCamino, productos, costosTransito]
+  );
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
+  // Por obra: además del monto y estado, un desglose de a qué categorías generales de producto
+  // (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones) corresponde la plata cotizada
+  // — cruzando cada línea contra el catálogo, mismas categorías que ya usa Catálogo de productos.
   const detalleCotizaciones = useMemo(
-    () => gruposCotizacion.flatMap((g) => g.obras.map((o) => ({
-      cliente: g.cliente, obra: o.obra, monto: calcularTotalCotizacion(o.activa), estado: ESTADOS_COTIZACION.includes(o.activa.estado) ? o.activa.estado : "Pendiente",
-    }))),
-    [gruposCotizacion]
+    () => gruposCotizacion.flatMap((g) => g.obras.map((o) => {
+      const c = o.activa;
+      const categoriasMap = new Map();
+      for (const l of c.lineas || []) {
+        const p = productos.find((pp) => pp.nombre === l.codigo);
+        const tab = p && CATALOGO_TABS.find((t) => t.filtro(p));
+        const key = tab ? tab.label : "Otros";
+        const monto = (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0);
+        categoriasMap.set(key, (categoriasMap.get(key) || 0) + monto);
+      }
+      return {
+        cliente: g.cliente, obra: o.obra, monto: calcularTotalCotizacion(c),
+        estado: ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
+        categorias: [...categoriasMap.entries()].map(([label, monto]) => ({ label, monto })),
+      };
+    })),
+    [gruposCotizacion, productos]
   );
 
   const totalFisico = filasFisicoPorCategoria.reduce((acc, f) => acc + f.valorTotal, 0);
@@ -7988,10 +8037,17 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasFisicoPorCategoria.map((f) => ({
       "Categoría": f.categoria, "Valor total U$S": f.valorTotal,
     }))), "Físico Paraguay");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
-      ...costosTransito.filas.map((f) => ({ "Concepto": f.concepto, "Monto U$S": f.monto })),
-      { "Concepto": "TOTAL", "Monto U$S": costosTransito.total },
-    ]), "Tránsito - Costos");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Costos del envío (desglosados)"],
+      ["Concepto", "Monto U$S"],
+      ...costosTransito.filas.map((f) => [f.concepto, f.monto]),
+      ["TOTAL costos del envío", costosTransito.total],
+      [],
+      ["Valuación de lo que viene en camino (productos + repuestos)"],
+      ["Costo en origen (U$S)", valuacionTransitoData.costoOrigen],
+      ["Costo puesto en PY — origen + costos del envío (U$S)", valuacionTransitoData.costoPuestoPy],
+      ["Venta a precio de lista (U$S)", valuacionTransitoData.ventaPrecioLista],
+    ]), "Tránsito");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
       ["Resumen de cotizaciones"],
       ["Total cotizado (U$S)", resumenCot.total],
@@ -7999,8 +8055,11 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
       ["Ganada — cantidad / monto U$S", resumenCot.Ganada.n, resumenCot.Ganada.total],
       ["Perdida — cantidad / monto U$S", resumenCot.Perdida.n, resumenCot.Perdida.total],
       [],
-      ["Cliente", "Obra", "Monto U$S", "Estado"],
-      ...detalleCotizaciones.map((d) => [d.cliente, d.obra, d.monto, d.estado]),
+      ["Cliente", "Obra", "Monto U$S", "Estado", "Categorías (monto U$S)"],
+      ...detalleCotizaciones.map((d) => [
+        d.cliente, d.obra, d.monto, d.estado,
+        d.categorias.map((c) => `${c.label}: ${c.monto.toLocaleString()}`).join(" · "),
+      ]),
     ]), "Cotizaciones");
     const clasificadas = comprometidas.map(clasificarComprometida);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clasificadas
@@ -8016,7 +8075,7 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
     } catch (e) {
       console.error("Error generando reporte para Joel", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
@@ -8028,9 +8087,9 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     setCompartiendo(true);
     setError("");
     try {
-      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
       const ok = await compartirArchivo(bytes, nombreArchivoReporteJoel(todayISO()), "Reporte para Joel");
-      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
     } catch (e) {
       console.error("Error compartiendo reporte para Joel", e);
       setError("No se pudo compartir el PDF. Probá de nuevo.");
@@ -8046,8 +8105,8 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
             <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Joel</h2>
             <InfoTip>
               <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa), agrupado solo por categoría — sin modelos ni cantidades.</p>
-              <p><strong>Tránsito:</strong> el desglose de todos los costos de los envíos en camino (fábrica, representante, flete, comisión, despacho, seguro), sin el detalle de modelos que traen.</p>
-              <p><strong>Cotizaciones:</strong> el mismo resumen Total/Pendiente/Ganada/Perdida de la pestaña Cotizaciones.</p>
+              <p><strong>Tránsito:</strong> el desglose de todos los costos de los envíos en camino (fábrica, representante, flete, comisión, despacho, seguro), más el costo en origen, el costo puesto en PY y el valor a precio de lista de todo lo que viene (productos y repuestos juntos) — sin el detalle de modelos.</p>
+              <p><strong>Cotizaciones:</strong> el mismo resumen Total/Pendiente/Ganada/Perdida de la pestaña Cotizaciones, con cada obra desglosada por categoría general de producto (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones).</p>
               <p><strong>Plata por cobrar:</strong> cruza entregas contra pagos de Ventas comprometidas.</p>
             </InfoTip>
           </div>
@@ -8108,6 +8167,20 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
               return key === "monto" ? `U$S ${row.monto.toLocaleString()}` : row[key];
             }}
           />
+          <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
+              <p className="text-xs" style={{ color: ACCENT }}>Costo en origen</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.costoOrigen.toLocaleString()}</p>
+            </div>
+            <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
+              <p className="text-xs" style={{ color: ACCENT }}>Costo puesto en PY</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.costoPuestoPy.toLocaleString()}</p>
+            </div>
+            <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
+              <p className="text-xs" style={{ color: ACCENT }}>Venta a precio de lista</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.ventaPrecioLista.toLocaleString()}</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -8146,6 +8219,16 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
                 >
                   {row.estado}
                 </span>
+              );
+              if (key === "obra") return (
+                <div>
+                  <p>{row.obra}</p>
+                  {row.categorias?.length > 0 && (
+                    <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                      {row.categorias.map((c) => `${c.label}: U$S ${c.monto.toLocaleString()}`).join(" · ")}
+                    </p>
+                  )}
+                </div>
               );
               return row[key];
             }}

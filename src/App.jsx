@@ -521,7 +521,7 @@ function Drawer({ open, onClose, title, children }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: BORDER }}>
-          <h3 className="text-sm font-semibold" style={{ color: INK }}>{title}</h3>
+          <h3 className="text-base font-bold" style={{ color: INK }}>{title}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
             <X size={18} style={{ color: MUTED }} />
           </button>
@@ -881,7 +881,7 @@ function AvisosAlEntrarModal({ alertasContacto, seguimientosPendientes, stockBaj
       >
         <div className="flex items-center gap-2 mb-1">
           <Bell size={17} style={{ color: "#B91C1C" }} />
-          <h3 className="text-sm font-semibold" style={{ color: INK }}>
+          <h3 className="text-base font-bold" style={{ color: INK }}>
             Tenés {total} aviso{total !== 1 ? "s" : ""} pendiente{total !== 1 ? "s" : ""}
           </h3>
         </div>
@@ -2638,7 +2638,7 @@ function Section({ title, subtitle, query, onQuery, onNew, newLabel, extraAction
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>{title}</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>{title}</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -2785,7 +2785,7 @@ function ComprometidaPagoBox({ comprometidas }) {
     <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
       <div className="flex items-center gap-2 mb-2">
         <Lock size={15} style={{ color: "#B45309" }} />
-        <h3 className="text-sm font-semibold" style={{ color: "#92400E" }}>Mercadería comprometida todavía en depósito</h3>
+        <h3 className="text-base font-bold" style={{ color: "#92400E" }}>Mercadería comprometida todavía en depósito</h3>
         <InfoTip>
           <p>Estas unidades ya están sumadas en el total físico de arriba — siguen en el depósito, solo que reservadas para una venta comprometida.</p>
           <p>Acá te aclaramos si esa venta ya está cobrada, parcial, o sin ningún pago, para no confundir "está en el depósito" con "ya es plata cobrada".</p>
@@ -2816,7 +2816,7 @@ function PlataPorCobrarSection({ comprometidas }) {
   return (
     <div className="mb-6">
       <div className="flex items-center gap-1 mb-2">
-        <p className="text-xs font-semibold" style={{ color: ACCENT }}>Plata por cobrar</p>
+        <p className="text-base font-bold" style={{ color: ACCENT }}>Plata por cobrar</p>
         <InfoTip>
           <p>Se arma con Ventas comprometidas, cruzando cuánto se entregó (retiros registrados) contra cuánto se cobró (Pagos).</p>
           <p><strong>Entregado y por cobrar:</strong> ya se llevó todo, falta cobrar total o parcial.</p>
@@ -2877,7 +2877,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <TrendingUp size={15} style={{ color: ACCENT }} />
-          <h3 className="text-sm font-semibold" style={{ color: INK }}>Ventas cerradas</h3>
+          <h3 className="text-base font-bold" style={{ color: INK }}>Ventas cerradas</h3>
         </div>
         <SearchBox value={q} onChange={setQ} placeholder="Buscar cliente, obra o producto..." />
       </div>
@@ -2971,7 +2971,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>Resumen</h2>
+      <h2 className="text-xl font-bold mb-1" style={{ color: INK }}>Resumen</h2>
       <p className="text-sm mb-4" style={{ color: MUTED }}>
         "Equipos totales activos" es el stock que todavía cuenta como inventario. Vendidos y retirados, y Dados de baja, ya salieron del circuito — quedan abajo como historial, aparte.
       </p>
@@ -2995,7 +2995,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle size={15} style={{ color: "#B45309" }} />
-            <h3 className="text-sm font-semibold" style={{ color: "#92400E" }}>Garantías que necesitan tu atención</h3>
+            <h3 className="text-base font-bold" style={{ color: "#92400E" }}>Garantías que necesitan tu atención</h3>
           </div>
           {alertasContacto.length > 0 && (
             <div className="mb-2">
@@ -3025,7 +3025,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FBEAEA", border: "0.5px solid #F5C6C6" }}>
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle size={15} style={{ color: "#B91C1C" }} />
-            <h3 className="text-sm font-semibold" style={{ color: "#7F1D1D" }}>Stock bajo — reponer pronto</h3>
+            <h3 className="text-base font-bold" style={{ color: "#7F1D1D" }}>Stock bajo — reponer pronto</h3>
           </div>
           {stockBajo.map((r) => (
             <p key={r.producto.id} className="text-sm" style={{ color: "#7F1D1D" }}>
@@ -3042,7 +3042,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
           <div className="flex items-center gap-2 mb-3">
             <Clock size={15} style={{ color: ACCENT }} />
-            <h3 className="text-sm font-semibold" style={{ color: INK }}>Services próximos a vencer</h3>
+            <h3 className="text-base font-bold" style={{ color: INK }}>Services próximos a vencer</h3>
           </div>
           {proximosServices.length === 0 ? (
             <p className="text-sm" style={{ color: MUTED }}>No hay vencimientos en los próximos 60 días.</p>
@@ -3066,7 +3066,7 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
           <div className="flex items-center gap-2 mb-3">
             <Star size={15} style={{ color: ACCENT }} />
-            <h3 className="text-sm font-semibold" style={{ color: INK }}>Muestras</h3>
+            <h3 className="text-base font-bold" style={{ color: INK }}>Muestras</h3>
           </div>
           {muestras.length === 0 ? (
             <p className="text-sm" style={{ color: MUTED }}>No hay equipos clasificados como muestra.</p>
@@ -3152,7 +3152,7 @@ function GraficoEstacionalidad({ ventasCerradas }) {
     <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
         <div>
-          <p className="text-sm font-semibold" style={{ color: INK }}>Estacionalidad de ventas</p>
+          <p className="text-base font-bold" style={{ color: INK }}>Estacionalidad de ventas</p>
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>Unidades vendidas por mes — para detectar la época fuerte de cada producto.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -3206,7 +3206,7 @@ function RankingCard({ title, subtitle, rows, valueLabel }) {
   const max = rows[0][1];
   return (
     <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-      <p className="text-sm font-semibold" style={{ color: INK }}>{title}</p>
+      <p className="text-base font-bold" style={{ color: INK }}>{title}</p>
       {subtitle && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{subtitle}</p>}
       <div className="space-y-2 mt-3">
         {rows.map(([label, value], i) => (
@@ -3245,7 +3245,7 @@ function GraficoTendenciaVentas({ ventasDirectas, comprometidas }) {
 
   return (
     <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-      <p className="text-sm font-semibold" style={{ color: INK }}>Tendencia de ventas — últimos 6 meses</p>
+      <p className="text-base font-bold" style={{ color: INK }}>Tendencia de ventas — últimos 6 meses</p>
       <p className="text-xs mt-0.5 mb-3" style={{ color: MUTED }}>Ventas directas + ventas comprometidas, en U$S por mes.</p>
       {!hayDatos ? (
         <p className="text-sm py-6 text-center" style={{ color: MUTED }}>Todavía no hay ventas registradas.</p>
@@ -3284,7 +3284,7 @@ function ReparacionMantenimientoCard({ presupuestos }) {
 
   return (
     <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-      <p className="text-sm font-semibold mb-3" style={{ color: INK }}>Presupuestos de reparación — mezcla</p>
+      <p className="text-base font-bold mb-3" style={{ color: INK }}>Presupuestos de reparación — mezcla</p>
       <div className="flex rounded-full overflow-hidden" style={{ height: 10, backgroundColor: ACCENT_LIGHT }}>
         {pctRep > 0 && <div style={{ width: `${pctRep}%`, backgroundColor: ACCENT }} title={`Reparación / repuestos: ${nReparacion}`} />}
         {pctMtto > 0 && <div style={{ width: `${pctMtto}%`, backgroundColor: VERDE }} title={`Mantenimiento: ${nMantenimiento}`} />}
@@ -3347,7 +3347,7 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>Panel de indicadores</h2>
+      <h2 className="text-xl font-bold mb-1" style={{ color: INK }}>Panel de indicadores</h2>
       <p className="text-sm mb-4" style={{ color: MUTED }}>
         Un vistazo rápido del negocio. "Ventas del mes" suma salidas directas con monto cargado + el valor total de las ventas comprometidas del mes.
       </p>
@@ -3520,7 +3520,7 @@ function PlayaView({ playa, productosRepuestos, query, onQuery, onNew, onDerivar
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Zona de playa</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Zona de playa</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Productos que llegaron al depósito (dejados por el técnico o por vos) sin clasificar todavía.
           </p>
@@ -3560,7 +3560,7 @@ function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpda
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Banco de recuperables</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Banco de recuperables</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>Equipos en reparación, pendientes o reservados como unidad de rescate.</p>
         </div>
         <SearchBox value={query} onChange={onQuery} />
@@ -3630,7 +3630,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Ventas y garantías</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Ventas y garantías</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Fichas de obra vendida — contrato firmado, remitos vinculados y certificado de garantía, con seguimiento de service a 12 y 24 meses.
           </p>
@@ -3745,7 +3745,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Ventas comprometidas</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Ventas comprometidas</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Mercadería vendida pero todavía en depósito — reserva el stock para que no se use en otra salida. Se puede retirar en varias tandas.
           </p>
@@ -3949,7 +3949,7 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField }) {
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Muestras</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Muestras</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Equipos usados como pieza de exhibición — en depósito o prestados a un cliente. Incluye tanto muestras con
             marca como muestras sin marca de fábrica (China) — el total de acá es el que se reporta al seguro.
@@ -4229,7 +4229,7 @@ function EscaneoUnidadesForm({ onSave }) {
       <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
 
       <div className="flex items-center gap-1 mt-4 mb-2">
-        <p className="text-xs font-semibold" style={{ color: ACCENT }}>Escaneo de unidades</p>
+        <p className="text-base font-bold" style={{ color: ACCENT }}>Escaneo de unidades</p>
         <InfoTip>
           <p><strong>1.</strong> Completá Modelo, Estado y Ubicación una vez — aplican a toda la tanda.</p>
           <p><strong>2.</strong> Tocá "Escanear con la cámara" y aceptá el permiso (funciona en Chrome de Android).</p>
@@ -4444,7 +4444,7 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset }) {
         <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="Opcional" /></Field>
       )}
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
       <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
@@ -4554,7 +4554,7 @@ function EscanearEquipoForm({ equipos, playa, productos, onSalida, onReubicar, o
     return (
       <div>
         <div className="flex items-center gap-1 mb-2">
-          <p className="text-xs font-semibold" style={{ color: ACCENT }}>Escanear equipo</p>
+          <p className="text-base font-bold" style={{ color: ACCENT }}>Escanear equipo</p>
           <InfoTip>
             <p><strong>1.</strong> Tocá "Escanear con la cámara" y aceptá el permiso, o usá la pistola lectora.</p>
             <p><strong>2.</strong> Apuntá al código interno o N° de serie de un equipo ya cargado.</p>
@@ -4876,7 +4876,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
 
       {cotizacion && (
         <>
-          <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Productos a retirar</p>
+          <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos a retirar</p>
           <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
             {filas.map((f) => {
               const sinStock = f.stockDisponible === 0;
@@ -4916,7 +4916,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
         </>
       )}
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
@@ -5126,7 +5126,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
           <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
           <Field label="Fecha de entrega estimada"><TextInput type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} placeholder="Opcional" /></Field>
 
-          <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Líneas de la cotización</p>
+          <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Líneas de la cotización</p>
           <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
             {filas.map((f) => {
               const sinStock = f.stockDisponible === 0;
@@ -5265,7 +5265,7 @@ function VentaForm({ productos, onSave }) {
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label="Fecha de venta"><TextInput type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Modelos vendidos</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Modelos vendidos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <div className="flex gap-2">
           <Field label="Modelo">
@@ -5623,7 +5623,7 @@ function RetiroParcialForm({ comprometida, onSave }) {
       </Field>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
       <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
@@ -5700,7 +5700,7 @@ function PagosForm({ comprometida, onAgregar, onQuitar }) {
         </div>
       )}
 
-      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Registrar pago</p>
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Registrar pago</p>
       <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></Field>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Forma de pago">
@@ -5848,7 +5848,7 @@ function ProductoForm({ producto, defaults, onSave }) {
       </div>
       <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => setPrecioLista(e.target.value)} /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Categorización (para agrupar y ordenar el catálogo)</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Categorización (para agrupar y ordenar el catálogo)</p>
       <div className="flex gap-2">
         <Field label="Categoría principal"><TextInput value={categoriaPrincipal} onChange={(e) => setCategoriaPrincipal(e.target.value)} placeholder="Ej: Cocina" /></Field>
         <Field label={esRepuesto ? "Tipo de equipo" : "Subcategoría"}>
@@ -5865,7 +5865,7 @@ function ProductoForm({ producto, defaults, onSave }) {
         <TextInput type="number" value={ordenNumerico} onChange={(e) => setOrdenNumerico(e.target.value)} placeholder="Ej: 700" />
       </Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos de costo (no aparecen en la cotización)</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos de costo (no aparecen en la cotización)</p>
       {esRepuesto && (
         <Field label="Código de pieza (fábrica)">
           <TextInput value={codigoFabrica} onChange={(e) => setCodigoFabrica(e.target.value)} placeholder="Opcional — para matchear llegadas de Tránsito" />
@@ -6088,7 +6088,7 @@ const CATALOGO_TABS = [
   },
 ];
 
-const CATEGORIA_TITULO_CLASE = ["text-base font-semibold", "text-sm font-semibold", "text-xs font-semibold", "text-xs font-medium"];
+const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
 function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
   if (nodo.productos) {
@@ -6195,7 +6195,7 @@ function CatalogoView({ productos, transito, query, onQuery, onNew, onEdit, onDe
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Catálogo de productos</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Catálogo de productos</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Precio de lista y ficha técnica de cada modelo — de acá sale el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
           </p>
@@ -6391,10 +6391,10 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Usá el mismo nombre si es una obra que ya cotizaste" /></Field>
       <Field label="Categoría (título de la cotización)"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: AIRES ACONDICIONADOS" /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos (no aparecen en el PDF)</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos (no aparecen en el PDF)</p>
       <Field label="Cliente real / inversor"><TextInput value={clienteReal} onChange={(e) => setClienteReal(e.target.value)} placeholder="Ej: Pepe Gómez" /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
@@ -6459,7 +6459,7 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
         </div>
       )}
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
       <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>
       <Field label="Fecha de entrega estimada"><TextInput value={fechaEntregaEstimada} onChange={(e) => setFechaEntregaEstimada(e.target.value)} /></Field>
       <Field label="Forma de pago"><TextInput value={formaPago} onChange={(e) => setFormaPago(e.target.value)} /></Field>
@@ -6557,7 +6557,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-lg font-semibold" style={{ color: INK }}>Panel de simulación</h2>
+        <h2 className="text-xl font-bold" style={{ color: INK }}>Panel de simulación</h2>
         <p className="text-sm mt-0.5" style={{ color: MUTED }}>
           Ejercicio de "si me piden esto, con qué lo cubro" — no reserva stock ni guarda nada hasta que lo confirmes como cotización real.
         </p>
@@ -6575,7 +6575,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       </div>
       <p className="text-xs mb-4" style={{ color: MUTED }}>El cliente es obligatorio solo para confirmar el ejercicio como cotización real.</p>
 
-      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Productos a simular</p>
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Productos a simular</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
@@ -6815,7 +6815,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <p className="text-xs font-medium" style={{ color: INK }}>{grupo.obra}</p>
+        <p className="text-base font-bold" style={{ color: INK }}>{grupo.obra}</p>
         {historial.length > 0 && (
           <button onClick={() => setExpandido(!expandido)} className="text-xs" style={{ color: ACCENT }}>
             {expandido ? "Ocultar historial" : `Ver historial (${historial.length})`}
@@ -6851,7 +6851,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, on
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
-        <p className="text-sm font-semibold" style={{ color: INK }}>{grupo.cliente}</p>
+        <p className="text-lg font-bold" style={{ color: INK }}>{grupo.cliente}</p>
         <div className="flex items-center gap-3 text-xs flex-wrap">
           <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString()}</span>
           {ESTADOS_COTIZACION.map((estado) => (
@@ -6884,7 +6884,7 @@ function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDe
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Cotizaciones</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Cotizaciones</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>Armá una cotización con productos del catálogo y descargala en PDF, con tu firma. Agrupadas por cliente y obra — una obra que volvés a cotizar queda como nueva versión de la misma, con historial.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -7129,7 +7129,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
 
       {tipo === "mantenimiento" && (
         <>
-          <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Servicios de mantenimiento</p>
+          <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Servicios de mantenimiento</p>
           <div className="flex gap-1.5 mb-2 flex-wrap">
             {MANTENIMIENTO_CATEGORIAS.map((cat) => (
               <button
@@ -7176,7 +7176,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
         </>
       )}
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Repuestos{tipo === "mantenimiento" ? " (opcional)" : ""}</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Repuestos{tipo === "mantenimiento" ? " (opcional)" : ""}</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Repuesto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
@@ -7247,7 +7247,7 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: INK }}>Presupuestos de reparación</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Presupuestos de reparación</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>Reparación / repuestos y mantenimiento (AA, termocalefón, campana) — vía separada de las cotizaciones de venta.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -7826,7 +7826,7 @@ function TransitoForm({ envio, productos, onSave }) {
       <Field label="N° de contenedor / referencia"><TextInput value={contenedor} onChange={(e) => setContenedor(e.target.value)} placeholder="Opcional" /></Field>
       <Field label="Fecha estimada de llegada"><TextInput type="date" value={fechaEstimadaLlegada} onChange={(e) => setFechaEstimadaLlegada(e.target.value)} /></Field>
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Modelos en este envío</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Modelos en este envío</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <div className="flex gap-2">
           <Field label="Modelo">
@@ -7850,7 +7850,7 @@ function TransitoForm({ envio, productos, onSave }) {
         </div>
       )}
 
-      <p className="text-xs font-semibold mt-4 mb-2" style={{ color: ACCENT }}>Costos del envío (compartidos entre todos los modelos)</p>
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Costos del envío (compartidos entre todos los modelos)</p>
       <div className="flex gap-2">
         <Field label="Adelanto a fábrica U$S"><TextInput type="number" value={adelantoFabrica} onChange={(e) => setAdelantoFabrica(e.target.value)} placeholder="Opcional" /></Field>
         <Field label="Pago final a fábrica U$S"><TextInput type="number" value={pagoFinalFabrica} onChange={(e) => setPagoFinalFabrica(e.target.value)} placeholder="Opcional" /></Field>
@@ -7913,7 +7913,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-1">
-            <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Seguro</h2>
+            <h2 className="text-xl font-bold" style={{ color: INK }}>Reporte para Seguro</h2>
             <InfoTip>
               <p>Cuenta TODA la mercadería física en Paraguay, sin importar si está comprometida a una venta o no:</p>
               <p><strong>Equipos:</strong> todos, salvo Vendido y Dado de baja (ya salieron del circuito).</p>
@@ -8102,7 +8102,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-1">
-            <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Joel</h2>
+            <h2 className="text-xl font-bold" style={{ color: INK }}>Reporte para Joel</h2>
             <InfoTip>
               <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa), agrupado solo por categoría — sin modelos ni cantidades.</p>
               <p><strong>Tránsito:</strong> el desglose de todos los costos de los envíos en camino (fábrica, representante, flete, comisión, despacho, seguro), más el costo en origen, el costo puesto en PY y el valor a precio de lista de todo lo que viene (productos y repuestos juntos) — sin el detalle de modelos.</p>
@@ -8125,7 +8125,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       )}
       <ComprometidaPagoBox comprometidas={comprometidas} />
 
-      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString()}</p>
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString()}</p>
       {filasFisicoPorCategoria.length === 0 ? (
         <p className="text-sm mb-4" style={{ color: MUTED }}>No hay mercadería física cargada.</p>
       ) : (
@@ -8151,7 +8151,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         </div>
       )}
 
-      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>En tránsito — costos (U$S {costosTransito.total.toLocaleString()})</p>
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>En tránsito — costos (U$S {costosTransito.total.toLocaleString()})</p>
       {transito.length === 0 ? (
         <p className="text-sm mb-6" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
       ) : (
@@ -8186,7 +8186,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
 
       <div className="mb-6">
         <div className="flex items-center gap-1 mb-2">
-          <p className="text-xs font-semibold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString()}</p>
+          <p className="text-base font-bold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString()}</p>
         </div>
         <div className="flex items-center gap-3 text-xs mb-2 flex-wrap">
           {ESTADOS_COTIZACION.map((estado) => (

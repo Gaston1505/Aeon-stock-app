@@ -6814,10 +6814,10 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
   const historial = grupo.versiones.slice(1);
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <p className="text-base font-bold" style={{ color: INK }}>{grupo.obra}</p>
         {historial.length > 0 && (
-          <button onClick={() => setExpandido(!expandido)} className="text-xs" style={{ color: ACCENT }}>
+          <button onClick={() => setExpandido(!expandido)} className="text-xs shrink-0" style={{ color: ACCENT }}>
             {expandido ? "Ocultar historial" : `Ver historial (${historial.length})`}
           </button>
         )}

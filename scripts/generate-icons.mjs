@@ -1,22 +1,41 @@
 // Builds the PWA/home-screen icons from the AEON logo at build time, so no
-// binary assets have to be committed. Crops just the "AEON" wordmark out of
-// the wider "AEON HOME TECH" lockup — bounds (x: 22-274, y: 43-90 of the
-// 300x152 source) found by scanning row/column pixel brightness, see the
-// deploy conversation — then centers it on a white square with padding.
-// (Uses an explicit crop box rather than sharp's .trim(), which threw
-// "bad extract area" against this image in the Linux CI runner.)
+// binary assets have to be committed. Crops the full "AEON HOME TECH" lockup
+// (not just the wordmark) by scanning the source JPEG's raw pixel brightness
+// for a tight bounding box around the artwork, then centers it on a white
+// square with padding. (Written by hand instead of sharp's .trim(), which
+// threw "bad extract area" against this image in the Linux CI runner.)
 import sharp from "sharp";
 import { mkdirSync, existsSync } from "fs";
 
 mkdirSync("public/icons", { recursive: true });
 
 const LOGO = "public/aeon-logo.jpg";
-const LOGO_CROP = { left: 22, top: 43, width: 252, height: 47 };
 const MASTER_SIZE = 1024;
-const LOGO_WIDTH_RATIO = 0.72; // fraction of the square the wordmark occupies
+const LOGO_WIDTH_RATIO = 0.72; // fraction of the square the lockup occupies
+
+// Tight bounding box around the non-white artwork — any pixel darker than
+// `threshold` (out of 255) counts as part of the logo.
+async function findContentBounds(path, threshold = 245) {
+  const { data, info } = await sharp(path).greyscale().raw().toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  let minX = width, maxX = -1, minY = height, maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[y * width + x] < threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) throw new Error(`No content found in ${path} below brightness ${threshold} — check the source image or threshold.`);
+  return { left: minX, top: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
 
 async function buildMaster() {
-  const cropped = await sharp(LOGO).extract(LOGO_CROP).png().toBuffer();
+  const bounds = await findContentBounds(LOGO);
+  const cropped = await sharp(LOGO).extract(bounds).png().toBuffer();
   const meta = await sharp(cropped).metadata();
 
   const targetW = Math.round(MASTER_SIZE * LOGO_WIDTH_RATIO);

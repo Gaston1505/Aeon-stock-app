@@ -4,7 +4,7 @@ import {
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
-  Ship, ClipboardList, Send, FlaskConical, LogOut,
+  Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -2004,6 +2004,7 @@ export default function App() {
   const NAV = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
     // Stock / inventario
+    { key: "deposito", label: "Depósito", icon: Warehouse },
     { key: "transito", label: "Tránsito", icon: Ship },
     { key: "playa", label: "Zona de playa", icon: Inbox },
     { key: "equipos", label: "Maestro de equipos", icon: Package },
@@ -2140,10 +2141,20 @@ export default function App() {
       <div className="flex-1 min-w-0 p-4 md:p-6">
         {tab === "resumen" && (
           <Resumen
-            equipos={equipos} proximosServices={proximosServices} alertasContacto={alertasContacto}
+            equipos={equipos} transito={transito} cotizaciones={cotizaciones} comprometidas={comprometidas}
+            clientes={clientes}
+            proximosServices={proximosServices} alertasContacto={alertasContacto}
             seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
             playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
             stockBajo={stockBajo}
+            onNavigate={navigateTo}
+          />
+        )}
+
+        {tab === "deposito" && (
+          <DepositoView
+            equipos={equipos} recuperables={recuperables} playa={playa} muestras={muestras}
+            productos={productos} ventasCerradas={ventasCerradas} stockBajo={stockBajo}
             onNavigate={navigateTo}
           />
         )}
@@ -2949,52 +2960,55 @@ function VentasCerradasPanel({ ventasCerradas }) {
   );
 }
 
-function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
-  const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
-  const bajas = equipos.filter((e) => e.estado === "Dado de baja");
+function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
-  // El stock de repuestos vive en el Catálogo de productos (categoriaPrincipal="Repuestos"),
-  // no en la colección "repuestos" suelta — ese origen quedó en desuso.
-  const totalRepuestos = productos
-    .filter((p) => p.categoriaPrincipal === "Repuestos")
-    .reduce((acc, p) => acc + (Number(p.stockDisponible) || 0), 0);
-  const totalPlaya = sumCantidad(playa);
-  const totalVendido = ventasCerradas.reduce((acc, v) => acc + (Number(v.cantidad) || 0), 0);
 
-  const cardsActivos = [
-    { label: "Equipos totales activos", value: totalUnidades, icon: Package, tab: "equipos" },
-    { label: "Zona de playa (sin clasificar)", value: totalPlaya, icon: Inbox, tab: "playa" },
-    { label: "Stock vendible", value: sumCantidad(vendible), icon: ArrowDownToLine, tab: "equipos" },
-    { label: "Banco de recuperables", value: sumCantidad(recuperables), icon: Wrench, tab: "recuperables" },
-    { label: "Muestras", value: sumCantidad(muestras), icon: Star, tab: "muestras" },
-    { label: "Repuestos (unidades)", value: totalRepuestos, icon: Boxes, tab: "catalogo:repuestos" },
-  ];
-  const cardsHistorico = [
-    { label: "Vendidos y retirados", value: totalVendido, icon: CheckCircle2, tab: "movimientos" },
-    { label: "Dados de baja", value: sumCantidad(bajas), icon: AlertTriangle, tab: "equipos" },
+  const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
+  const costosTransito = useMemo(() => resumenCostosTransito(transitoEnCamino), [transitoEnCamino]);
+  const valuacionTransitoData = useMemo(
+    () => valuacionTransito(transitoEnCamino, productos, costosTransito.total),
+    [transitoEnCamino, productos, costosTransito]
+  );
+
+  const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
+  const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
+  const porCobrar = useMemo(
+    () => comprometidas.map(clasificarComprometida).reduce((acc, c) => acc + c.saldoPago, 0),
+    [comprometidas]
+  );
+
+  // Un mini-resumen por cada área de la barra de menú, para navegar directo — los números
+  // grandes (stock, historial, detalle) viven en su propia pestaña, acá solo el estado general.
+  const secciones = [
+    {
+      label: "Depósito", icon: Warehouse, tab: "deposito",
+      value: totalUnidades.toLocaleString(),
+      sub: stockBajo.length > 0 ? `${stockBajo.length} producto(s) con stock bajo` : "Stock sin alertas",
+      subColor: stockBajo.length > 0 ? "#B91C1C" : undefined,
+    },
+    {
+      label: "Tránsito", icon: Ship, tab: "transito",
+      value: transitoEnCamino.length,
+      sub: `Puesto en PY: U$S ${valuacionTransitoData.costoPuestoPy.toLocaleString()}`,
+    },
+    {
+      label: "Ventas", icon: FileSignature, tab: "cotizaciones",
+      value: `U$S ${resumenCot.Pendiente.total.toLocaleString()} pendiente`,
+      sub: `Por cobrar: U$S ${porCobrar.toLocaleString()}`,
+    },
+    {
+      label: "Clientes", icon: Phone, tab: "clientes",
+      value: clientes.length,
+      sub: "clientes registrados",
+    },
   ];
 
   return (
     <div>
       <h2 className="text-xl font-bold mb-1" style={{ color: INK }}>Resumen</h2>
       <p className="text-sm mb-4" style={{ color: MUTED }}>
-        "Equipos totales activos" es el stock que todavía cuenta como inventario. Vendidos y retirados, y Dados de baja, ya salieron del circuito — quedan abajo como historial, aparte.
+        Lo que necesita tu atención hoy, y un vistazo rápido a cada área de la app.
       </p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
-        {cardsActivos.map((c) => (
-          <StatCard key={c.label} label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} />
-        ))}
-      </div>
-
-      <p className="text-xs font-medium mb-2" style={{ color: MUTED }}>Historial (ya no cuenta como stock)</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-        {cardsHistorico.map((c) => (
-          <div key={c.label} style={{ opacity: 0.75 }}>
-            <StatCard label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} tint="#F1F5F9" />
-          </div>
-        ))}
-        <div />
-      </div>
 
       {(alertasContacto.length > 0 || seguimientosPendientes.length > 0) && (
         <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
@@ -3026,6 +3040,92 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         </div>
       )}
 
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        {secciones.map((s) => (
+          <IndicadorCard
+            key={s.label} label={s.label} value={s.value} sub={s.sub} subColor={s.subColor}
+            icon={s.icon} onClick={() => onNavigate(s.tab)}
+          />
+        ))}
+      </div>
+
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Clock size={15} style={{ color: ACCENT }} />
+          <h3 className="text-base font-bold" style={{ color: INK }}>Services próximos a vencer</h3>
+        </div>
+        {proximosServices.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>No hay vencimientos en los próximos 60 días.</p>
+        ) : (
+          <div className="space-y-2">
+            {proximosServices.slice(0, 6).map((s, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="font-medium" style={{ color: INK }}>{s.cliente}</span>
+                  <span style={{ color: MUTED }}> · {s.obra} · {s.label}</span>
+                </div>
+                <span style={{ color: s.dias <= 15 ? "#B91C1C" : "#B45309" }}>
+                  {s.dias < 0 ? `vencido hace ${Math.abs(s.dias)}d` : `en ${s.dias}d`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <VentasCerradasPanel ventasCerradas={ventasCerradas} />
+    </div>
+  );
+}
+
+// ---------- Depósito: todo lo que hoy es stock físico, separado del Resumen ----------
+function DepositoView({ equipos, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
+  const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
+  const bajas = equipos.filter((e) => e.estado === "Dado de baja");
+  const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
+  // El stock de repuestos vive en el Catálogo de productos (categoriaPrincipal="Repuestos"),
+  // no en la colección "repuestos" suelta — ese origen quedó en desuso.
+  const totalRepuestos = productos
+    .filter((p) => p.categoriaPrincipal === "Repuestos")
+    .reduce((acc, p) => acc + (Number(p.stockDisponible) || 0), 0);
+  const totalPlaya = sumCantidad(playa);
+  const totalVendido = ventasCerradas.reduce((acc, v) => acc + (Number(v.cantidad) || 0), 0);
+
+  const cardsActivos = [
+    { label: "Equipos totales activos", value: totalUnidades, icon: Package, tab: "equipos" },
+    { label: "Zona de playa (sin clasificar)", value: totalPlaya, icon: Inbox, tab: "playa" },
+    { label: "Stock vendible", value: sumCantidad(vendible), icon: ArrowDownToLine, tab: "equipos" },
+    { label: "Banco de recuperables", value: sumCantidad(recuperables), icon: Wrench, tab: "recuperables" },
+    { label: "Muestras", value: sumCantidad(muestras), icon: Star, tab: "muestras" },
+    { label: "Repuestos (unidades)", value: totalRepuestos, icon: Boxes, tab: "catalogo:repuestos" },
+  ];
+  const cardsHistorico = [
+    { label: "Vendidos y retirados", value: totalVendido, icon: CheckCircle2, tab: "movimientos" },
+    { label: "Dados de baja", value: sumCantidad(bajas), icon: AlertTriangle, tab: "equipos" },
+  ];
+
+  return (
+    <div>
+      <h2 className="text-xl font-bold mb-1" style={{ color: INK }}>Depósito</h2>
+      <p className="text-sm mb-4" style={{ color: MUTED }}>
+        "Equipos totales activos" es el stock que todavía cuenta como inventario. Vendidos y retirados, y Dados de baja, ya salieron del circuito — quedan abajo como historial, aparte.
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+        {cardsActivos.map((c) => (
+          <StatCard key={c.label} label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} />
+        ))}
+      </div>
+
+      <p className="text-xs font-medium mb-2" style={{ color: MUTED }}>Historial (ya no cuenta como stock)</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+        {cardsHistorico.map((c) => (
+          <div key={c.label} style={{ opacity: 0.75 }}>
+            <StatCard label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} tint="#F1F5F9" />
+          </div>
+        ))}
+        <div />
+      </div>
+
       {stockBajo.length > 0 && (
         <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FBEAEA", border: "0.5px solid #F5C6C6" }}>
           <div className="flex items-center gap-2 mb-2">
@@ -3043,59 +3143,31 @@ function Resumen({ equipos, proximosServices, alertasContacto, seguimientosPendi
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-          <div className="flex items-center gap-2 mb-3">
-            <Clock size={15} style={{ color: ACCENT }} />
-            <h3 className="text-base font-bold" style={{ color: INK }}>Services próximos a vencer</h3>
-          </div>
-          {proximosServices.length === 0 ? (
-            <p className="text-sm" style={{ color: MUTED }}>No hay vencimientos en los próximos 60 días.</p>
-          ) : (
-            <div className="space-y-2">
-              {proximosServices.slice(0, 6).map((s, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <div>
-                    <span className="font-medium" style={{ color: INK }}>{s.cliente}</span>
-                    <span style={{ color: MUTED }}> · {s.obra} · {s.label}</span>
-                  </div>
-                  <span style={{ color: s.dias <= 15 ? "#B91C1C" : "#B45309" }}>
-                    {s.dias < 0 ? `vencido hace ${Math.abs(s.dias)}d` : `en ${s.dias}d`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+      <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Star size={15} style={{ color: ACCENT }} />
+          <h3 className="text-base font-bold" style={{ color: INK }}>Muestras</h3>
         </div>
-
-        <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-          <div className="flex items-center gap-2 mb-3">
-            <Star size={15} style={{ color: ACCENT }} />
-            <h3 className="text-base font-bold" style={{ color: INK }}>Muestras</h3>
-          </div>
-          {muestras.length === 0 ? (
-            <p className="text-sm" style={{ color: MUTED }}>No hay equipos clasificados como muestra.</p>
-          ) : (
-            <div className="space-y-2.5">
-              {muestras.slice(0, 6).map((e) => (
-                <div key={e.id} className="text-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CodeTag>{e.codigo}</CodeTag>
-                      <span style={{ color: INK }}>{e.modelo}</span>
-                      <span style={{ color: MUTED }}>· cant. {e.cantidad || 1}</span>
-                    </div>
-                    <StatusBadge estado={e.estado} />
+        {muestras.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>No hay equipos clasificados como muestra.</p>
+        ) : (
+          <div className="space-y-2.5">
+            {muestras.map((e) => (
+              <div key={e.id} className="text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CodeTag>{e.codigo}</CodeTag>
+                    <span style={{ color: INK }}>{e.modelo}</span>
+                    <span style={{ color: MUTED }}>· cant. {e.cantidad || 1}</span>
                   </div>
-                  {e.notas && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{e.notas}</p>}
+                  <StatusBadge estado={e.estado} />
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                {e.notas && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{e.notas}</p>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-
-      <VentasCerradasPanel ventasCerradas={ventasCerradas} />
     </div>
   );
 }
@@ -3113,13 +3185,23 @@ function sumarMonto(fechaDesdeIncl, fechaHastaExcl, lista) {
   }, 0);
 }
 
-function IndicadorCard({ label, value, sub, subColor }) {
+function IndicadorCard({ label, value, sub, subColor, icon: Icon, onClick }) {
+  const Wrapper = onClick ? "button" : "div";
   return (
-    <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+    <Wrapper
+      onClick={onClick}
+      className="rounded-xl p-4 text-left w-full"
+      style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}`, cursor: onClick ? "pointer" : "default" }}
+    >
+      {Icon && (
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-2" style={{ backgroundColor: ACCENT_LIGHT }}>
+          <Icon size={15} style={{ color: ACCENT }} />
+        </div>
+      )}
       <p className="text-xs" style={{ color: MUTED }}>{label}</p>
       <p className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</p>
       {sub && <p className="text-xs mt-0.5" style={{ color: subColor || MUTED }}>{sub}</p>}
-    </div>
+    </Wrapper>
   );
 }
 

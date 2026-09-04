@@ -17,6 +17,7 @@ import {
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
+  generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, downloadGarantiaPdf,
 } from "./pdf";
 
@@ -7944,6 +7945,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
 // que el reporte de seguro, así los dos reportes nunca dan números distintos para lo mismo.
 function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [compartiendo, setCompartiendo] = useState(false);
   const [error, setError] = useState("");
   // Un envío "Llegado" ya generó su equipo real en Stock vendible (parte de `mercaderia`) —
   // si siguiera contando acá también, se duplicaría esa mercadería en el reporte.
@@ -7970,6 +7972,16 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
   );
 
   const totalFisico = filasFisicoPorCategoria.reduce((acc, f) => acc + f.valorTotal, 0);
+
+  // Misma clasificación que ya usa PlataPorCobrarSection en pantalla — se arma acá aparte para
+  // que el PDF y el Excel puedan traer exactamente lo mismo que se ve.
+  const plataPorCobrarData = useMemo(() => {
+    const clasificadas = comprometidas.map(clasificarComprometida);
+    return CATEGORIAS_PLATA_COBRAR.map((cat) => {
+      const items = clasificadas.filter((c) => c.categoria === cat.key);
+      return { label: cat.label, total: items.reduce((acc, c) => acc + c.saldoPago, 0), items };
+    }).filter((g) => g.items.length > 0);
+  }, [comprometidas]);
 
   const handleExcel = () => {
     const wb = XLSX.utils.book_new();
@@ -8004,12 +8016,26 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, todayISO());
+      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
     } catch (e) {
       console.error("Error generando reporte para Joel", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
     }
     setGenerandoPdf(false);
+  };
+
+  const handleCompartir = async () => {
+    setCompartiendo(true);
+    setError("");
+    try {
+      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      const ok = await compartirArchivo(bytes, nombreArchivoReporteJoel(todayISO()), "Reporte para Joel");
+      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+    } catch (e) {
+      console.error("Error compartiendo reporte para Joel", e);
+      setError("No se pudo compartir el PDF. Probá de nuevo.");
+    }
+    setCompartiendo(false);
   };
 
   return (
@@ -8032,6 +8058,7 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
         <div className="flex items-center gap-2 flex-wrap">
           <SecondaryButton onClick={handleExcel}><Download size={14} /> Reporte Excel</SecondaryButton>
           <SecondaryButton onClick={handlePdf}><Download size={14} /> {generandoPdf ? "Generando..." : "Reporte PDF"}</SecondaryButton>
+          <SecondaryButton onClick={handleCompartir}><Share2 size={14} /> {compartiendo ? "Generando..." : "Compartir"}</SecondaryButton>
         </div>
       </div>
       {error && (

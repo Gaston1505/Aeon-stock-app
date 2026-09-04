@@ -23,6 +23,10 @@ const BORDER = rgb(0xe4 / 255, 0xe5 / 255, 0xe5 / 255);
 const INK = rgb(0x1c / 255, 0x1e / 255, 0x20 / 255);
 const MUTED = rgb(0x68 / 255, 0x6d / 255, 0x73 / 255);
 const WHITE = rgb(1, 1, 1);
+// Mismos colores de estado que ya se usan en pantalla (Pendiente/Ganada/Perdida, saldo por cobrar).
+const AMBAR = rgb(0xb4 / 255, 0x53 / 255, 0x09 / 255);
+const VERDE = rgb(0x15 / 255, 0x80 / 255, 0x3d / 255);
+const ROJO = rgb(0xb9 / 255, 0x1c / 255, 0x1c / 255);
 
 // ---------- Número a letras (Español) ----------
 const UNIDADES = ["", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"];
@@ -1297,7 +1301,10 @@ export async function downloadReporteFisicoPdf(filas, fecha, titulo) {
 // ---------- Reporte para Joel: solo plata, sin modelos ni cantidades ----------
 // `filasFisicoPorCategoria`: [{ categoria, valorTotal }] — físico en Paraguay agrupado por categoría.
 // `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.
-export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, fecha) {
+// `resumenCot`: { total, Pendiente: {n,total}, Ganada: {n,total}, Perdida: {n,total} }
+// `detalleCotizaciones`: [{ cliente, obra, monto, estado }]
+// `plataPorCobrar`: [{ label, total, items: [{ razonSocial, obra, saldoPago }] }] — solo grupos con saldo.
+export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -1451,6 +1458,103 @@ export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTran
   const granTotalStr = `Total general (físico + tránsito): U$S ${fmtNum(granTotal)}`;
   const gtW = bold.widthOfTextAtSize(granTotalStr, 8.5);
   text(granTotalStr, MARGIN + CONTENT_W / 2 - gtW / 2, y - 12, { bold: true, size: 8.5, color: WHITE });
+  y -= 30;
+
+  // Sección 3: cotizaciones
+  const colCliente = 150;
+  const colObra = 150;
+  const colMontoCot = 100;
+  const colEstadoCot = CONTENT_W - colCliente - colObra - colMontoCot;
+
+  ensureSpace(30);
+  const tituloCot = `Cotizaciones — Total U$S ${fmtNum(resumenCot.total)}`;
+  text(tituloCot, MARGIN, y, { bold: true, size: 9 });
+  y -= 12;
+  const resumenColor = { Pendiente: AMBAR, Ganada: VERDE, Perdida: ROJO };
+  const resumenLine = ["Pendiente", "Ganada", "Perdida"]
+    .map((k) => `${k}: ${resumenCot[k].n} · U$S ${fmtNum(resumenCot[k].total)}`);
+  let cxResumen = MARGIN;
+  ["Pendiente", "Ganada", "Perdida"].forEach((k, i) => {
+    text(resumenLine[i], cxResumen, y, { size: 6.5, color: resumenColor[k] });
+    cxResumen += bold.widthOfTextAtSize(resumenLine[i], 6.5) + 14;
+  });
+  y -= 14;
+
+  function drawHeaderCot() {
+    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    const headers = [
+      ["Cliente", colCliente], ["Obra", colObra], ["Monto U$S", colMontoCot], ["Estado", colEstadoCot],
+    ];
+    headers.forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += w;
+    });
+    y -= 20;
+  }
+
+  if (detalleCotizaciones.length === 0) {
+    ensureSpace(20);
+    text("No hay cotizaciones cargadas.", MARGIN, y, { size: 7.5, color: MUTED });
+    y -= 20;
+  } else {
+    drawHeaderCot();
+    for (const d of detalleCotizaciones) {
+      const rowH = 18;
+      ensureSpace(rowH + 20);
+      if (y === PAGE_H - MARGIN) drawHeaderCot();
+
+      let cx = MARGIN;
+      rect(cx, y - rowH, colCliente, rowH, { border: BORDER });
+      text(d.cliente || "", cx + 4, y - rowH / 2 - 3, { size: 6.5 });
+      cx += colCliente;
+
+      rect(cx, y - rowH, colObra, rowH, { border: BORDER });
+      text(d.obra || "", cx + 4, y - rowH / 2 - 3, { size: 6.5 });
+      cx += colObra;
+
+      rect(cx, y - rowH, colMontoCot, rowH, { border: BORDER });
+      centerText(`U$S ${fmtNum(d.monto)}`, cx, y, colMontoCot, rowH, { size: 6.5 });
+      cx += colMontoCot;
+
+      rect(cx, y - rowH, colEstadoCot, rowH, { border: BORDER });
+      centerText(d.estado || "", cx, y, colEstadoCot, rowH, { size: 6.5, color: resumenColor[d.estado] || INK });
+
+      y -= rowH;
+    }
+    ensureSpace(20);
+    rect(MARGIN, y - 16, CONTENT_W - colMontoCot - colEstadoCot, 16, { fill: ACCENT_LIGHT });
+    text("TOTAL", MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+    rect(MARGIN + CONTENT_W - colMontoCot - colEstadoCot, y - 16, colMontoCot, 16, { fill: ACCENT_LIGHT });
+    const totalCotStr = `U$S ${fmtNum(resumenCot.total)}`;
+    centerText(totalCotStr, MARGIN + CONTENT_W - colMontoCot - colEstadoCot, y, colMontoCot, 16, { bold: true, size: 7.5, color: ACCENT });
+    rect(MARGIN + CONTENT_W - colEstadoCot, y - 16, colEstadoCot, 16, { fill: ACCENT_LIGHT });
+    y -= 30;
+  }
+
+  // Sección 4: plata por cobrar
+  ensureSpace(30);
+  text("Plata por cobrar", MARGIN, y, { bold: true, size: 9 });
+  y -= 14;
+
+  if (plataPorCobrar.length === 0) {
+    ensureSpace(20);
+    text("No hay saldo pendiente de cobro.", MARGIN, y, { size: 7.5, color: MUTED });
+    y -= 20;
+  } else {
+    for (const grupo of plataPorCobrar) {
+      ensureSpace(16);
+      text(`${grupo.label} — saldo por cobrar U$S ${fmtNum(grupo.total)}`, MARGIN, y, { bold: true, size: 7.5, color: ACCENT });
+      y -= 12;
+      for (const item of grupo.items) {
+        ensureSpace(11);
+        text(`· ${item.razonSocial} — ${item.obra} · saldo por cobrar U$S ${fmtNum(item.saldoPago)}`, MARGIN + 4, y, { size: 7, color: MUTED });
+        y -= 11;
+      }
+      y -= 6;
+    }
+  }
 
   return pdf.save();
 }
@@ -1459,8 +1563,8 @@ export function nombreArchivoReporteJoel(fecha) {
   return `Reporte_Joel_${fecha || ""}.pdf`;
 }
 
-export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, fecha) {
-  const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, fecha);
+export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha) {
+  const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha);
   downloadBlob(bytes, nombreArchivoReporteJoel(fecha), "application/pdf");
 }
 

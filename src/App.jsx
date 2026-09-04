@@ -4,13 +4,14 @@ import {
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
-  Ship, ClipboardList, Send, FlaskConical,
+  Ship, ClipboardList, Send, FlaskConical, LogOut,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { db } from "./firebase";
+import { db, auth } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
@@ -863,6 +864,91 @@ function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr,
   );
 }
 
+function AvisosAlEntrarModal({ alertasContacto, seguimientosPendientes, stockBajo, onIr, onClose }) {
+  const total = alertasContacto.length + seguimientosPendientes.length + stockBajo.length;
+  const ir = (tab) => { onIr(tab); onClose(); };
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ backgroundColor: "rgba(15,23,32,0.5)" }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl p-5 w-full overflow-y-auto"
+        style={{ backgroundColor: "#FFFFFF", maxWidth: 380, maxHeight: "80vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <Bell size={17} style={{ color: "#B91C1C" }} />
+          <h3 className="text-sm font-semibold" style={{ color: INK }}>
+            Tenés {total} aviso{total !== 1 ? "s" : ""} pendiente{total !== 1 ? "s" : ""}
+          </h3>
+        </div>
+        <p className="text-xs mb-3" style={{ color: MUTED }}>Esto es lo que quedó pendiente desde la última vez que entraste.</p>
+
+        {alertasContacto.length > 0 && (
+          <div className="mb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Contactar por garantía</p>
+            <div className="space-y-1">
+              {alertasContacto.map((s, i) => (
+                <button
+                  key={i} onClick={() => ir("ventas")}
+                  className="w-full text-left text-xs px-2.5 py-1.5 rounded hover:bg-gray-100"
+                  style={{ backgroundColor: "#F7F8FA", color: INK }}
+                >
+                  {s.cliente} — {s.obra} — {s.label} ({s.dias < 0 ? `vencido hace ${Math.abs(s.dias)}d` : `en ${s.dias}d`})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {seguimientosPendientes.length > 0 && (
+          <div className="mb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Reenviar recordatorio</p>
+            <div className="space-y-1">
+              {seguimientosPendientes.map((s, i) => (
+                <button
+                  key={i} onClick={() => ir("ventas")}
+                  className="w-full text-left text-xs px-2.5 py-1.5 rounded hover:bg-gray-100"
+                  style={{ backgroundColor: "#F7F8FA", color: INK }}
+                >
+                  {s.cliente} — {s.obra} — {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {stockBajo.length > 0 && (
+          <div className="mb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Stock bajo</p>
+            <div className="space-y-1">
+              {stockBajo.map((r) => (
+                <button
+                  key={r.producto.id} onClick={() => ir("catalogo")}
+                  className="w-full text-left text-xs px-2.5 py-1.5 rounded hover:bg-gray-100"
+                  style={{ backgroundColor: "#F7F8FA", color: INK }}
+                >
+                  {r.producto.nombre} — quedan {r.actual} (mínimo {r.minimo})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end mt-2">
+          <button
+            onClick={onClose}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}
+          >
+            Listo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Código interno = modelo + secuencia por unidad de ese modelo (ej. "ASAFB-12HRN1-01"), en vez
 // de un contador global sin relación con el producto — así el código ya dice qué es de un vistazo,
 // y una vez que empiecen a llegar series reales de fábrica, cada unidad de un mismo modelo se
@@ -895,8 +981,56 @@ function nextRepNumero(productos, modeloAsociado) {
   return max + 1;
 }
 
+function LoginScreen({ onLogin, error }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
+    setEnviando(true);
+    await onLogin(email.trim(), password);
+    setEnviando(false);
+  };
+
+  return (
+    <div className="flex items-center justify-center min-h-screen px-4" style={{ backgroundColor: BG }}>
+      <form onSubmit={submit} className="w-full rounded-xl p-6" style={{ maxWidth: 340, backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-16 w-auto mx-auto mb-5" />
+        <Field label="Email"><TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></Field>
+        <Field label="Contraseña"><TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        {error && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{error}</p>}
+        <PrimaryButton type="submit" onClick={submit} disabled={enviando}>
+          {enviando ? "Ingresando..." : "Ingresar"}
+        </PrimaryButton>
+      </form>
+    </div>
+  );
+}
+
 // ---------- Main App ----------
 export default function App() {
+  // undefined = todavía no sabemos (Firebase está chequeando la sesión guardada),
+  // null = no hay nadie logueado, objeto = usuario logueado.
+  const [user, setUser] = useState(undefined);
+  const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsub();
+  }, []);
+
+  const handleLogin = async (email, password) => {
+    setAuthError("");
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      setAuthError("Email o contraseña incorrectos.");
+    }
+  };
+  const handleLogout = () => signOut(auth);
+
   const [tab, setTab] = useState("resumen");
   const [loading, setLoading] = useState(true);
   const [equipos, setEquipos] = useState([]);
@@ -943,6 +1077,7 @@ export default function App() {
   const [importResultado, setImportResultado] = useState("");
 
   useEffect(() => {
+    if (!user) return;
     const setters = {
       [COLLECTIONS.equipos]: setEquipos,
       [COLLECTIONS.movimientos]: setMovimientos,
@@ -966,7 +1101,7 @@ export default function App() {
       })
     );
     return () => unsubscribers.forEach((unsub) => unsub());
-  }, []);
+  }, [user]);
 
   const addEquipo = (data) => addItem(COLLECTIONS.equipos, data);
   const updateEquipoEstado = (id, estado) => updateItem(COLLECTIONS.equipos, id, { estado });
@@ -1839,6 +1974,18 @@ export default function App() {
       .sort((a, b) => (a.actual - a.minimo) - (b.actual - b.minimo));
   }, [productos, equipos]);
 
+  // Aviso proactivo al entrar a la app: en vez de depender de que alguien note la campanita
+  // sola, se lo mostramos de una apenas termina de cargar todo — una vez por apertura de la app.
+  const [mostrarAvisos, setMostrarAvisos] = useState(false);
+  const avisosMostradosRef = useRef(false);
+  useEffect(() => {
+    if (loading || avisosMostradosRef.current) return;
+    avisosMostradosRef.current = true;
+    if (alertasContacto.length + seguimientosPendientes.length + stockBajo.length > 0) {
+      setMostrarAvisos(true);
+    }
+  }, [loading, alertasContacto, seguimientosPendientes, stockBajo]);
+
   // Navegación desde un StatCard: soporta un destino compuesto "tab:extra" (hoy solo
   // "catalogo:repuestos", para que el card de Repuestos del Resumen abra el Catálogo
   // directamente en modo Repuestos en vez del tab de Repuestos suelto, ya en desuso).
@@ -1874,6 +2021,18 @@ export default function App() {
     { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
   ];
 
+  if (user === undefined) {
+    return (
+      <div className="flex items-center justify-center py-24" style={{ backgroundColor: BG }}>
+        <p className="text-sm" style={{ color: MUTED }}>Cargando...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen onLogin={handleLogin} error={authError} />;
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24" style={{ backgroundColor: BG }}>
@@ -1894,6 +2053,9 @@ export default function App() {
           alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
           onIr={navigateTo}
         />
+        <button onClick={handleLogout} className="p-1.5 rounded hover:bg-gray-100" title="Cerrar sesión">
+          <LogOut size={18} style={{ color: MUTED }} />
+        </button>
       </div>
 
       <div className="flex w-full">
@@ -1909,12 +2071,15 @@ export default function App() {
         >
           <div className="px-4 py-4 border-b flex items-start justify-between" style={{ borderColor: BORDER }}>
             <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-20 w-auto" />
-            <div className="hidden md:block">
+            <div className="hidden md:flex items-center gap-1">
               <AlertasBell
                 alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
                 onIr={(t) => { navigateTo(t); setNavOpen(false); }}
                 align="left"
               />
+              <button onClick={handleLogout} className="p-1.5 rounded hover:bg-gray-100" title="Cerrar sesión">
+                <LogOut size={16} style={{ color: MUTED }} />
+              </button>
             </div>
           </div>
           <div className="px-4 py-3 border-b" style={{ borderColor: BORDER }}>
@@ -2421,6 +2586,13 @@ export default function App() {
       </Drawer>
       <PhotoViewer src={fotoView} onClose={() => setFotoView(null)} />
       <ConfirmDialog state={confirmState} onResolve={resolveConfirm} />
+      {mostrarAvisos && (
+        <AvisosAlEntrarModal
+          alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
+          onIr={navigateTo}
+          onClose={() => setMostrarAvisos(false)}
+        />
+      )}
     </div>
   );
 }

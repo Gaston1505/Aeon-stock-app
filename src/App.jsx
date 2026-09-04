@@ -2003,21 +2003,26 @@ export default function App() {
 
   const NAV = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
-    { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
+    // Stock / inventario
     { key: "transito", label: "Tránsito", icon: Ship },
     { key: "playa", label: "Zona de playa", icon: Inbox },
     { key: "equipos", label: "Maestro de equipos", icon: Package },
-    { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
-    { key: "movimientos", label: "Salidas", icon: ArrowUpFromLine },
-    { key: "entradas", label: "Entradas", icon: ArrowDownToLine },
-    { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
-    { key: "clientes", label: "Clientes", icon: Phone },
+    // Movimientos
+    { key: "entradas", label: "Entradas", icon: ArrowDownToLine },
+    { key: "movimientos", label: "Salidas", icon: ArrowUpFromLine },
+    // Ventas
+    { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
+    { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
-    { key: "simulador", label: "Panel de simulación", icon: FlaskConical },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
+    { key: "simulador", label: "Panel de simulación", icon: FlaskConical },
+    // Clientes
+    { key: "clientes", label: "Clientes", icon: Phone },
+    // Reportes
+    { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
     { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
     { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
   ];

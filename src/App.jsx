@@ -2237,7 +2237,7 @@ export default function App() {
                 if (key === "estado") return (
                   <Select
                     value={row.estado} onChange={(ev) => updateEquipoEstado(row.id, ev.target.value)}
-                    style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: "auto" }}
+                    style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, minWidth: 190 }}
                   >
                     {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
                   </Select>
@@ -4150,7 +4150,7 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField, onUp
                       <td className="px-3 py-1.5 whitespace-nowrap">
                         <Select
                           value={e.estado} onChange={(ev) => onUpdateEstado(e.id, ev.target.value)}
-                          style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: "auto" }}
+                          style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, minWidth: 190 }}
                         >
                           {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
                         </Select>

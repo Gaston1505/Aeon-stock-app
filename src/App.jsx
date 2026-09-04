@@ -55,6 +55,17 @@ const TIPOS_ENTRADA = [
 ];
 const ESTADOS_RESULTANTES = ["Apto para venta", "Apto para venta con descuento", "Pendiente de reparación", "Muestra", "Reservado - unidad de rescate", "Dado de baja"];
 
+// Patrón de armado de precios de las planillas de fábrica (Cocina, Termocalefones, Aire
+// Acondicionado): Costo puesto en PY = Costo origen + comisión del agente (% del origen) +
+// flete (total del contenedor ÷ cantidad que entra) + despacho (% del origen). Precio de venta
+// = Costo puesto en PY × (1 + markup %). Los valores acá son los que trae cada planilla — quedan
+// editables en el formulario porque son decisiones de negocio, no una regla fija.
+const ARMADO_PRECIOS_DEFAULTS = {
+  "Cocina": { comisionPct: 5, despachoPct: 31, fletePorContenedor: 7500, markupPct: 65 },
+  "Termocalefones": { comisionPct: 5, despachoPct: 31, fletePorContenedor: 7500, markupPct: 55 },
+  "Aire Acondicionado": { comisionPct: 5, despachoPct: 35, fletePorContenedor: 7500, markupPct: 30 },
+};
+
 const ORIGENES_PLAYA = ["Técnico", "Gastón", "Cliente", "Otro"];
 const DESTINOS_PLAYA = [
   { value: "recuperable", label: "Banco de recuperables", estado: "Pendiente de reparación" },
@@ -500,12 +511,13 @@ function PrimaryButton({ children, onClick, type = "button", disabled = false })
     </button>
   );
 }
-function SecondaryButton({ children, onClick }) {
+function SecondaryButton({ children, onClick, disabled = false }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className="inline-flex items-center gap-1.5 text-sm font-medium px-3.5 py-2 rounded-md border"
-      style={{ borderColor: BORDER, color: INK }}
+      style={{ borderColor: BORDER, color: INK, opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}
     >
       {children}
     </button>
@@ -5919,6 +5931,11 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [codigoFabrica, setCodigoFabrica] = useState(producto?.codigoFabrica || "");
   const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
+  const armadoDefaults = ARMADO_PRECIOS_DEFAULTS[producto?.categoriaPrincipal || defaults?.categoriaPrincipal] || ARMADO_PRECIOS_DEFAULTS["Cocina"];
+  const [comisionPct, setComisionPct] = useState(String(armadoDefaults.comisionPct));
+  const [despachoPct, setDespachoPct] = useState(String(armadoDefaults.despachoPct));
+  const [fletePorContenedor, setFletePorContenedor] = useState(String(armadoDefaults.fletePorContenedor));
+  const [markupPct, setMarkupPct] = useState(String(armadoDefaults.markupPct));
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
   const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stockMinimo ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
@@ -5926,6 +5943,21 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [fichaFile, setFichaFile] = useState(null);
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
+
+  // Replica el armado de precios de las planillas de fábrica: ver ARMADO_PRECIOS_DEFAULTS.
+  const puedeCalcular = (Number(costoOrigen) || 0) > 0 && (Number(contenedorCantidad) || 0) > 0;
+  const calcularPrecios = () => {
+    const origen = Number(costoOrigen) || 0;
+    const cantidad = Number(contenedorCantidad) || 0;
+    if (!origen || !cantidad) return;
+    const comision = origen * (Number(comisionPct) || 0) / 100;
+    const flete = (Number(fletePorContenedor) || 0) / cantidad;
+    const despacho = origen * (Number(despachoPct) || 0) / 100;
+    const py = origen + comision + flete + despacho;
+    const venta = py * (1 + (Number(markupPct) || 0) / 100);
+    setCostoPy(py.toFixed(2));
+    setPrecioLista(String(Math.round(venta)));
+  };
 
   const handleFoto = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -6032,6 +6064,29 @@ function ProductoForm({ producto, defaults, onSave }) {
         <Field label="Contenedor (tipo)"><TextInput value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)} placeholder="Ej: 40HQ" /></Field>
         <Field label="Cantidad por contenedor"><TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} /></Field>
       </div>
+
+      {!esRepuesto && (
+        <div className="mb-3 p-3 rounded-lg" style={{ backgroundColor: "#F7F8FA", border: `0.5px solid ${BORDER}` }}>
+          <p className="text-xs font-medium mb-2" style={{ color: INK }}>
+            Calculadora — mismo armado de precios que la planilla de fábrica
+          </p>
+          <div className="flex gap-2">
+            <Field label="Comisión agente %"><TextInput type="number" value={comisionPct} onChange={(e) => setComisionPct(e.target.value)} /></Field>
+            <Field label="Despacho %"><TextInput type="number" value={despachoPct} onChange={(e) => setDespachoPct(e.target.value)} /></Field>
+          </div>
+          <div className="flex gap-2">
+            <Field label="Flete total del contenedor U$S"><TextInput type="number" value={fletePorContenedor} onChange={(e) => setFletePorContenedor(e.target.value)} /></Field>
+            <Field label="Markup %"><TextInput type="number" value={markupPct} onChange={(e) => setMarkupPct(e.target.value)} /></Field>
+          </div>
+          <SecondaryButton onClick={calcularPrecios} disabled={!puedeCalcular}>
+            Calcular costo puesto en PY y precio de venta
+          </SecondaryButton>
+          <p className="text-xs mt-1.5" style={{ color: MUTED }}>
+            Costo puesto en PY = origen + comisión + flete (total ÷ cantidad por contenedor) + despacho. Precio de venta = costo puesto en PY × (1 + markup). Completá "Costo de origen" y "Cantidad por contenedor" arriba para poder calcular.
+          </p>
+        </div>
+      )}
+
       <Field label="Stock disponible (unidades en depósito)"><TextInput type="number" value={stockDisponible} onChange={(e) => setStockDisponible(e.target.value)} /></Field>
       <Field label="Stock mínimo (para avisarte cuando esté bajo)">
         <TextInput type="number" min="0" value={stockMinimo} onChange={(e) => setStockMinimo(e.target.value)} placeholder="Dejalo vacío para no recibir alerta" />

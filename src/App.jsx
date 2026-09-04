@@ -2048,7 +2048,9 @@ export default function App() {
         <button onClick={() => setNavOpen(true)} className="p-1 -ml-1 rounded hover:bg-gray-100">
           <Menu size={20} style={{ color: INK }} />
         </button>
-        <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-8 w-auto flex-1" />
+        <div className="flex-1 flex justify-center">
+          <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-8 w-auto" />
+        </div>
         <AlertasBell
           alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
           onIr={navigateTo}

@@ -2702,18 +2702,6 @@ function costoTotalEnvio(t) {
   return CONCEPTOS_COSTO_TRANSITO.reduce((acc, c) => acc + (Number(t[c.key]) || 0), 0);
 }
 
-// Modelos + cantidades de todos los envíos en tránsito, agregados — sin plata, solo unidades.
-function agruparModelosTransito(transitoEnvios) {
-  const mapa = new Map();
-  for (const t of transitoEnvios) {
-    for (const l of t.lineas || []) {
-      if (!mapa.has(l.modelo)) mapa.set(l.modelo, { modelo: l.modelo, cantidad: 0 });
-      mapa.get(l.modelo).cantidad += Number(l.cantidad) || 0;
-    }
-  }
-  return [...mapa.values()].sort((a, b) => a.modelo.localeCompare(b.modelo));
-}
-
 // Costos de tránsito sumados por concepto entre todos los envíos, más el total general.
 function resumenCostosTransito(transitoEnvios) {
   const filas = CONCEPTOS_COSTO_TRANSITO.map((c) => ({
@@ -2817,7 +2805,7 @@ function PlataPorCobrarSection({ comprometidas }) {
             <p className="text-xs font-medium mb-1" style={{ color: INK }}>{cat.label} — saldo por cobrar U$S {totalSaldo.toLocaleString()}</p>
             {items.map((c) => (
               <p key={c.id} className="text-xs" style={{ color: MUTED }}>
-                · {c.razonSocial} — {c.obra} — {c.modelo} · {c.retirado} de {c.cantidad} entregado · saldo por cobrar U$S {c.saldoPago.toLocaleString()}
+                · {c.razonSocial} — {c.obra} · saldo por cobrar U$S {c.saldoPago.toLocaleString()}
               </p>
             ))}
           </div>
@@ -7959,7 +7947,16 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
   // si siguiera contando acá también, se duplicaría esa mercadería en el reporte.
   const transitoEnCamino = useMemo(() => transito.filter((t) => t.estado !== "Llegado"), [transito]);
   const filasFisico = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
-  const filasModelosTransito = useMemo(() => agruparModelosTransito(transitoEnCamino), [transitoEnCamino]);
+  // Este reporte es solo plata — sin modelos ni cantidades, así que lo físico se agrupa
+  // directo por categoría (Equipos / Repuestos / Zona de playa) en vez de fila por modelo.
+  const filasFisicoPorCategoria = useMemo(() => {
+    const mapa = new Map();
+    for (const f of filasFisico) {
+      const valor = (Number(f.cantidad) || 0) * (Number(f.valorUnitario) || 0);
+      mapa.set(f.categoria, (mapa.get(f.categoria) || 0) + valor);
+    }
+    return [...mapa.entries()].map(([categoria, valorTotal]) => ({ categoria, valorTotal }));
+  }, [filasFisico]);
   const costosTransito = useMemo(() => resumenCostosTransito(transitoEnCamino), [transitoEnCamino]);
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
@@ -7970,18 +7967,13 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     [gruposCotizacion]
   );
 
-  const totalFisico = filasFisico.reduce((acc, f) => acc + f.cantidad * f.valorUnitario, 0);
-  const unidadesTransito = filasModelosTransito.reduce((acc, f) => acc + f.cantidad, 0);
+  const totalFisico = filasFisicoPorCategoria.reduce((acc, f) => acc + f.valorTotal, 0);
 
   const handleExcel = () => {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasFisico.map((f) => ({
-      "Categoría": f.categoria, "Modelo": f.modelo, "Cantidad": f.cantidad,
-      "Valor unitario U$S": f.valorUnitario, "Valor total U$S": f.cantidad * f.valorUnitario,
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasFisicoPorCategoria.map((f) => ({
+      "Categoría": f.categoria, "Valor total U$S": f.valorTotal,
     }))), "Físico Paraguay");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasModelosTransito.map((f) => ({
-      "Modelo": f.modelo, "Cantidad": f.cantidad,
-    }))), "Tránsito - Modelos");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
       ...costosTransito.filas.map((f) => ({ "Concepto": f.concepto, "Monto U$S": f.monto })),
       { "Concepto": "TOTAL", "Monto U$S": costosTransito.total },
@@ -8001,8 +7993,7 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
       .filter((c) => c.categoria !== "sin_movimiento")
       .map((c) => ({
         "Categoría": CATEGORIAS_PLATA_COBRAR.find((cat) => cat.key === c.categoria)?.label || "Cerrado",
-        "Cliente": c.razonSocial, "Obra": c.obra, "Modelo": c.modelo,
-        "Entregado": c.retirado, "De": c.cantidad, "Saldo por cobrar U$S": c.saldoPago,
+        "Cliente": c.razonSocial, "Obra": c.obra, "Saldo por cobrar U$S": c.saldoPago,
       }))), "Plata por cobrar");
     XLSX.writeFile(wb, `Reporte_Joel_${todayISO()}.xlsx`);
   };
@@ -8011,7 +8002,7 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, todayISO());
+      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, todayISO());
     } catch (e) {
       console.error("Error generando reporte para Joel", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
@@ -8026,14 +8017,14 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
           <div className="flex items-center gap-1">
             <h2 className="text-lg font-semibold" style={{ color: INK }}>Reporte para Joel</h2>
             <InfoTip>
-              <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa).</p>
-              <p><strong>Tránsito:</strong> modelos y cantidades cargados en la pestaña Tránsito, más el desglose de todos los costos de esos envíos (fábrica, representante, flete, comisión, despacho, seguro) — no se reparten por modelo, van aparte.</p>
+              <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa), agrupado solo por categoría — sin modelos ni cantidades.</p>
+              <p><strong>Tránsito:</strong> el desglose de todos los costos de los envíos en camino (fábrica, representante, flete, comisión, despacho, seguro), sin el detalle de modelos que traen.</p>
               <p><strong>Cotizaciones:</strong> el mismo resumen Total/Pendiente/Ganada/Perdida de la pestaña Cotizaciones.</p>
               <p><strong>Plata por cobrar:</strong> cruza entregas contra pagos de Ventas comprometidas.</p>
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Físico en Paraguay (U$S {totalFisico.toLocaleString()}) + tránsito ({unidadesTransito} unidad(es), U$S {costosTransito.total.toLocaleString()} en costos) + cotizaciones + plata por cobrar.
+            Físico en Paraguay (U$S {totalFisico.toLocaleString()}) + tránsito (U$S {costosTransito.total.toLocaleString()} en costos) + cotizaciones + plata por cobrar.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -8047,42 +8038,27 @@ function ReporteJoelView({ mercaderia, transito, comprometidas, cotizaciones }) 
       <ComprometidaPagoBox comprometidas={comprometidas} />
 
       <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString()}</p>
-      {filasFisico.length === 0 ? (
+      {filasFisicoPorCategoria.length === 0 ? (
         <p className="text-sm mb-4" style={{ color: MUTED }}>No hay mercadería física cargada.</p>
       ) : (
         <div className="mb-6">
           <Table
             columns={[
-              { key: "categoria", label: "Categoría" }, { key: "modelo", label: "Modelo" },
-              { key: "cantidad", label: "Cantidad" }, { key: "valorUnitario", label: "Valor unit. U$S" },
-              { key: "valorTotal", label: "Valor total U$S" },
+              { key: "categoria", label: "Categoría" }, { key: "valorTotal", label: "Valor total U$S" },
             ]}
             rows={[
-              ...filasFisico.map((f, i) => ({ ...f, id: `f-${f.categoria}-${f.modelo}-${i}` })),
-              { id: "f-total", esTotal: true, modelo: "TOTAL", valorTotal: totalFisico },
+              ...filasFisicoPorCategoria.map((f, i) => ({ ...f, id: `f-${f.categoria}-${i}` })),
+              { id: "f-total", esTotal: true, categoria: "TOTAL", valorTotal: totalFisico },
             ]}
             renderCell={(key, row) => {
               if (row.esTotal) {
                 if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString()}</strong>;
-                if (key === "modelo") return <strong>{row.modelo}</strong>;
+                if (key === "categoria") return <strong>{row.categoria}</strong>;
                 return "";
               }
-              if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString()}` : "—";
-              if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString()}` : "—"; }
+              if (key === "valorTotal") return row.valorTotal ? `U$S ${row.valorTotal.toLocaleString()}` : "—";
               return row[key] ?? "—";
             }}
-          />
-        </div>
-      )}
-
-      <p className="text-xs font-semibold mb-2" style={{ color: ACCENT }}>En tránsito — modelos ({unidadesTransito} unidad(es))</p>
-      {filasModelosTransito.length === 0 ? (
-        <p className="text-sm mb-4" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
-      ) : (
-        <div className="mb-4">
-          <Table
-            columns={[{ key: "modelo", label: "Modelo" }, { key: "cantidad", label: "Cantidad" }]}
-            rows={filasModelosTransito.map((f, i) => ({ ...f, id: `tm-${f.modelo}-${i}` }))}
           />
         </div>
       )}

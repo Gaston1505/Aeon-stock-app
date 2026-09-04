@@ -1294,11 +1294,10 @@ export async function downloadReporteFisicoPdf(filas, fecha, titulo) {
   downloadBlob(bytes, nombreArchivoReporteFisico(fecha), "application/pdf");
 }
 
-// ---------- Reporte para Joel: físico en Paraguay + en tránsito, separados ----------
-// `filasFisico`: [{ categoria, modelo, cantidad, valorUnitario }]
-// `filasModelosTransito`: [{ modelo, cantidad }] — modelos/unidades en tránsito, sin plata.
+// ---------- Reporte para Joel: solo plata, sin modelos ni cantidades ----------
+// `filasFisicoPorCategoria`: [{ categoria, valorTotal }] — físico en Paraguay agrupado por categoría.
 // `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.
-export async function generateReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha) {
+export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, fecha) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -1358,12 +1357,9 @@ export async function generateReporteJoelPdf(filasFisico, filasModelosTransito, 
   y -= 18;
   y -= 10;
 
-  // Sección 1: físico en Paraguay
-  const colCategoria = 90;
-  const colModeloF = 175;
-  const colCantF = 50;
-  const colValorUnit = 90;
-  const colValorTotalF = CONTENT_W - colCategoria - colModeloF - colCantF - colValorUnit;
+  // Sección 1: físico en Paraguay — solo plata, agrupado por categoría (sin modelos ni cantidades)
+  const colCategoria = CONTENT_W - 150;
+  const colValorTotalF = 150;
 
   ensureSpace(30);
   text("Físico en Paraguay", MARGIN, y, { bold: true, size: 9 });
@@ -1372,10 +1368,7 @@ export async function generateReporteJoelPdf(filasFisico, filasModelosTransito, 
   function drawHeaderFisico() {
     rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
     let cx = MARGIN;
-    const headers = [
-      ["Categoría", colCategoria], ["Modelo", colModeloF], ["Cant.", colCantF],
-      ["Valor unit. U$S", colValorUnit], ["Valor total U$S", colValorTotalF],
-    ];
+    const headers = [["Categoría", colCategoria], ["Valor total U$S", colValorTotalF]];
     headers.forEach(([label, w]) => {
       const lw = bold.widthOfTextAtSize(label, 6.5);
       text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
@@ -1385,96 +1378,35 @@ export async function generateReporteJoelPdf(filasFisico, filasModelosTransito, 
   }
   drawHeaderFisico();
 
-  let totalCantFisico = 0;
   let totalValorFisico = 0;
-  for (const f of filasFisico) {
+  for (const f of filasFisicoPorCategoria) {
     const rowH = 18;
     ensureSpace(rowH + 20);
     if (y === PAGE_H - MARGIN) drawHeaderFisico();
 
-    const cant = Number(f.cantidad) || 0;
-    const valorUnit = Number(f.valorUnitario) || 0;
-    const valorTotal = cant * valorUnit;
-    totalCantFisico += cant;
+    const valorTotal = Number(f.valorTotal) || 0;
     totalValorFisico += valorTotal;
 
     let cx = MARGIN;
     rect(cx, y - rowH, colCategoria, rowH, { border: BORDER });
-    centerText(f.categoria || "", cx, y, colCategoria, rowH, { size: 6 });
+    text(f.categoria || "", cx + 4, y - rowH / 2 - 3, { size: 7 });
     cx += colCategoria;
 
-    rect(cx, y - rowH, colModeloF, rowH, { border: BORDER });
-    text(f.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
-    cx += colModeloF;
-
-    rect(cx, y - rowH, colCantF, rowH, { border: BORDER });
-    centerText(String(cant), cx, y, colCantF, rowH);
-    cx += colCantF;
-
-    rect(cx, y - rowH, colValorUnit, rowH, { border: BORDER });
-    centerText(valorUnit ? `U$S ${fmtNum(valorUnit)}` : "—", cx, y, colValorUnit, rowH, { size: 6 });
-    cx += colValorUnit;
-
     rect(cx, y - rowH, colValorTotalF, rowH, { border: BORDER });
-    centerText(valorTotal ? `U$S ${fmtNum(valorTotal)}` : "—", cx, y, colValorTotalF, rowH, { size: 6 });
+    centerText(valorTotal ? `U$S ${fmtNum(valorTotal)}` : "—", cx, y, colValorTotalF, rowH, { size: 6.5 });
 
     y -= rowH;
   }
 
   ensureSpace(24);
-  const colLabelTotalF = CONTENT_W - colValorTotalF;
-  rect(MARGIN, y - 16, colLabelTotalF, 16, { fill: ACCENT_LIGHT });
-  text(`Sub-total físico: ${totalCantFisico} unidad(es)`, MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
-  rect(MARGIN + colLabelTotalF, y - 16, colValorTotalF, 16, { fill: ACCENT_LIGHT });
+  rect(MARGIN, y - 16, colCategoria, 16, { fill: ACCENT_LIGHT });
+  text("Sub-total físico", MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+  rect(MARGIN + colCategoria, y - 16, colValorTotalF, 16, { fill: ACCENT_LIGHT });
   const totalFisicoStr = `U$S ${fmtNum(totalValorFisico)}`;
   text(totalFisicoStr, MARGIN + CONTENT_W - 4 - bold.widthOfTextAtSize(totalFisicoStr, 7.5), y - 11, { bold: true, size: 7.5, color: ACCENT });
   y -= 30;
 
-  // Sección 2: en tránsito — modelos (sin plata, un envío trae varios modelos juntos)
-  const colModeloT = 300;
-  const colCantT = CONTENT_W - colModeloT;
-
-  ensureSpace(30);
-  text("En tránsito — modelos", MARGIN, y, { bold: true, size: 9 });
-  y -= 14;
-
-  function drawHeaderModelosTransito() {
-    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
-    let cx = MARGIN;
-    const headers = [["Modelo", colModeloT], ["Cant.", colCantT]];
-    headers.forEach(([label, w]) => {
-      const lw = bold.widthOfTextAtSize(label, 6.5);
-      text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
-      cx += w;
-    });
-    y -= 20;
-  }
-
-  if (filasModelosTransito.length === 0) {
-    ensureSpace(20);
-    text("No hay envíos en tránsito cargados.", MARGIN, y, { size: 7.5, color: MUTED });
-    y -= 20;
-  } else {
-    drawHeaderModelosTransito();
-    for (const f of filasModelosTransito) {
-      const rowH = 18;
-      ensureSpace(rowH + 20);
-      if (y === PAGE_H - MARGIN) drawHeaderModelosTransito();
-
-      let cx = MARGIN;
-      rect(cx, y - rowH, colModeloT, rowH, { border: BORDER });
-      text(f.modelo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
-      cx += colModeloT;
-
-      rect(cx, y - rowH, colCantT, rowH, { border: BORDER });
-      centerText(String(Number(f.cantidad) || 0), cx, y, colCantT, rowH);
-
-      y -= rowH;
-    }
-    y -= 10;
-  }
-
-  // Sección 3: en tránsito — costos (compartidos entre todos los modelos del envío, no se reparten)
+  // Sección 2: en tránsito — costos (compartidos entre todos los modelos del envío, no se reparten)
   const colConcepto = 300;
   const colMonto = CONTENT_W - colConcepto;
 
@@ -1527,8 +1459,8 @@ export function nombreArchivoReporteJoel(fecha) {
   return `Reporte_Joel_${fecha || ""}.pdf`;
 }
 
-export async function downloadReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha) {
-  const bytes = await generateReporteJoelPdf(filasFisico, filasModelosTransito, costosTransito, fecha);
+export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, fecha) {
+  const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, fecha);
   downloadBlob(bytes, nombreArchivoReporteJoel(fecha), "application/pdf");
 }
 

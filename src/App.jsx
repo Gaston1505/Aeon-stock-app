@@ -4118,23 +4118,35 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((e) => (
-                <tr key={e.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                  <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.modelo}</td>
-                  <td className="px-3 py-1.5 whitespace-nowrap"><CodeTag>{e.codigo}</CodeTag></td>
-                  <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.cantidad || 1}</td>
-                  <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge estado={e.estado} /></td>
-                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
-                    <input
-                      type="checkbox" checked={!!e.sinMarca}
-                      onChange={(ev) => onUpdateField(e.id, "sinMarca", ev.target.checked)}
-                      title="Muestra de fábrica sin logo de la marca"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5" style={{ minWidth: 240 }}>
-                    <ComentarioEditor value={e.notas} onSave={(v) => onUpdateField(e.id, "notas", v)} />
-                  </td>
-                </tr>
+              {[
+                { titulo: "En depósito", items: filtered.filter((e) => e.estado === "Muestra") },
+                { titulo: "Fuera de depósito (prestadas)", items: filtered.filter((e) => e.estado !== "Muestra") },
+              ].filter((g) => g.items.length > 0).map((g) => (
+                <React.Fragment key={g.titulo}>
+                  <tr>
+                    <td colSpan={6} className="px-3 py-1.5 text-xs font-bold" style={{ color: MUTED, backgroundColor: "#FAFBFC", borderBottom: `1px solid ${BORDER}` }}>
+                      {g.titulo} ({sumCantidad(g.items)})
+                    </td>
+                  </tr>
+                  {g.items.map((e) => (
+                    <tr key={e.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
+                      <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.modelo}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap"><CodeTag>{e.codigo}</CodeTag></td>
+                      <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.cantidad || 1}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge estado={e.estado} /></td>
+                      <td className="px-3 py-1.5 whitespace-nowrap text-center">
+                        <input
+                          type="checkbox" checked={!!e.sinMarca}
+                          onChange={(ev) => onUpdateField(e.id, "sinMarca", ev.target.checked)}
+                          title="Muestra de fábrica sin logo de la marca"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5" style={{ minWidth: 240 }}>
+                        <ComentarioEditor value={e.notas} onSave={(v) => onUpdateField(e.id, "notas", v)} />
+                      </td>
+                    </tr>
+                  ))}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

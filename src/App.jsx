@@ -2229,7 +2229,19 @@ export default function App() {
               renderCell={(key, row) => {
                 if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
                 if (key === "fechaIngreso") return fmtDate(row.fechaIngreso);
-                if (key === "estado") return <StatusBadge estado={row.estado} />;
+                if (key === "modelo") return (
+                  <div style={{ minWidth: 180 }}>
+                    <ComentarioEditor value={row.modelo} onSave={(v) => updateEquipoField(row.id, "modelo", v)} placeholder="Modelo" />
+                  </div>
+                );
+                if (key === "estado") return (
+                  <Select
+                    value={row.estado} onChange={(ev) => updateEquipoEstado(row.id, ev.target.value)}
+                    style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: "auto" }}
+                  >
+                    {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </Select>
+                );
                 if (key === "cantidad") return row.cantidad || 1;
                 if (key === "comprometido") return row.comprometido > 0 ? (
                   <span style={{ color: "#B45309", fontWeight: 500 }}>{row.comprometido}</span>
@@ -2342,7 +2354,7 @@ export default function App() {
         )}
 
         {tab === "muestras" && (
-          <MuestrasView muestras={muestras} productos={productos} query={query} onQuery={setQuery} onUpdateField={updateEquipoField} />
+          <MuestrasView muestras={muestras} productos={productos} query={query} onQuery={setQuery} onUpdateField={updateEquipoField} onUpdateEstado={updateEquipoEstado} />
         )}
 
         {tab === "catalogo" && (
@@ -4011,7 +4023,7 @@ const MUESTRAS_TABS = [
   { key: "sin-marca", label: "Sin marca" },
 ];
 
-function MuestrasView({ muestras, productos, query, onQuery, onUpdateField }) {
+function MuestrasView({ muestras, productos, query, onQuery, onUpdateField, onUpdateEstado }) {
   const [tabMarca, setTabMarca] = useState("todas");
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [reporteError, setReporteError] = useState("");
@@ -4130,10 +4142,19 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField }) {
                   </tr>
                   {g.items.map((e) => (
                     <tr key={e.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                      <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.modelo}</td>
+                      <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
+                        <ComentarioEditor value={e.modelo} onSave={(v) => onUpdateField(e.id, "modelo", v)} placeholder="Modelo" />
+                      </td>
                       <td className="px-3 py-1.5 whitespace-nowrap"><CodeTag>{e.codigo}</CodeTag></td>
                       <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.cantidad || 1}</td>
-                      <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge estado={e.estado} /></td>
+                      <td className="px-3 py-1.5 whitespace-nowrap">
+                        <Select
+                          value={e.estado} onChange={(ev) => onUpdateEstado(e.id, ev.target.value)}
+                          style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: "auto" }}
+                        >
+                          {ESTADOS.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </Select>
+                      </td>
                       <td className="px-3 py-1.5 whitespace-nowrap text-center">
                         <input
                           type="checkbox" checked={!!e.sinMarca}

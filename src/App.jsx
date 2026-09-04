@@ -6098,7 +6098,11 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
               </div>
             )}
           </div>
-          {p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>}
+          {p.categoriaPrincipal === "Repuestos" && p.descripcion ? (
+            <p className="text-sm font-medium mt-1" style={{ color: INK }}>{p.descripcion}</p>
+          ) : (
+            p.categoria && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.categoria}</p>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
@@ -6120,7 +6124,9 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
         </p>
       )}
       {p.especLabel && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{p.especLabel}: {p.especValor}</p>}
-      {p.descripcion && <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>}
+      {p.categoriaPrincipal !== "Repuestos" && p.descripcion && (
+        <p className="text-xs mt-1.5 line-clamp-2" style={{ color: MUTED }}>{p.descripcion}</p>
+      )}
 
       {(tieneCosto || p.contenedorTipo) && (
         <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#F7F8FA" }}>
@@ -7875,7 +7881,9 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                           {t.repuestos.map((r) => (
                             <div key={r.id} className="flex items-center justify-between gap-1.5 text-xs">
                               <span style={{ color: MUTED }}>
-                                · {r.modeloAsociado}{r.codigoPieza ? ` · pieza ${r.codigoPieza}` : ""} — {r.descripcion} · cant. {r.cantidad}
+                                · {r.modeloAsociado}{r.codigoPieza ? ` · pieza ${r.codigoPieza}` : ""} —{" "}
+                                {r.descripcion && <span className="font-medium" style={{ color: INK }}>{r.descripcion}</span>}
+                                {" "}· cant. {r.cantidad}
                                 {Number(r.costoOrigen) > 0 && ` · U$S ${Number(r.costoOrigen).toLocaleString()} c/u`}
                               </span>
                               {!llegado && (

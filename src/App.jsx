@@ -4,7 +4,7 @@ import {
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
-  Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse,
+  Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -1033,6 +1033,7 @@ export default function App() {
   const handleLogout = () => signOut(auth);
 
   const [tab, setTab] = useState("resumen");
+  const [tabHistory, setTabHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [equipos, setEquipos] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
@@ -1991,6 +1992,8 @@ export default function App() {
   // "catalogo:repuestos", para que el card de Repuestos del Resumen abra el Catálogo
   // directamente en modo Repuestos en vez del tab de Repuestos suelto, ya en desuso).
   const navigateTo = (target, filtro) => {
+    const resolvedTarget = target === "catalogo:repuestos" ? "catalogo" : target;
+    if (resolvedTarget !== tab) setTabHistory((h) => [...h, tab]);
     if (target === "catalogo:repuestos") {
       setCatalogoModoInicial("repuestos");
       setTab("catalogo");
@@ -1999,6 +2002,14 @@ export default function App() {
       setTab(target);
     }
     if (filtro !== undefined) setQuery(filtro);
+  };
+
+  const goBack = () => {
+    if (tabHistory.length === 0) return;
+    setTab(tabHistory[tabHistory.length - 1]);
+    setTabHistory((h) => h.slice(0, -1));
+    setQuery("");
+    setCatalogoModoInicial(null);
   };
 
   const NAV = [
@@ -2105,7 +2116,7 @@ export default function App() {
               return (
                 <button
                   key={n.key}
-                  onClick={() => { setTab(n.key); setQuery(""); setNavOpen(false); setCatalogoModoInicial(null); }}
+                  onClick={() => { navigateTo(n.key); setQuery(""); setNavOpen(false); }}
                   className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
                   style={{
                     color: active ? ACCENT : INK,
@@ -2139,6 +2150,15 @@ export default function App() {
 
       {/* Main */}
       <div className="flex-1 min-w-0 p-4 md:p-6">
+        {tabHistory.length > 0 && (
+          <button
+            onClick={goBack}
+            className="flex items-center gap-1 text-sm font-medium mb-3 -ml-1 px-2 py-1 rounded hover:bg-gray-100"
+            style={{ color: MUTED }}
+          >
+            <ArrowLeft size={16} /> Volver
+          </button>
+        )}
         {tab === "resumen" && (
           <Resumen
             equipos={equipos} transito={transito} cotizaciones={cotizaciones} comprometidas={comprometidas}
@@ -3079,6 +3099,30 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, pro
 }
 
 // ---------- Depósito: todo lo que hoy es stock físico, separado del Resumen ----------
+function MuestrasGrupo({ titulo, items }) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="text-xs font-medium mb-1.5" style={{ color: MUTED }}>{titulo} ({sumCantidad(items)})</p>
+      <div className="space-y-2.5">
+        {items.map((e) => (
+          <div key={e.id} className="text-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CodeTag>{e.codigo}</CodeTag>
+                <span style={{ color: INK }}>{e.modelo}</span>
+                <span style={{ color: MUTED }}>· cant. {e.cantidad || 1}</span>
+              </div>
+              <StatusBadge estado={e.estado} />
+            </div>
+            {e.notas && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{e.notas}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DepositoView({ equipos, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
   const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
   const bajas = equipos.filter((e) => e.estado === "Dado de baja");
@@ -3151,20 +3195,9 @@ function DepositoView({ equipos, recuperables, playa, muestras, productos, venta
         {muestras.length === 0 ? (
           <p className="text-sm" style={{ color: MUTED }}>No hay equipos clasificados como muestra.</p>
         ) : (
-          <div className="space-y-2.5">
-            {muestras.map((e) => (
-              <div key={e.id} className="text-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CodeTag>{e.codigo}</CodeTag>
-                    <span style={{ color: INK }}>{e.modelo}</span>
-                    <span style={{ color: MUTED }}>· cant. {e.cantidad || 1}</span>
-                  </div>
-                  <StatusBadge estado={e.estado} />
-                </div>
-                {e.notas && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{e.notas}</p>}
-              </div>
-            ))}
+          <div className="space-y-4">
+            <MuestrasGrupo titulo="En depósito" items={muestras.filter((e) => e.estado === "Muestra")} />
+            <MuestrasGrupo titulo="Fuera de depósito (prestadas)" items={muestras.filter((e) => e.estado !== "Muestra")} />
           </div>
         )}
       </div>
@@ -7429,7 +7462,7 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
           <table className="text-sm" style={{ minWidth: 640 }}>
             <thead>
               <tr>
-                {["Nombre", "Teléfono / WhatsApp", "Notas", ""].map((h) => (
+                {["Nombre", "Teléfono / WhatsApp", "Rol / empresa", ""].map((h) => (
                   <th key={h} className="text-left font-medium px-3 py-2 border-b sticky top-0 z-10 whitespace-nowrap" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>{h}</th>
                 ))}
               </tr>
@@ -7444,7 +7477,7 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
                     <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
                   </td>
                   <td className="px-3 py-1.5" style={{ minWidth: 220 }}>
-                    <ComentarioEditor value={c.notas} onSave={(v) => onUpdateField(c.id, "notas", v)} placeholder="Opcional" />
+                    <ComentarioEditor value={c.notas} onSave={(v) => onUpdateField(c.id, "notas", v)} placeholder="Ej: Dueño de..., Gerente de ventas de..., Constructora/desarrolladora" />
                   </td>
                   <td className="px-2 py-1.5">
                     <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
@@ -7481,7 +7514,9 @@ function ClienteForm({ onSave }) {
       <Field label="Teléfono / WhatsApp">
         <TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 595981234567 (con código de país, sin +)" />
       </Field>
-      <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
+      <Field label="Rol / empresa">
+        <TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: Dueño de..., Gerente de ventas de..., Constructora/desarrolladora" />
+      </Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar cliente</PrimaryButton>
     </div>

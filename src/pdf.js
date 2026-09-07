@@ -16,6 +16,17 @@ const LEGAL_TEXT =
   "Garantía 1 año por daños de fábrica desde su instalación, extendible a 36 meses, siempre y cuando se realice " +
   "servicio de mantenimiento oficial antes de los 12 y 24 meses respectivamente desde su instalacion.";
 
+// Igual que LEGAL_TEXT, pero la cláusula de instalación depende de si esta cotización puntual la
+// incluye — si el cliente pagó instalación no tiene sentido que el mismo texto diga "no incluye".
+function legalTextCotizacion(incluyeInstalacion) {
+  return (
+    "TODOS LOS PRECIOS SON EN DOLARES E IVA INCLUIDO. La cotización es válida por 30 días. " +
+    (incluyeInstalacion ? "" : "No incluye instalación. ") +
+    "Garantía 1 año por daños de fábrica desde su instalación, extendible a 36 meses, siempre y cuando se realice " +
+    "servicio de mantenimiento oficial antes de los 12 y 24 meses respectivamente desde su instalacion."
+  );
+}
+
 // Paleta derivada del gris del logo AEON (#686D73), igual que en la app.
 const ACCENT = rgb(0x56 / 255, 0x5a / 255, 0x5f / 255);
 const ACCENT_LIGHT = rgb(0xeb / 255, 0xeb / 255, 0xec / 255);
@@ -402,7 +413,7 @@ export async function generateCotizacionPdf(cotizacion) {
 
   // Legal terms
   ensureSpace(70);
-  const legalLines = wrapText(font, LEGAL_TEXT, 6.5, CONTENT_W - 10);
+  const legalLines = wrapText(font, legalTextCotizacion(!!cotizacion.incluirInstalacion), 6.5, CONTENT_W - 10);
   const formaPagoLine = `Forma de pago sugerida: ${cotizacion.formaPago || "A conversar"}.`;
   const obsLine = `OBS: ${cotizacion.obs || "Productos a retirar de depósito."}`;
   const allLegal = [...legalLines, formaPagoLine, obsLine];

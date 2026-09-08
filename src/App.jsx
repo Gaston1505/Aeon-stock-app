@@ -6478,6 +6478,8 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
 
   // Agrupa el selector de productos por categoría (categoriaPrincipal > subcategoria > ...)
   // para que un catálogo grande siga siendo navegable en vez de una lista plana larguísima.
+  // Mismos grupos y mismo orden que el Catálogo (Tipo de equipo, ON-OFF antes que Inverter,
+  // BTU/capacidad ascendente vía ordenNumerico) — así elegir acá es tan claro como navegarlo allá.
   const productosPorGrupo = useMemo(() => {
     const grupos = new Map();
     for (const p of productos) {
@@ -6486,7 +6488,29 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       if (!grupos.has(key)) grupos.set(key, []);
       grupos.get(key).push(p);
     }
-    return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const indiceEnOrden = (valor, orden) => {
+      if (!orden) return 999;
+      const i = orden.indexOf((valor || "").trim());
+      return i === -1 ? orden.length : i;
+    };
+    const claveGrupo = (p) => {
+      const tab = CATALOGO_TABS.find((t) => t.filtro(p));
+      const ordenes = tab?.ordenesPorNivel || {};
+      return [
+        p.categoriaPrincipal || "",
+        indiceEnOrden(p.subcategoria, ordenes[1]), (p.subcategoria || "").trim(),
+        indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
+      ];
+    };
+    const entries = [...grupos.entries()].map(([key, items]) => ({ key, items: ordenarProductos(items), clave: claveGrupo(items[0]) }));
+    entries.sort((a, b) => {
+      for (let i = 0; i < a.clave.length; i++) {
+        if (a.clave[i] === b.clave[i]) continue;
+        return typeof a.clave[i] === "number" ? a.clave[i] - b.clave[i] : String(a.clave[i]).localeCompare(String(b.clave[i]));
+      }
+      return 0;
+    });
+    return entries;
   }, [productos]);
 
   const handleProducto = (id) => {
@@ -6566,9 +6590,13 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
         <Field label="Producto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
             <option value="">Seleccionar...</option>
-            {productosPorGrupo.map(([grupo, items]) => (
-              <optgroup key={grupo} label={grupo}>
-                {items.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            {productosPorGrupo.map(({ key, items }) => (
+              <optgroup key={key} label={key}>
+                {items.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.categoriaPrincipal === "Repuestos" && p.descripcion ? p.descripcion : p.nombre}
+                  </option>
+                ))}
               </optgroup>
             ))}
           </Select>
@@ -6653,6 +6681,8 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
 
   const productoSel = productos.find((p) => p.id === productoId);
 
+  // Mismos grupos y mismo orden que el Catálogo (Tipo de equipo, ON-OFF antes que Inverter,
+  // BTU/capacidad ascendente vía ordenNumerico) — así elegir acá es tan claro como navegarlo allá.
   const productosPorGrupo = useMemo(() => {
     const grupos = new Map();
     for (const p of productos) {
@@ -6661,7 +6691,29 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       if (!grupos.has(key)) grupos.set(key, []);
       grupos.get(key).push(p);
     }
-    return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const indiceEnOrden = (valor, orden) => {
+      if (!orden) return 999;
+      const i = orden.indexOf((valor || "").trim());
+      return i === -1 ? orden.length : i;
+    };
+    const claveGrupo = (p) => {
+      const tab = CATALOGO_TABS.find((t) => t.filtro(p));
+      const ordenes = tab?.ordenesPorNivel || {};
+      return [
+        p.categoriaPrincipal || "",
+        indiceEnOrden(p.subcategoria, ordenes[1]), (p.subcategoria || "").trim(),
+        indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
+      ];
+    };
+    const entries = [...grupos.entries()].map(([key, items]) => ({ key, items: ordenarProductos(items), clave: claveGrupo(items[0]) }));
+    entries.sort((a, b) => {
+      for (let i = 0; i < a.clave.length; i++) {
+        if (a.clave[i] === b.clave[i]) continue;
+        return typeof a.clave[i] === "number" ? a.clave[i] - b.clave[i] : String(a.clave[i]).localeCompare(String(b.clave[i]));
+      }
+      return 0;
+    });
+    return entries;
   }, [productos]);
 
   const handleProducto = (id) => {
@@ -6747,9 +6799,13 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
         <Field label="Producto del catálogo">
           <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
             <option value="">Seleccionar...</option>
-            {productosPorGrupo.map(([grupo, items]) => (
-              <optgroup key={grupo} label={grupo}>
-                {items.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            {productosPorGrupo.map(({ key, items }) => (
+              <optgroup key={key} label={key}>
+                {items.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.categoriaPrincipal === "Repuestos" && p.descripcion ? p.descripcion : p.nombre}
+                  </option>
+                ))}
               </optgroup>
             ))}
           </Select>

@@ -6251,7 +6251,12 @@ const CATALOGO_TABS = [
   {
     key: "aires", label: "Aire Acondicionado", nivelInicio: 1,
     filtro: (p) => p.categoriaPrincipal === "Aire Acondicionado",
-    ordenesPorNivel: { 1: ["Split Pared", "Cassette", "Piso-Techo", "Ducto", "Multi Split Interior", "Multi Split Exterior"] },
+    // Nivel 1 = Tipo de equipo; nivel 2 = ON-OFF antes que Inverter — de menos a más, mismo
+    // criterio que la potencia (BTU) vía ordenNumerico dentro de cada grupo.
+    ordenesPorNivel: {
+      1: ["Split Pared", "Cassette", "Piso-Techo", "Ducto", "Multi Split Interior", "Multi Split Exterior"],
+      2: ["ON-OFF", "Inverter"],
+    },
   },
   {
     key: "anafes", label: "Anafes", nivelInicio: 2,

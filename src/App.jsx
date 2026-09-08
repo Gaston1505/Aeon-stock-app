@@ -1542,6 +1542,7 @@ export default function App() {
         updateItem(COLLECTIONS.productos, existente.id, {
           stockDisponible: nuevoStock,
           costoOrigen: Number(rep.costoOrigen) || Number(existente.costoOrigen) || 0,
+          precioLista: Number(rep.precioVenta) || Number(existente.precioLista) || 0,
         });
         existente.stockDisponible = nuevoStock;
       } else {
@@ -1550,7 +1551,7 @@ export default function App() {
         const nuevoProducto = {
           nombre, categoriaPrincipal: "Repuestos", subcategoria2: rep.modeloAsociado || "",
           descripcion: rep.descripcion || "", codigoFabrica: rep.codigoPieza || "",
-          costoOrigen: Number(rep.costoOrigen) || 0, costoPy: 0, precioLista: 0,
+          costoOrigen: Number(rep.costoOrigen) || 0, costoPy: 0, precioLista: Number(rep.precioVenta) || 0,
           stockDisponible: Number(rep.cantidad) || 0,
         };
         addItem(COLLECTIONS.productos, nuevoProducto);
@@ -7780,6 +7781,7 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
   const [descripcion, setDescripcion] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [costoOrigen, setCostoOrigen] = useState("");
+  const [precioVenta, setPrecioVenta] = useState("");
   const [error, setError] = useState("");
 
   const modelosCatalogo = useMemo(
@@ -7799,6 +7801,7 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
     onGuardar({
       modeloAsociado: modeloAsociado.trim(), codigoPieza: codigoPieza.trim(), descripcion: descripcion.trim(),
       cantidad: Number(cantidad) || 1, costoOrigen: Number(costoOrigen) || 0,
+      precioVenta: Number(precioVenta) || 0,
     });
   };
 
@@ -7819,6 +7822,9 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
         <Field label="Cantidad"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
         <Field label="Costo origen U$S"><TextInput type="number" value={costoOrigen} onChange={(e) => setCostoOrigen(e.target.value)} placeholder="Opcional" /></Field>
       </div>
+      <Field label="Precio de venta U$S (para cuando llegue, precarga el precio de lista)">
+        <TextInput type="number" value={precioVenta} onChange={(e) => setPrecioVenta(e.target.value)} placeholder="Opcional" />
+      </Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Agregar repuesto</PrimaryButton>
     </div>
@@ -7939,7 +7945,8 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                                 · {r.modeloAsociado}{r.codigoPieza ? ` · pieza ${r.codigoPieza}` : ""} —{" "}
                                 {r.descripcion && <span className="font-medium" style={{ color: INK }}>{r.descripcion}</span>}
                                 {" "}· cant. {r.cantidad}
-                                {Number(r.costoOrigen) > 0 && ` · U$S ${Number(r.costoOrigen).toLocaleString()} c/u`}
+                                {Number(r.costoOrigen) > 0 && ` · origen U$S ${Number(r.costoOrigen).toLocaleString()} c/u`}
+                                {Number(r.precioVenta) > 0 && ` · venta U$S ${Number(r.precioVenta).toLocaleString()} c/u`}
                               </span>
                               {!llegado && (
                                 <button onClick={() => onQuitarRepuesto(t, r.id)} title="Quitar repuesto">

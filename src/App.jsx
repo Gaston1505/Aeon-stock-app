@@ -291,7 +291,7 @@ function codigoDePlaya(descripcion) {
 // codigos" para los repuestos universales).
 function etiquetaRepuesto(p) {
   const desc = p.descripcion || p.nombre;
-  const asociado = (p.subcategoria2 || "").trim();
+  const asociado = (p.subcategoria2 || "").trim().replace(/-Rep$/, "");
   if (!asociado || asociado === "Sirve para todos los codigos") return `${desc} — repuesto universal`;
   return `${desc} — repuesto de ${asociado}`;
 }

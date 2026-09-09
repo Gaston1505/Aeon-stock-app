@@ -286,6 +286,16 @@ function codigoDePlaya(descripcion) {
   return match ? match[1].trim() : "";
 }
 
+// Para los reportes: en vez del código interno crudo ("AE-ACV-T62B 60CM-ON-Rep-1"), mostrar
+// qué es y para qué modelo — subcategoria2 guarda el equipo asociado (o "Sirve para todos los
+// codigos" para los repuestos universales).
+function etiquetaRepuesto(p) {
+  const desc = p.descripcion || p.nombre;
+  const asociado = (p.subcategoria2 || "").trim();
+  if (!asociado || asociado === "Sirve para todos los codigos") return `${desc} — repuesto universal`;
+  return `${desc} — repuesto de ${asociado}`;
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return null;
   const today = new Date(todayISO() + "T00:00:00");
@@ -1934,7 +1944,7 @@ export default function App() {
       .map((e) => ({ modelo: e.modelo, categoria: "Equipos", cantidad: Number(e.cantidad) || 1, valorUnitario: buscarValor(e.modelo) }));
     const deRepuestos = productos
       .filter((p) => p.categoriaPrincipal === "Repuestos")
-      .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.precioLista) || 0 }))
+      .map((p) => ({ modelo: etiquetaRepuesto(p), categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.precioLista) || 0 }))
       .filter((r) => r.cantidad > 0);
     const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(codigoDePlaya(p.descripcion)) }));
     return [...deEquipos, ...deRepuestos, ...dePlaya];
@@ -1950,7 +1960,7 @@ export default function App() {
       .map((e) => ({ modelo: e.modelo, categoria: "Equipos", cantidad: Number(e.cantidad) || 1, valorUnitario: buscarValor(e.modelo) }));
     const deRepuestos = productos
       .filter((p) => p.categoriaPrincipal === "Repuestos")
-      .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.costoPy) || 0 }))
+      .map((p) => ({ modelo: etiquetaRepuesto(p), categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.costoPy) || 0 }))
       .filter((r) => r.cantidad > 0);
     const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(codigoDePlaya(p.descripcion)) }));
     return [...deEquipos, ...deRepuestos, ...dePlaya];

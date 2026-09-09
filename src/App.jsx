@@ -278,6 +278,13 @@ function resumirCotizaciones(clientes) {
   return resumen;
 }
 
+// Zona de playa guarda el código del catálogo al final de la descripción entre paréntesis
+// (ej: "Anafe 2 Hornillas Vitrocerámica (AE-AC-2T-30-ON)") — esto extrae solo el código.
+function codigoDePlaya(descripcion) {
+  const match = (descripcion || "").match(/\(([^()]+)\)\s*$/);
+  return match ? match[1].trim() : "";
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return null;
   const today = new Date(todayISO() + "T00:00:00");
@@ -1928,7 +1935,7 @@ export default function App() {
       .filter((p) => p.categoriaPrincipal === "Repuestos")
       .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.precioLista) || 0 }))
       .filter((r) => r.cantidad > 0);
-    const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(p.descripcion) }));
+    const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(codigoDePlaya(p.descripcion)) }));
     return [...deEquipos, ...deRepuestos, ...dePlaya];
   }, [equipos, productos, playa]);
 
@@ -1944,7 +1951,7 @@ export default function App() {
       .filter((p) => p.categoriaPrincipal === "Repuestos")
       .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.costoPy) || 0 }))
       .filter((r) => r.cantidad > 0);
-    const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(p.descripcion) }));
+    const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(codigoDePlaya(p.descripcion)) }));
     return [...deEquipos, ...deRepuestos, ...dePlaya];
   }, [equipos, productos, playa]);
 

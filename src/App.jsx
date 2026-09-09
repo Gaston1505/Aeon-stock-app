@@ -1915,10 +1915,10 @@ export default function App() {
     return transito.filter((t) => !q || [t.modelo, t.contenedor].some((v) => (v || "").toLowerCase().includes(q)));
   }, [transito, query]);
 
-  // Mercadería física en Paraguay para los reportes de seguro/Joel: equipos activos (todo
+  // Mercadería física en Paraguay para el Reporte para Joel: equipos activos (todo
   // menos Vendido/Dado de baja, que ya salieron del circuito), repuestos y lo que está en
   // Zona de playa sin clasificar todavía. Una fila por origen, con su valor de lista si se
-  // encuentra el producto — así los tres reportes (muestras, seguro, Joel) parten de la misma cuenta.
+  // encuentra el producto.
   const mercaderiaFisicaParaguay = useMemo(() => {
     const buscarValor = (modelo) => Number(productos.find((p) => p.nombre === modelo)?.precioLista) || 0;
     const deEquipos = equipos
@@ -1927,6 +1927,22 @@ export default function App() {
     const deRepuestos = productos
       .filter((p) => p.categoriaPrincipal === "Repuestos")
       .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.precioLista) || 0 }))
+      .filter((r) => r.cantidad > 0);
+    const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(p.descripcion) }));
+    return [...deEquipos, ...deRepuestos, ...dePlaya];
+  }, [equipos, productos, playa]);
+
+  // Misma mercadería física, pero valorizada a costo puesto en PY para el Reporte para Seguro:
+  // un seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla, así que
+  // no corresponde usar el precio de lista acá.
+  const mercaderiaFisicaParaguayCosto = useMemo(() => {
+    const buscarValor = (modelo) => Number(productos.find((p) => p.nombre === modelo)?.costoPy) || 0;
+    const deEquipos = equipos
+      .filter((e) => e.estado !== "Vendido" && e.estado !== "Dado de baja")
+      .map((e) => ({ modelo: e.modelo, categoria: "Equipos", cantidad: Number(e.cantidad) || 1, valorUnitario: buscarValor(e.modelo) }));
+    const deRepuestos = productos
+      .filter((p) => p.categoriaPrincipal === "Repuestos")
+      .map((p) => ({ modelo: p.nombre, categoria: "Repuestos", cantidad: Number(p.stockDisponible) || 0, valorUnitario: Number(p.costoPy) || 0 }))
       .filter((r) => r.cantidad > 0);
     const dePlaya = playa.map((p) => ({ modelo: p.descripcion, categoria: "Zona de playa", cantidad: Number(p.cantidad) || 1, valorUnitario: buscarValor(p.descripcion) }));
     return [...deEquipos, ...deRepuestos, ...dePlaya];
@@ -2442,7 +2458,7 @@ export default function App() {
         )}
 
         {tab === "reporte-seguro" && (
-          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguay} comprometidas={comprometidas} />
+          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguayCosto} comprometidas={comprometidas} />
         )}
 
         {tab === "reporte-joel" && (
@@ -8152,7 +8168,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
               <p><strong>Equipos:</strong> todos, salvo Vendido y Dado de baja (ya salieron del circuito).</p>
               <p><strong>Repuestos:</strong> el Stock disponible cargado en cada uno del Catálogo.</p>
               <p><strong>Zona de playa:</strong> todo lo que todavía no se clasificó.</p>
-              <p>El valor de cada fila sale del Precio de lista del Catálogo — si el modelo no matchea exacto, queda sin valor ("—") en vez de inventar un precio.</p>
+              <p>El valor de cada fila sale del Costo puesto en PY del Catálogo — un seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla. Si el modelo no matchea exacto, queda sin valor ("—") en vez de inventar un precio.</p>
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>

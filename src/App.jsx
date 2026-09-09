@@ -19,6 +19,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, downloadGarantiaPdf,
+  COMPANY, fmtFecha,
 } from "./pdf";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
@@ -8142,13 +8143,31 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
   const totalValor = filas.reduce((acc, f) => acc + f.cantidad * f.valorUnitario, 0);
 
   const handleExcel = () => {
-    const filasExcel = filas.map((f) => ({
-      "Categoría": f.categoria, "Modelo": f.modelo, "Cantidad": f.cantidad,
-      "Valor unitario U$S": f.valorUnitario, "Valor total U$S": f.cantidad * f.valorUnitario,
-    }));
-    filasExcel.push({ "Categoría": "", "Modelo": "TOTAL", "Cantidad": totalCant, "Valor unitario U$S": "", "Valor total U$S": totalValor });
+    const encabezado = [
+      [COMPANY.razonSocial], [COMPANY.direccion], [COMPANY.direccion2],
+      [COMPANY.telefonos], [COMPANY.emails], [],
+      ["REPORTE PARA SEGURO — MERCADERÍA FÍSICA EN PARAGUAY"],
+      ["Fecha:", fmtFecha(todayISO())], [],
+    ];
+    const columnas = ["Categoría", "Modelo", "Cantidad", "Valor unit. U$S", "Valor total U$S"];
+    const filasDatos = filas.map((f) => [
+      f.categoria, f.modelo, f.cantidad,
+      f.valorUnitario || "—", (f.cantidad * f.valorUnitario) || "—",
+    ]);
+    const filaTotal = [`Total: ${totalCant} unidad(es)`, "", "", "", totalValor];
+    const aoa = [...encabezado, columnas, ...filasDatos, filaTotal];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 16 }, { wch: 34 }, { wch: 10 }, { wch: 16 }, { wch: 16 }];
+    const filaHeaderIdx = encabezado.length;
+    const filaTotalIdx = filaHeaderIdx + 1 + filasDatos.length;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 4 } }, { s: { r: 3, c: 0 }, e: { r: 3, c: 4 } },
+      { s: { r: 4, c: 0 }, e: { r: 4, c: 4 } }, { s: { r: 6, c: 0 }, e: { r: 6, c: 4 } },
+      { s: { r: filaTotalIdx, c: 0 }, e: { r: filaTotalIdx, c: 3 } },
+    ];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasExcel), "Reporte Seguro");
+    XLSX.utils.book_append_sheet(wb, ws, "Reporte Seguro");
     XLSX.writeFile(wb, `Reporte_Seguro_Paraguay_${todayISO()}.xlsx`);
   };
 

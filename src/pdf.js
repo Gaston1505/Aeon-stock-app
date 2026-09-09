@@ -1,7 +1,7 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 // ---------- Company letterhead (matches the real quotes) ----------
-const COMPANY = {
+export const COMPANY = {
   razonSocial: "Quantum Investments S.A.",
   direccion: "San Juan XXIII esq Juan Max Boettner.",
   direccion2: "Edif. Park Plaza Piso 11 Oficina D. Asunción - Paraguay",
@@ -457,7 +457,7 @@ export function montoEnLetrasGuaranies(monto) {
   const letras = numeroALetras(monto);
   return letras.charAt(0).toUpperCase() + letras.slice(1);
 }
-function fmtFecha(iso) {
+export function fmtFecha(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;

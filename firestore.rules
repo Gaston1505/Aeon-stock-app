@@ -47,6 +47,15 @@ service cloud.firestore {
     match /entradas/{docId} { allow read, write: if esAdmin() || esDeposito(); }
     match /playa/{docId} { allow read, write: if esAdmin() || esDeposito(); }
 
+    // Solicitudes de entrada/salida creadas por depósito: cualquiera de los dos roles puede
+    // leerlas (depósito filtra a las suyas en la UI) y depósito puede crear una nueva, pero
+    // solo admin puede aprobarla/rechazarla (update) o borrarla — así depósito no puede
+    // auto-aprobarse aunque manipule la llamada a mano.
+    match /solicitudes/{docId} {
+      allow read, create: if esAdmin() || esDeposito();
+      allow update, delete: if esAdmin();
+    }
+
     // Catálogo: depósito necesita leerlo (para elegir producto en una entrada/salida) y
     // ajustar el stock de repuestos, pero no puede crear productos ni tocar precios/fichas.
     match /productos/{docId} {

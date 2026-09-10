@@ -136,6 +136,7 @@ const COLLECTIONS = {
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
+  solicitudes: "solicitudes",
 };
 
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas y Salidas.
@@ -482,6 +483,50 @@ function StatusBadge({ estado }) {
     >
       {estado}
     </span>
+  );
+}
+
+// Solicitudes de entrada/salida creadas por el rol depósito, esperando que un admin las
+// apruebe (recién ahí impactan en stock de verdad). Admin ve todas y puede resolverlas acá
+// mismo; depósito solo ve las suyas, de solo lectura.
+function SolicitudesPendientesBox({ solicitudes, tipo, esAdmin, uid, onAprobar, onRechazar }) {
+  const relevantes = solicitudes
+    .filter((s) => s.tipo === tipo)
+    .filter((s) => esAdmin ? s.estado === "Pendiente" : (s.creadoPorUid === uid && s.estado !== "Aprobada"))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  if (relevantes.length === 0) return null;
+  const badgeEstado = (estado) => {
+    const map = { Pendiente: { color: "#8A3E06", bg: "#FDF1E4" }, Rechazada: { color: "#B91C1C", bg: "#FBEAEA" } };
+    const s = map[estado] || { color: MUTED, bg: "#F1F5F9" };
+    return <span className="text-xs font-medium px-2 py-0.5 rounded" style={{ color: s.color, backgroundColor: s.bg }}>{estado}</span>;
+  };
+  return (
+    <div className="mb-4 rounded-lg border" style={{ borderColor: "#F3D9B8", backgroundColor: "#FEFAF4" }}>
+      <p className="text-xs font-semibold uppercase tracking-wide px-3.5 pt-3" style={{ color: "#8A3E06" }}>
+        {esAdmin ? "Pendientes de aprobación" : "Tus solicitudes"}
+      </p>
+      <div className="divide-y" style={{ borderColor: "#F3D9B8" }}>
+        {relevantes.map((s) => (
+          <div key={s.id} className="px-3.5 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-xs" style={{ color: INK }}>
+              <CodeTag>{s.payload.codigo}</CodeTag>{" "}
+              {tipo === "entrada" ? `${s.payload.tipo || "Entrada"} · ${s.payload.estadoResultante || ""}` : `${s.payload.categoriaLabel || ""} · cant. ${s.payload.cantidad}`}
+              {esAdmin && s.creadoPorEmail && <span style={{ color: MUTED }}> · pedido por {s.creadoPorEmail}</span>}
+              {!esAdmin && s.estado === "Rechazada" && s.motivoRechazo && <span style={{ color: MUTED }}> · {s.motivoRechazo}</span>}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {badgeEstado(s.estado)}
+              {esAdmin && (
+                <>
+                  <SecondaryButton onClick={() => onAprobar(s)}>Aprobar</SecondaryButton>
+                  <SecondaryButton onClick={() => onRechazar(s.id)}>Rechazar</SecondaryButton>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1107,6 +1152,7 @@ export default function App() {
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
+  const [solicitudes, setSolicitudes] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -1153,6 +1199,7 @@ export default function App() {
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
+      [COLLECTIONS.solicitudes]: setSolicitudes,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -1272,6 +1319,17 @@ export default function App() {
     if (data.codigo && data.estadoResultante) updateEquipoEstadoByCodigo(data.codigo, data.estadoResultante);
   };
   const deleteEntrada = (id) => deleteItem(COLLECTIONS.entradas, id);
+
+  // Depósito no puede crear una entrada/salida real de una — queda "Pendiente" acá hasta que
+  // un admin la aprueba (recién ahí se ejecuta addEntrada/addMovimiento de verdad, con su
+  // impacto real en stock). Admin sigue guardando directo, sin pasar por acá.
+  const crearSolicitud = (tipo, payload) => addItem(COLLECTIONS.solicitudes, { tipo, estado: "Pendiente", payload });
+  const aprobarSolicitud = (sol) => {
+    if (sol.tipo === "entrada") addEntrada(sol.payload);
+    else addMovimiento(sol.payload);
+    updateItem(COLLECTIONS.solicitudes, sol.id, { estado: "Aprobada" });
+  };
+  const rechazarSolicitud = (id, motivo) => updateItem(COLLECTIONS.solicitudes, id, { estado: "Rechazada", motivoRechazo: motivo || "" });
 
   function updateEquipoEstadoByCodigo(codigo, estado) {
     equipos.filter((e) => e.codigo === codigo).forEach((e) => updateItem(COLLECTIONS.equipos, e.id, { estado }));
@@ -2097,6 +2155,9 @@ export default function App() {
     if (rol === "deposito" && !TABS_DEPOSITO.includes(tab)) setTab("deposito");
   }, [rol, tab]);
 
+  const pendientesEntrada = esAdmin ? solicitudes.filter((s) => s.tipo === "entrada" && s.estado === "Pendiente").length : 0;
+  const pendientesSalida = esAdmin ? solicitudes.filter((s) => s.tipo === "salida" && s.estado === "Pendiente").length : 0;
+
   const NAV_TODO = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
     // Stock / inventario
@@ -2108,8 +2169,8 @@ export default function App() {
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
     // Movimientos
-    { key: "entradas", label: "Entradas", icon: ArrowDownToLine },
-    { key: "movimientos", label: "Salidas", icon: ArrowUpFromLine },
+    { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine },
+    { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine },
     // Ventas
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
     { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
@@ -2373,6 +2434,10 @@ export default function App() {
               </SecondaryButton>
             }
           >
+            <SolicitudesPendientesBox
+              solicitudes={solicitudes} tipo="salida" esAdmin={esAdmin} uid={user?.uid}
+              onAprobar={aprobarSolicitud} onRechazar={(id) => rechazarSolicitud(id)}
+            />
             <Table
               columns={[
                 { key: "fecha", label: "Fecha" }, { key: "categoriaLabel", label: "Categoría de origen" },
@@ -2410,6 +2475,10 @@ export default function App() {
             onNew={() => setDrawer("entrada")}
             newLabel="Nueva entrada"
           >
+            <SolicitudesPendientesBox
+              solicitudes={solicitudes} tipo="entrada" esAdmin={esAdmin} uid={user?.uid}
+              onAprobar={aprobarSolicitud} onRechazar={(id) => rechazarSolicitud(id)}
+            />
             <Table
               columns={[
                 { key: "fecha", label: "Fecha" }, { key: "codigo", label: "Código" },
@@ -2553,10 +2622,10 @@ export default function App() {
         />
       </Drawer>
       <Drawer open={drawer === "movimiento"} onClose={() => setDrawer(null)} title="Nueva salida">
-        <MovimientoForm equipos={equipos} playa={playa} productos={productos} onSave={(d) => { addMovimiento(d); setDrawer(null); }} />
+        <MovimientoForm equipos={equipos} playa={playa} productos={productos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addMovimiento(d) : crearSolicitud("salida", d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "entrada"} onClose={() => setDrawer(null)} title="Nueva entrada">
-        <EntradaForm equipos={equipos} onSave={(d) => { addEntrada(d); setDrawer(null); }} />
+        <EntradaForm equipos={equipos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addEntrada(d) : crearSolicitud("entrada", d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "venta"} onClose={() => setDrawer(null)} title="Nueva venta">
         <VentaForm productos={productos} onSave={(d) => { addVenta(d); setDrawer(null); }} />
@@ -4539,7 +4608,7 @@ function categoriaOrigenParaEquipo(equipo) {
 
 // `preset` (opcional): { categoria, sourceId } — precarga categoría y producto ya elegidos (ej.
 // viniendo de "Buscar por escaneo"), sin bloquear los selects por si el usuario quiere cambiarlos.
-function MovimientoForm({ equipos, playa, productos, onSave, preset }) {
+function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = true }) {
   const [fecha, setFecha] = useState(todayISO());
   const [categoria, setCategoria] = useState(preset ? preset.categoria : "");
   const [sourceId, setSourceId] = useState(preset ? preset.sourceId : "");
@@ -4716,8 +4785,13 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset }) {
       )}
 
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} /></Field>
+      {!esAdmin && (
+        <p className="text-xs mb-2 px-3 py-2 rounded-lg" style={{ color: "#8A3E06", backgroundColor: "#FDF1E4" }}>
+          Esto queda pendiente de aprobación — no impacta el stock hasta que un admin lo confirme.
+        </p>
+      )}
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar salida</PrimaryButton>
+      <PrimaryButton onClick={submit}>{esAdmin ? "Guardar salida" : "Enviar para aprobación"}</PrimaryButton>
     </div>
   );
 }
@@ -5412,7 +5486,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
   );
 }
 
-function EntradaForm({ equipos, onSave }) {
+function EntradaForm({ equipos, onSave, esAdmin = true }) {
   const [fecha, setFecha] = useState(todayISO());
   const [codigo, setCodigo] = useState("");
   const [tipo, setTipo] = useState(TIPOS_ENTRADA[0]);
@@ -5444,8 +5518,13 @@ function EntradaForm({ equipos, onSave }) {
       <Field label="Motivo"><TextInput value={motivo} onChange={(e) => setMotivo(e.target.value)} /></Field>
       <Field label="Estado resultante"><Select value={estadoResultante} onChange={(e) => setEstadoResultante(e.target.value)}>{ESTADOS_RESULTANTES.map((s) => <option key={s}>{s}</option>)}</Select></Field>
       <Field label="Responsable"><TextInput value={responsable} onChange={(e) => setResponsable(e.target.value)} /></Field>
+      {!esAdmin && (
+        <p className="text-xs mb-2 px-3 py-2 rounded-lg" style={{ color: "#8A3E06", backgroundColor: "#FDF1E4" }}>
+          Esto queda pendiente de aprobación — no impacta el stock hasta que un admin lo confirme.
+        </p>
+      )}
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar entrada</PrimaryButton>
+      <PrimaryButton onClick={submit}>{esAdmin ? "Guardar entrada" : "Enviar para aprobación"}</PrimaryButton>
     </div>
   );
 }

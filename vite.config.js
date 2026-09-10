@@ -12,6 +12,15 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["icons/apple-touch-icon.png"],
+      workbox: {
+        // Por default el service worker de la PWA reescribe CUALQUIER navegación (click en un
+        // <a>, escribir la URL) hacia index.html, para que la app funcione offline como SPA.
+        // Eso también atrapaba los links a archivos estáticos propios — manual.html,
+        // presentacion-comercial.pdf, el futuro catalogo.pdf — sirviendo la app en vez del
+        // archivo real. Como la app no tiene rutas propias (todo es un solo path con estado
+        // en React), alcanza con excluir del fallback cualquier URL que termine en extensión.
+        navigateFallbackDenylist: [/\.[^/]+$/],
+      },
       manifest: {
         name: "AEON",
         short_name: "AEON",

@@ -1554,6 +1554,23 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  // Archivos fijos para mandarle al cliente (presentación comercial, catálogo en PDF) —
+  // públicos en public/, sin generar nada: solo hay que traer sus bytes para poder
+  // compartirlos con la misma hoja nativa que usan cotizaciones/presupuestos.
+  const handleCompartirArchivoEstatico = async (url, filename, texto) => {
+    setDescargandoId(filename);
+    setPdfError("");
+    try {
+      const bytes = await fetch(url).then((r) => r.arrayBuffer());
+      const ok = await compartirArchivo(bytes, filename, texto);
+      if (!ok) window.open(url, "_blank");
+    } catch (e) {
+      console.error("Error compartiendo archivo", e);
+      setPdfError("No se pudo compartir el archivo. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   // Clientes: nombre + WhatsApp reutilizable entre cotizaciones/presupuestos — se completa
   // solo al cargar un teléfono nuevo (upsertClienteTelefono) o se carga a mano en la pestaña.
   const addCliente = (data) => addItem(COLLECTIONS.clientes, data);
@@ -2290,15 +2307,15 @@ export default function App() {
               <FileText size={16} />
               Manual de uso
             </a>
-            <a
-              href={`${import.meta.env.BASE_URL}presentacion-comercial.pdf`}
-              target="_blank" rel="noreferrer"
+            <button
+              onClick={() => handleCompartirArchivoEstatico(`${import.meta.env.BASE_URL}presentacion-comercial.pdf`, "Presentacion_comercial_AEON.pdf", "Presentación comercial — AEON Home Tech")}
+              disabled={descargandoId === "Presentacion_comercial_AEON.pdf"}
               className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
               style={{ color: MUTED }}
             >
               <Send size={16} />
-              Presentación comercial
-            </a>
+              {descargandoId === "Presentacion_comercial_AEON.pdf" ? "Generando..." : "Presentación comercial"}
+            </button>
           </nav>
           <div className="px-4 py-3 border-t" style={{ borderColor: BORDER }}>
             {["muestras", "reporte-seguro", "reporte-joel"].includes(tab) ? null : exportConfig[tab] ? (

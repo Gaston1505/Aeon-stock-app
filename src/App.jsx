@@ -2440,7 +2440,7 @@ export default function App() {
 
         {tab === "catalogo" && (
           <CatalogoView
-            productos={filteredProductos} query={query} onQuery={setQuery}
+            productos={filteredProductos} equipos={equipos} query={query} onQuery={setQuery}
             modoInicial={catalogoModoInicial}
             onNew={(modo) => { setProductoEditando(null); setNuevoProductoDefaults(modo === "repuestos" ? { categoriaPrincipal: "Repuestos" } : null); setDrawer("producto"); }}
             onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
@@ -6180,7 +6180,7 @@ function ProductoForm({ producto, defaults, onSave }) {
   );
 }
 
-function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
+function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo }) {
   const tieneCosto = p.costoOrigen || p.costoPy;
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -6216,6 +6216,11 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha }) {
         {p.stockDisponible != null && (
           <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: p.stockDisponible > 0 ? "#E9F7EF" : "#FBEAEA", color: p.stockDisponible > 0 ? "#15803D" : "#B91C1C" }}>
             Stock: {p.stockDisponible}
+          </span>
+        )}
+        {p.categoriaPrincipal !== "Repuestos" && (
+          <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: stockEquipo > 0 ? "#E9F7EF" : "#FBEAEA", color: stockEquipo > 0 ? "#15803D" : "#B91C1C" }}>
+            Stock: {stockEquipo || 0}
           </span>
         )}
       </div>
@@ -6350,12 +6355,12 @@ const CATALOGO_TABS = [
 
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
-function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
+function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo }) {
   if (nodo.productos) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {nodo.productos.map((p) => (
-          <ProductoCard key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
+          <ProductoCard key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockEquipo={stockPorModelo.get(p.nombre)} />
         ))}
       </div>
     );
@@ -6366,7 +6371,7 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
         <div key={hijo.valor}>
           <p className={CATEGORIA_TITULO_CLASE[Math.min(nivel, 3)]} style={{ color: nivel === 0 ? INK : MUTED }}>{hijo.valor}</p>
           <div className="mt-2">
-            <CategoriaNodo nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
+            <CategoriaNodo nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} />
           </div>
         </div>
       ))}
@@ -6374,10 +6379,21 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha }) {
   );
 }
 
-function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
+function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
   const fileInputRef = useRef(null);
   const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
+
+  // Stock vendible por modelo, para mostrarlo directo en la tarjeta del producto — misma
+  // cuenta que usa Depósito (todo menos Vendido/Dado de baja, que ya salieron del circuito).
+  const stockPorModelo = useMemo(() => {
+    const mapa = new Map();
+    for (const e of equipos) {
+      if (e.estado === "Vendido" || e.estado === "Dado de baja") continue;
+      mapa.set(e.modelo, (mapa.get(e.modelo) || 0) + (Number(e.cantidad) || 1));
+    }
+    return mapa;
+  }, [equipos]);
 
   // El catálogo muestra solo lo que ya está dado de alta — lo que viene en tránsito se ve
   // únicamente en la pestaña Tránsito, y recién entra acá cuando se confirma "Dar llegada".
@@ -6495,7 +6511,7 @@ function CatalogoView({ productos, query, onQuery, onNew, onEdit, onDelete, onQu
       ) : modo === "productos" && !buscando && !hayProductosEnTab ? (
         <EmptyState icon={Tag} title="Sin productos en esta categoría" subtitle="Elegí otra pestaña o cargá un producto nuevo acá." />
       ) : (
-        <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} />
+        <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} />
       )}
     </div>
   );

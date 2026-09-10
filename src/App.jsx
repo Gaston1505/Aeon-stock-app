@@ -141,7 +141,7 @@ const COLLECTIONS = {
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas y Salidas.
 // La restricción real está en firestore.rules — esto solo evita que la UI ofrezca algo que
 // después las reglas van a rechazar.
-const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos", "transito"];
+const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos"];
 
 // ---------- Helpers ----------
 function todayISO() {

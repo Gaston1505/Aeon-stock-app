@@ -9,11 +9,11 @@ rules_version = '2';
 // those two original accounts.
 //
 // "deposito" is a restricted role for depósito staff: full access to stock movement
-// collections (equipos, movimientos, entradas, playa, transito), read-only on productos
-// except for updating stockDisponible (which entradas/salidas of repuestos need to touch),
-// and no access at all to clientes/cotizaciones/ventas/ventasComprometidas/
-// presupuestosReparacion. The app's own UI already hides those tabs for this role — these
-// rules are the real enforcement, independent of the UI.
+// collections (equipos, movimientos, entradas, playa), read-only on productos except for
+// updating stockDisponible (which entradas/salidas of repuestos need to touch), and no
+// access at all to clientes/cotizaciones/ventas/ventasComprometidas/presupuestosReparacion/
+// transito. The app's own UI already hides those tabs for this role — these rules are the
+// real enforcement, independent of the UI.
 //
 // IMPORTANT: only publish this version AFTER an account has been created and sign-in verified
 // working in the app — publishing it first would lock everyone out of every collection.
@@ -46,7 +46,6 @@ service cloud.firestore {
     match /movimientos/{docId} { allow read, write: if esAdmin() || esDeposito(); }
     match /entradas/{docId} { allow read, write: if esAdmin() || esDeposito(); }
     match /playa/{docId} { allow read, write: if esAdmin() || esDeposito(); }
-    match /transito/{docId} { allow read, write: if esAdmin() || esDeposito(); }
 
     // Catálogo: depósito necesita leerlo (para elegir producto en una entrada/salida) y
     // ajustar el stock de repuestos, pero no puede crear productos ni tocar precios/fichas.
@@ -65,5 +64,6 @@ service cloud.firestore {
     match /cotizaciones/{docId} { allow read, write: if esAdmin(); }
     match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
     match /clientes/{docId} { allow read, write: if esAdmin(); }
+    match /transito/{docId} { allow read, write: if esAdmin(); }
   }
 }

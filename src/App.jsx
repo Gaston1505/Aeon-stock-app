@@ -143,9 +143,11 @@ const COLLECTIONS = {
 // después las reglas van a rechazar.
 const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos"];
 
-// Manual de uso, publicado aparte — el mismo artifact, distinta ancla según el rol
-// (el rol depósito entra directo a su guía corta, sin ver el manual completo de admin).
-const MANUAL_URL = "https://claude.ai/code/artifact/45ecbbc3-4758-48c1-9783-f1a32417f128";
+// Manual de uso, dos páginas separadas — no una sola con ancla — para que depósito no
+// pueda llegar al manual completo de admin ni por error: cada rol tiene su propio link,
+// y solo la guía de depósito hace falta que sea pública (el completo puede quedar privado).
+const MANUAL_URL_ADMIN = "https://claude.ai/code/artifact/45ecbbc3-4758-48c1-9783-f1a32417f128";
+const MANUAL_URL_DEPOSITO = "https://claude.ai/code/artifact/9117da8e-a00f-473f-b1c8-a6198e3d389f";
 
 // ---------- Helpers ----------
 function todayISO() {
@@ -2216,7 +2218,7 @@ export default function App() {
               );
             })}
             <a
-              href={esAdmin ? MANUAL_URL : `${MANUAL_URL}#guia-deposito`}
+              href={esAdmin ? MANUAL_URL_ADMIN : MANUAL_URL_DEPOSITO}
               target="_blank" rel="noreferrer"
               className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left mt-1 pt-3 border-t"
               style={{ color: MUTED, borderColor: BORDER }}

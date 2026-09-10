@@ -148,6 +148,10 @@ const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos"];
 // (public/manual.html y public/manual-deposito.html) — así no depende de compartir un
 // artifact de Claude (esa cuenta es de equipo y no ofrece link público, solo "gente de
 // Quantum"), y queda accesible sin ningún login, igual que el resto de la app.
+//
+// Mismo mecanismo para archivos que se comparten con clientes desde el celular: la
+// presentación comercial (public/presentacion-comercial.pdf) y, cuando lo suban, el
+// catálogo en PDF (public/catalogo.pdf) — agregar su link al lado del de la presentación.
 
 // ---------- Helpers ----------
 function todayISO() {
@@ -2285,6 +2289,15 @@ export default function App() {
             >
               <FileText size={16} />
               Manual de uso
+            </a>
+            <a
+              href={`${import.meta.env.BASE_URL}presentacion-comercial.pdf`}
+              target="_blank" rel="noreferrer"
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
+              style={{ color: MUTED }}
+            >
+              <Send size={16} />
+              Presentación comercial
             </a>
           </nav>
           <div className="px-4 py-3 border-t" style={{ borderColor: BORDER }}>

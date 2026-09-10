@@ -1,24 +1,69 @@
 rules_version = '2';
 
-// AEON Stock App now requires login (Firebase Auth, email/password) — these rules only allow
-// read/write to a signed-in user. There's no per-user role yet (everyone who has an account
-// sees everything), that's a deliberate first step; role-based access is a possible follow-up.
+// AEON Stock App — Firebase Auth (email/password) + a lightweight role stored in
+// usuarios/{uid}.rol ("admin" | "deposito"). An account with NO usuarios doc defaults to
+// "admin" — that matches this app's original behavior (every signed-in account saw
+// everything) for the two accounts that existed before roles were introduced, so adding
+// this file didn't change what they could already do. Every NEW account created from now
+// on gets an explicit usuarios doc at creation time, so this default only ever applies to
+// those two original accounts.
+//
+// "deposito" is a restricted role for depósito staff: full access to stock movement
+// collections (equipos, movimientos, entradas, playa), read-only on productos except for
+// updating stockDisponible (which entradas/salidas of repuestos need to touch), and no
+// access at all to clientes/cotizaciones/ventas/ventasComprometidas/presupuestosReparacion/
+// transito. The app's own UI already hides those tabs for this role — these rules are the
+// real enforcement, independent of the UI.
 //
 // IMPORTANT: only publish this version AFTER an account has been created and sign-in verified
 // working in the app — publishing it first would lock everyone out of every collection.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /equipos/{docId} { allow read, write: if request.auth != null; }
-    match /movimientos/{docId} { allow read, write: if request.auth != null; }
-    match /entradas/{docId} { allow read, write: if request.auth != null; }
-    match /ventas/{docId} { allow read, write: if request.auth != null; }
-    match /repuestos/{docId} { allow read, write: if request.auth != null; }
-    match /playa/{docId} { allow read, write: if request.auth != null; }
-    match /ventasComprometidas/{docId} { allow read, write: if request.auth != null; }
-    match /productos/{docId} { allow read, write: if request.auth != null; }
-    match /cotizaciones/{docId} { allow read, write: if request.auth != null; }
-    match /presupuestosReparacion/{docId} { allow read, write: if request.auth != null; }
-    match /clientes/{docId} { allow read, write: if request.auth != null; }
-    match /transito/{docId} { allow read, write: if request.auth != null; }
+    function rolDe() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol;
+    }
+    function esAdmin() {
+      return request.auth != null && (
+        !exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) ||
+        rolDe() == "admin"
+      );
+    }
+    function esDeposito() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        rolDe() == "deposito";
+    }
+
+    match /usuarios/{uid} {
+      allow get: if request.auth != null && (request.auth.uid == uid || esAdmin());
+      allow list: if esAdmin();
+      allow write: if esAdmin();
+    }
+
+    // Movimiento de stock: ambos roles necesitan CRUD completo — esto es justamente lo que
+    // hace el rol de depósito.
+    match /equipos/{docId} { allow read, write: if esAdmin() || esDeposito(); }
+    match /movimientos/{docId} { allow read, write: if esAdmin() || esDeposito(); }
+    match /entradas/{docId} { allow read, write: if esAdmin() || esDeposito(); }
+    match /playa/{docId} { allow read, write: if esAdmin() || esDeposito(); }
+
+    // Catálogo: depósito necesita leerlo (para elegir producto en una entrada/salida) y
+    // ajustar el stock de repuestos, pero no puede crear productos ni tocar precios/fichas.
+    match /productos/{docId} {
+      allow read: if esAdmin() || esDeposito();
+      allow create, delete: if esAdmin();
+      allow update: if esAdmin() ||
+        (esDeposito() && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["stockDisponible", "modificadoPorEmail", "modificadoEn"]));
+    }
+
+    // Todo lo demás (ventas, cotizaciones, clientes, tránsito, etc.) es solo para admin —
+    // fuera del alcance pedido para el rol de depósito.
+    match /ventas/{docId} { allow read, write: if esAdmin(); }
+    match /ventasComprometidas/{docId} { allow read, write: if esAdmin(); }
+    match /cotizaciones/{docId} { allow read, write: if esAdmin(); }
+    match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
+    match /clientes/{docId} { allow read, write: if esAdmin(); }
+    match /transito/{docId} { allow read, write: if esAdmin(); }
   }
 }

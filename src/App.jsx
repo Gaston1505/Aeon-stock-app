@@ -138,6 +138,11 @@ const COLLECTIONS = {
   transito: "transito",
 };
 
+// Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas y Salidas.
+// La restricción real está en firestore.rules — esto solo evita que la UI ofrezca algo que
+// después las reglas van a rechazar.
+const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos"];
+
 // ---------- Helpers ----------
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -346,12 +351,16 @@ function subscribeCollection(name, onData) {
   });
 }
 function addItem(name, data) {
-  return addDoc(collection(db, name), { ...data, createdAt: Date.now() })
-    .catch((e) => console.error("Firestore add error", name, e));
+  return addDoc(collection(db, name), {
+    ...data, createdAt: Date.now(),
+    creadoPorEmail: auth.currentUser?.email || null, creadoPorUid: auth.currentUser?.uid || null,
+  }).catch((e) => console.error("Firestore add error", name, e));
 }
 function updateItem(name, id, patch) {
-  return updateDoc(doc(db, name, id), patch)
-    .catch((e) => console.error("Firestore update error", name, id, e));
+  return updateDoc(doc(db, name, id), {
+    ...patch,
+    modificadoPorEmail: auth.currentUser?.email || null, modificadoEn: Date.now(),
+  }).catch((e) => console.error("Firestore update error", name, id, e));
 }
 // El navegador nativo (window.confirm) resultó poco confiable en algunos celulares/PWA —
 // a veces no aparece o queda bloqueado por el navegador sin avisar. `confirmBridge` lo
@@ -1051,6 +1060,23 @@ export default function App() {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
     return () => unsub();
   }, []);
+
+  // Rol del usuario logueado: "admin" (todo) o "deposito" (acceso acotado a stock/movimientos).
+  // Una cuenta sin documento en usuarios/ es admin por compatibilidad con las dos cuentas que
+  // existían antes de que hubiera roles — toda cuenta nueva se crea con su rol explícito.
+  // undefined = todavía cargando, null = sin doc (→ admin).
+  const [rolDoc, setRolDoc] = useState(undefined);
+  useEffect(() => {
+    if (!user) { setRolDoc(undefined); return; }
+    const unsub = onSnapshot(
+      doc(db, "usuarios", user.uid),
+      (snap) => setRolDoc(snap.exists() ? snap.data() : null),
+      () => setRolDoc(null)
+    );
+    return () => unsub();
+  }, [user]);
+  const rol = rolDoc === undefined ? undefined : (rolDoc?.rol || "admin");
+  const esAdmin = rol !== "deposito";
 
   const handleLogin = async (email, password) => {
     setAuthError("");
@@ -2059,7 +2085,14 @@ export default function App() {
     setCatalogoModoInicial(null);
   };
 
-  const NAV = [
+  // Único destino permitido para el rol depósito: si en algún momento el tab activo queda
+  // fuera de esta lista (login recién resuelto, o cambio de rol en caliente) lo mandamos de
+  // vuelta a Depósito — la restricción real vive en las reglas de Firestore, esto es solo UX.
+  useEffect(() => {
+    if (rol === "deposito" && !TABS_DEPOSITO.includes(tab)) setTab("deposito");
+  }, [rol, tab]);
+
+  const NAV_TODO = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard },
     // Stock / inventario
     { key: "deposito", label: "Depósito", icon: Warehouse },
@@ -2085,6 +2118,7 @@ export default function App() {
     { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
     { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
   ];
+  const NAV = esAdmin ? NAV_TODO : NAV_TODO.filter((n) => TABS_DEPOSITO.includes(n.key));
 
   if (user === undefined) {
     return (
@@ -2098,7 +2132,7 @@ export default function App() {
     return <LoginScreen onLogin={handleLogin} error={authError} />;
   }
 
-  if (loading) {
+  if (rol === undefined || loading) {
     return (
       <div className="flex items-center justify-center py-24" style={{ backgroundColor: BG }}>
         <p className="text-sm" style={{ color: MUTED }}>Cargando datos...</p>

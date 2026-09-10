@@ -1,0 +1,108 @@
+<title>Guía Depósito AEON</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  :root{
+    --ink:#1C1E20; --muted:#686D73; --faint:#9BA0A5;
+    --border:#E4E5E5; --bg:#F5F6F8; --surface:#FFFFFF; --surface-2:#FAFBFC;
+    --dep:#B45309; --dep-bg:#FDF1E4; --dep-ink:#8A3E06;
+    --font-head:'Manrope',system-ui,sans-serif;
+    --font-body:'Public Sans',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#F0F1F2; --muted:#A3A9AE; --faint:#6E7378;
+      --border:#2E3033; --bg:#141618; --surface:#1C1F22; --surface-2:#202327;
+      --dep:#E8A25B; --dep-bg:#332312; --dep-ink:#F0BE87;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#F0F1F2; --muted:#A3A9AE; --faint:#6E7378;
+    --border:#2E3033; --bg:#141618; --surface:#1C1F22; --surface-2:#202327;
+    --dep:#E8A25B; --dep-bg:#332312; --dep-ink:#F0BE87;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font-body);line-height:1.6;font-size:15px}
+  h1,h2,h3,h4{font-family:var(--font-head);text-wrap:balance;margin:0}
+  code{font-family:var(--font-mono)}
+  a{color:var(--dep)}
+  main{max-width:720px;margin:0 auto;padding:48px 24px 90px}
+  .kicker{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dep-ink);background:var(--dep-bg);padding:4px 11px;border-radius:20px;margin-bottom:16px}
+  h1{font-size:30px;font-weight:800;margin-bottom:10px}
+  main > p.lede{color:var(--muted);max-width:58ch;font-size:15.5px;margin-bottom:38px}
+  section.card{background:var(--surface);border:0.5px solid var(--border);border-radius:14px;padding:22px 26px;margin-bottom:16px}
+  section.card h3{font-size:17px;font-weight:700}
+  section.card > p.desc{color:var(--muted);margin:8px 0 16px;font-size:14px;max-width:60ch}
+  .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 18px;margin:14px 0}
+  .field{border-left:2px solid var(--border);padding-left:10px}
+  .field .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .field .v{font-size:13.5px;margin-top:2px}
+  ol.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+  ol.steps li{display:flex;gap:10px;font-size:14px}
+  ol.steps li .num{font-family:var(--font-mono);font-size:12px;color:var(--muted);flex:none;width:16px}
+  .tip{margin-top:14px;background:var(--surface-2);border-left:3px solid var(--dep);border-radius:0 10px 10px 0;padding:10px 14px;font-size:13.5px}
+  .tip b{font-family:var(--font-head);font-weight:700}
+  .foot{color:var(--faint);font-size:12.5px;margin-top:36px;text-align:center}
+  @media (max-width:520px){.fields{grid-template-columns:1fr 1fr}}
+</style>
+
+<main>
+  <span class="kicker">AEON Home Tech · Depósito</span>
+  <h1>Guía rápida para depósito</h1>
+  <p class="lede">Con tu usuario de depósito la app solo te muestra estas cuatro pantallas: Depósito, Zona de playa, Entradas y Salidas. Acá va cómo se usa cada una.</p>
+
+  <section class="card" id="deposito">
+    <h3>Depósito</h3>
+    <p class="desc">La foto del stock. Al entrar es lo primero que ves: cuánto hay de cada cosa y dónde está.</p>
+    <div class="fields">
+      <div class="field"><div class="k">Equipos totales activos</div><div class="v">Todo lo que todavía cuenta como inventario (no incluye lo vendido ni lo dado de baja).</div></div>
+      <div class="field"><div class="k">Stock vendible</div><div class="v">Lo que se puede ofrecer hoy a un cliente.</div></div>
+      <div class="field"><div class="k">Zona de playa</div><div class="v">Lo que llegó y todavía no se clasificó.</div></div>
+      <div class="field"><div class="k">Muestras</div><div class="v">Piezas de exhibición, en depósito o prestadas.</div></div>
+      <div class="field"><div class="k">Repuestos</div><div class="v">Unidades sueltas de piezas, por modelo.</div></div>
+    </div>
+    <div class="tip"><b>Tip.</b> El color del stock es la señal: verde es &gt; 0, rojo es 0. Si buscás un modelo puntual, usá la lupa de arriba — busca por código y por nombre a la vez.</div>
+  </section>
+
+  <section class="card" id="playa">
+    <h3>Zona de playa</h3>
+    <p class="desc">Todo lo que entra al depósito sin todavía saber bien qué es o adónde va — lo que deja un técnico, una devolución sin identificar, algo dañado. Se carga acá primero y se clasifica después con calma.</p>
+    <ol class="steps">
+      <li><span class="num">1</span> Tocá <b>Nuevo ingreso</b>.</li>
+      <li><span class="num">2</span> Cargá fecha, una <b>descripción</b> clara (qué es y de qué modelo, ej. "Horno con display roto, modelo AE-AK630"), la <b>cantidad</b> y quién lo dejó (técnico / cliente / otro).</li>
+      <li><span class="num">3</span> Guardá. Ya queda visible en la lista de playa.</li>
+    </ol>
+    <p class="desc" style="margin-top:16px">Una vez cargado, cada ítem tiene un botón <b>Derivar a…</b> para moverlo a su destino final:</p>
+    <div class="fields">
+      <div class="field"><div class="k">Stock vendible</div><div class="v">Está sano, pasa a Depósito para la venta.</div></div>
+      <div class="field"><div class="k">Muestra</div><div class="v">Queda como pieza de exhibición de calidad.</div></div>
+      <div class="field"><div class="k">Banco de recuperables</div><div class="v">Tiene una falla, va a revisión / reparación.</div></div>
+      <div class="field"><div class="k">Equipo de socorro</div><div class="v">Se reserva como unidad de rescate para un service.</div></div>
+    </div>
+    <div class="tip"><b>Ojo.</b> También podés <b>extraer un repuesto</b> sin sacar el equipo de playa — útil cuando lo único que sirve del aparato es una pieza puntual (una placa, un motor) y el resto no.</div>
+  </section>
+
+  <section class="card" id="entradas">
+    <h3>Entradas</h3>
+    <p class="desc">Todo lo que vuelve o ingresa al depósito después del alta inicial: una devolución, un equipo que vuelve de una muestra prestada, algo que vuelve de reparación.</p>
+    <div class="fields">
+      <div class="field"><div class="k">Equipo</div><div class="v">Elegís de la lista por código (ej. AEO-0007) o modelo.</div></div>
+      <div class="field"><div class="k">Tipo de entrada</div><div class="v">Devolución por error de fábrica · Retorno de muestra · Retorno de equipo de sustitución · Retorno de reparación propia.</div></div>
+      <div class="field"><div class="k">Estado resultante</div><div class="v">Cómo queda después: Apto para venta, Muestra, Pendiente de reparación, etc.</div></div>
+      <div class="field"><div class="k">Responsable</div><div class="v">Quién hizo el movimiento — la app también guarda sola qué usuario lo cargó.</div></div>
+    </div>
+  </section>
+
+  <section class="card" id="salidas">
+    <h3>Salidas</h3>
+    <p class="desc">Cuando algo sale físicamente del depósito — venta, préstamo, traslado. La cantidad disponible se descuenta en el momento.</p>
+    <ol class="steps">
+      <li><span class="num">1</span> Elegí <b>Categoría de origen</b>: de dónde sale — Stock vendible, Stock con descuento, Muestras, Banco de recuperables, Zona de playa o Repuesto.</li>
+      <li><span class="num">2</span> Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</li>
+      <li><span class="num">3</span> Guardá — el stock de esa categoría baja automáticamente.</li>
+    </ol>
+    <div class="tip"><b>Tip.</b> Si la salida corresponde a una cotización ya aprobada, avisale a tu encargado — esas se generan desde la cotización directamente, no hace falta cargarla a mano.</div>
+  </section>
+
+  <p class="foot">AEON Home Tech · Quantum Investments S.A.</p>
+</main>

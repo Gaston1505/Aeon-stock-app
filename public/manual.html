@@ -1,0 +1,261 @@
+<title>Manual AEON</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  :root{
+    --ink:#1C1E20; --muted:#686D73; --faint:#9BA0A5;
+    --border:#E4E5E5; --bg:#F5F6F8; --surface:#FFFFFF; --surface-2:#FAFBFC;
+    --admin:#565A5F; --admin-bg:#EBEBEC; --admin-ink:#3A3D40;
+    --dep:#B45309; --dep-bg:#FDF1E4; --dep-ink:#8A3E06;
+    --ok:#15803D; --ok-bg:#E9F7EF;
+    --bad:#B91C1C; --bad-bg:#FBEAEA;
+    --font-head:'Manrope',system-ui,sans-serif;
+    --font-body:'Public Sans',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#F0F1F2; --muted:#A3A9AE; --faint:#6E7378;
+      --border:#2E3033; --bg:#141618; --surface:#1C1F22; --surface-2:#202327;
+      --admin:#B7BBC0; --admin-bg:#2B2E32; --admin-ink:#D7D9DB;
+      --dep:#E8A25B; --dep-bg:#332312; --dep-ink:#F0BE87;
+      --ok:#4ADE80; --ok-bg:#12301F;
+      --bad:#F28B8B; --bad-bg:#3A1717;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#F0F1F2; --muted:#A3A9AE; --faint:#6E7378;
+    --border:#2E3033; --bg:#141618; --surface:#1C1F22; --surface-2:#202327;
+    --admin:#B7BBC0; --admin-bg:#2B2E32; --admin-ink:#D7D9DB;
+    --dep:#E8A25B; --dep-bg:#332312; --dep-ink:#F0BE87;
+    --ok:#4ADE80; --ok-bg:#12301F;
+    --bad:#F28B8B; --bad-bg:#3A1717;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font-body);line-height:1.6;font-size:15px}
+  h1,h2,h3,h4{font-family:var(--font-head);text-wrap:balance;margin:0}
+  code,.pill{font-family:var(--font-mono)}
+  a{color:var(--dep)}
+  .shell{display:flex;max-width:1180px;margin:0 auto}
+  .toc{width:252px;flex:none;position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto;padding:28px 14px 40px 20px;border-right:0.5px solid var(--border)}
+  .toc-brand{font-family:var(--font-head);font-weight:800;font-size:15px;letter-spacing:.02em;margin-bottom:2px}
+  .toc-sub{color:var(--muted);font-size:12px;margin-bottom:22px}
+  .toc a{display:block;color:var(--muted);text-decoration:none;font-size:13px;padding:5px 10px;border-radius:7px;border-left:2px solid transparent}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc .grp{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);font-weight:600;margin:18px 10px 6px}
+  .toc .dep-link{border-left-color:var(--dep)}
+  main{flex:1;min-width:0;padding:40px 48px 100px}
+  .hero{margin-bottom:44px}
+  .kicker{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  h1{font-size:34px;font-weight:800;margin-bottom:10px}
+  .hero p{color:var(--muted);max-width:60ch;font-size:15.5px}
+  .part-head{display:flex;align-items:baseline;gap:12px;margin:64px 0 6px;padding-top:8px;border-top:0.5px solid var(--border)}
+  .part-head:first-of-type{border-top:none;margin-top:0}
+  .part-num{font-family:var(--font-mono);font-size:13px;color:var(--faint)}
+  .part-title{font-size:22px;font-weight:800}
+  .part-sub{color:var(--muted);max-width:62ch;margin:6px 0 30px;font-size:14.5px}
+  .badge{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:20px}
+  .badge.dep{background:var(--dep-bg);color:var(--dep-ink)}
+  .badge.admin{background:var(--admin-bg);color:var(--admin-ink)}
+  section.card{background:var(--surface);border:0.5px solid var(--border);border-radius:14px;padding:22px 26px;margin-bottom:16px}
+  section.card h3{font-size:16.5px;font-weight:700;display:flex;align-items:center;gap:9px}
+  section.card .step-n{font-family:var(--font-mono);font-size:12px;color:var(--surface);background:var(--ink);width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}
+  section.card > p.desc{color:var(--muted);margin:8px 0 16px;font-size:14px;max-width:68ch}
+  .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 18px;margin:14px 0}
+  .field{border-left:2px solid var(--border);padding-left:10px}
+  .field .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .field .v{font-size:13.5px;margin-top:2px}
+  ol.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+  ol.steps li{display:flex;gap:10px;font-size:14px}
+  ol.steps li .num{font-family:var(--font-mono);font-size:12px;color:var(--muted);flex:none;width:16px}
+  .tip{margin-top:14px;background:var(--surface-2);border-left:3px solid var(--dep);border-radius:0 10px 10px 0;padding:10px 14px;font-size:13.5px;color:var(--ink)}
+  .tip.gray{border-left-color:var(--admin)}
+  .tip b{font-family:var(--font-head);font-weight:700}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.grid2{grid-template-columns:1fr}.toc{display:none}main{padding:28px 20px 80px}.fields{grid-template-columns:1fr 1fr}}
+  .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
+  .chip{font-family:var(--font-mono);font-size:11.5px;background:var(--surface-2);border:0.5px solid var(--border);padding:2px 8px;border-radius:6px;color:var(--muted)}
+  .mini-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+  .mini-table th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;padding:4px 10px 6px 0;border-bottom:0.5px solid var(--border)}
+  .mini-table td{padding:7px 10px 7px 0;border-bottom:0.5px solid var(--border);vertical-align:top}
+  .roles{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+  .role-card{border-radius:12px;padding:16px 18px}
+  .role-card.admin{background:var(--admin-bg)}
+  .role-card.dep{background:var(--dep-bg)}
+  .role-card h4{font-size:14px;font-weight:800;margin-bottom:6px}
+  .role-card.admin h4{color:var(--admin-ink)}
+  .role-card.dep h4{color:var(--dep-ink)}
+  .role-card ul{margin:0;padding-left:18px;font-size:13px;color:var(--ink)}
+  .top-link{display:inline-block;margin-top:6px;font-size:12px;color:var(--muted);text-decoration:none}
+  ::selection{background:var(--dep-bg);color:var(--dep-ink)}
+</style>
+
+<div class="shell">
+  <nav class="toc">
+    <div class="toc-brand">AEON</div>
+    <div class="toc-sub">Manual de uso — Home Tech</div>
+    <a class="dep-link" href="#guia-deposito"><b>Guía rápida · Depósito</b></a>
+    <a href="#dep-deposito">↳ Depósito</a>
+    <a href="#dep-playa">↳ Zona de playa</a>
+    <a href="#dep-entradas">↳ Entradas</a>
+    <a href="#dep-salidas">↳ Salidas</a>
+
+    <div class="grp">Manual completo</div>
+    <a href="#stock">Stock e inventario</a>
+    <a href="#movimientos">Movimientos</a>
+    <a href="#ventas">Ventas</a>
+    <a href="#clientes">Clientes</a>
+    <a href="#reportes">Reportes</a>
+    <a href="#roles">Roles y accesos</a>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <div class="kicker">Manual interno · Quantum Investments S.A.</div>
+      <h1>Cómo se usa la app AEON</h1>
+      <p>Guía de referencia para el sistema de stock, ventas y cotizaciones de AEON Home Tech. Está dividida en dos partes: una guía corta para quien solo trabaja en el depósito, y el manual completo con cada sección de la app.</p>
+    </div>
+
+    <!-- ============ PARTE 1: GUÍA DEPÓSITO ============ -->
+    <div class="part-head" id="guia-deposito">
+      <span class="part-num">Parte 1</span>
+      <span class="part-title">Guía rápida · Depósito</span>
+      <span class="badge dep">rol depósito</span>
+    </div>
+    <p class="part-sub">Para quien entra con una cuenta de depósito (ej. <code>nombre@deposito.aeon</code>). Con ese usuario la app solo muestra estas cuatro pantallas — el resto (ventas, clientes, cotizaciones) no aparece ni es accesible, ni siquiera escribiendo la dirección a mano.</p>
+
+    <section class="card" id="dep-deposito">
+      <h3>Depósito</h3>
+      <p class="desc">La foto del stock. Al entrar es lo primero que ves: cuánto hay de cada cosa y dónde está.</p>
+      <div class="fields">
+        <div class="field"><div class="k">Equipos totales activos</div><div class="v">Todo lo que todavía cuenta como inventario (no incluye lo vendido ni lo dado de baja).</div></div>
+        <div class="field"><div class="k">Stock vendible</div><div class="v">Lo que se puede ofrecer hoy a un cliente.</div></div>
+        <div class="field"><div class="k">Zona de playa</div><div class="v">Lo que llegó y todavía no se clasificó.</div></div>
+        <div class="field"><div class="k">Muestras</div><div class="v">Piezas de exhibición, en depósito o prestadas.</div></div>
+        <div class="field"><div class="k">Repuestos</div><div class="v">Unidades sueltas de piezas, por modelo.</div></div>
+      </div>
+      <div class="tip"><b>Tip.</b> El color del stock es la señal: verde es &gt; 0, rojo es 0. Si buscás un modelo puntual, usá la lupa de arriba — busca por código y por nombre a la vez.</div>
+    </section>
+
+    <section class="card" id="dep-playa">
+      <h3>Zona de playa</h3>
+      <p class="desc">Todo lo que entra al depósito sin todavía saber bien qué es o adónde va — lo que deja un técnico, una devolución sin identificar, algo dañado. Se carga acá primero y se clasifica después con calma.</p>
+      <ol class="steps">
+        <li><span class="num">1</span> Tocá <b>Nuevo ingreso</b>.</li>
+        <li><span class="num">2</span> Cargá fecha, una <b>descripción</b> clara (qué es y de qué modelo, ej. "Horno con display roto, modelo AE-AK630"), la <b>cantidad</b> y quién lo dejó (técnico / cliente / otro).</li>
+        <li><span class="num">3</span> Guardá. Ya queda visible en la lista de playa para cualquiera con acceso.</li>
+      </ol>
+      <p class="desc" style="margin-top:16px">Una vez cargado, cada ítem tiene un botón <b>Derivar a…</b> para moverlo a su destino final:</p>
+      <div class="fields">
+        <div class="field"><div class="k">Stock vendible</div><div class="v">Está sano, pasa a Depósito para la venta.</div></div>
+        <div class="field"><div class="k">Muestra</div><div class="v">Queda como pieza de exhibición de calidad.</div></div>
+        <div class="field"><div class="k">Banco de recuperables</div><div class="v">Tiene una falla, va a revisión / reparación.</div></div>
+        <div class="field"><div class="k">Equipo de socorro</div><div class="v">Se reserva como unidad de rescate para un service.</div></div>
+      </div>
+      <div class="tip"><b>Ojo.</b> También podés <b>extraer un repuesto</b> sin sacar el equipo de playa — útil cuando lo único que sirve del aparato es una pieza puntual (una placa, un motor) y el resto no.</div>
+    </section>
+
+    <section class="card" id="dep-entradas">
+      <h3>Entradas</h3>
+      <p class="desc">Todo lo que vuelve o ingresa al depósito después del alta inicial: una devolución, un equipo que vuelve de una muestra prestada, algo que vuelve de reparación.</p>
+      <div class="fields">
+        <div class="field"><div class="k">Equipo</div><div class="v">Elegís de la lista por código (ej. AEO-0007) o modelo.</div></div>
+        <div class="field"><div class="k">Tipo de entrada</div><div class="v">Devolución por error de fábrica · Retorno de muestra · Retorno de equipo de sustitución · Retorno de reparación propia.</div></div>
+        <div class="field"><div class="k">Estado resultante</div><div class="v">Cómo queda después: Apto para venta, Muestra, Pendiente de reparación, etc.</div></div>
+        <div class="field"><div class="k">Responsable</div><div class="v">Quién hizo el movimiento — además, la app ya guarda sola qué usuario lo cargó.</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="dep-salidas">
+      <h3>Salidas</h3>
+      <p class="desc">Cuando algo sale físicamente del depósito — venta, préstamo, traslado. La cantidad disponible se descuenta en el momento.</p>
+      <ol class="steps">
+        <li><span class="num">1</span> Elegí <b>Categoría de origen</b>: de dónde sale — Stock vendible, Stock con descuento, Muestras, Banco de recuperables, Zona de playa o Repuesto.</li>
+        <li><span class="num">2</span> Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</li>
+        <li><span class="num">3</span> Guardá — el stock de esa categoría baja automáticamente.</li>
+      </ol>
+      <div class="tip"><b>Tip.</b> Si la salida corresponde a una cotización ya aprobada, usá <b>Generar desde cotización</b> arriba de la lista en vez de cargarla a mano — trae los productos y cantidades solos.</div>
+    </section>
+
+    <!-- ============ PARTE 2: MANUAL COMPLETO ============ -->
+    <div class="part-head" id="stock">
+      <span class="part-num">Parte 2</span>
+      <span class="part-title">Manual completo</span>
+      <span class="badge admin">rol admin</span>
+    </div>
+    <p class="part-sub">Todo lo que ve una cuenta admin, agrupado igual que el menú de la izquierda de la app: Stock, Movimientos, Ventas, Clientes y Reportes.</p>
+
+    <h4 style="margin:26px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em">Stock e inventario</h4>
+
+    <div class="grid2">
+      <section class="card"><h3>Resumen</h3><p class="desc">La portada. Indicadores de Depósito, Tránsito, Ventas y Clientes, más lo que necesita atención hoy: services por vencer y últimas ventas cerradas. Cada tarjeta es un atajo directo a esa sección.</p></section>
+
+      <section class="card"><h3>Tránsito</h3><p class="desc">Mercadería que ya se compró pero todavía no llegó a Paraguay — un envío puede traer varios modelos juntos. Se puede <b>comprometer</b> parte de un envío a un cliente antes de que llegue, agregarle repuestos, y al final marcarlo <b>Dar llegada</b> para que pase a ser stock real en Depósito.</p></section>
+
+      <section class="card"><h3>Zona de playa</h3><p class="desc">Ver guía de depósito arriba — funciona igual para admin, con acceso además a exportar el listado.</p></section>
+
+      <section class="card"><h3>Maestro de equipos</h3><p class="desc">Un registro por cada unidad física, con su código interno (AEO-####), N° de serie, modelo, estado y ubicación. Es la fuente real de las cantidades que se ven resumidas en Depósito. El modelo y el estado se editan directo desde la tabla.</p></section>
+
+      <section class="card"><h3>Banco de recuperables</h3><p class="desc">Equipos con desperfecto: en reparación, pendientes, o reservados como unidad de rescate para un service. Es el destino de "Derivar a → Banco de recuperables" desde Zona de playa.</p></section>
+
+      <section class="card"><h3>Muestras</h3><p class="desc">Piezas de exhibición — separadas entre "en depósito" y "prestadas a un cliente" (fuera de depósito), y entre con marca / sin marca de fábrica. El total de acá es el mismo que se reporta al seguro.</p></section>
+
+      <section class="card" style="grid-column:1/-1"><h3>Catálogo de productos</h3>
+        <p class="desc">Dos carpetas separadas: <b>Productos</b> (Aire Acondicionado, Cocina, Termocalefones) y <b>Repuestos</b>. Cada producto trae precio de lista, ficha técnica, y ahora también el <b>stock</b> actual (verde/rojo, al lado del precio) — para productos es la suma de Maestro de equipos, para repuestos es su propio campo de stock.</p>
+        <div class="chip-row"><span class="chip">nombre / código</span><span class="chip">costoOrigen</span><span class="chip">costoPy</span><span class="chip">precioLista</span><span class="chip">contenedor</span></div>
+        <div class="tip gray"><b>Info interna.</b> El costo de origen y puesto en PY nunca aparecen en una cotización — son solo para uso interno, visibles acá y en los reportes.</div>
+      </section>
+    </div>
+
+    <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="movimientos">Movimientos</h4>
+    <div class="grid2">
+      <section class="card"><h3>Entradas</h3><p class="desc">Ver guía de depósito arriba.</p></section>
+      <section class="card"><h3>Salidas</h3><p class="desc">Ver guía de depósito arriba. Admin además puede generar la salida directo desde una cotización ganada.</p></section>
+    </div>
+
+    <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="ventas">Ventas</h4>
+    <div class="grid2">
+      <section class="card"><h3>Ventas comprometidas</h3><p class="desc">Mercadería ya vendida pero que sigue físicamente en depósito — reserva el stock para que nadie más lo use, y se puede retirar en varias tandas (parcialmente) hasta completarse.</p></section>
+
+      <section class="card"><h3>Ventas y garantías</h3><p class="desc">La ficha de una obra ya vendida: contrato, remitos vinculados y certificado de garantía, con seguimiento de service a los 12 y 24 meses.</p></section>
+
+      <section class="card"><h3>Cotizaciones</h3><p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por cliente y obra — volver a cotizar la misma obra crea una nueva versión con historial, no una cotización suelta.</p></section>
+
+      <section class="card"><h3>Presupuestos de reparación</h3><p class="desc">Vía separada de las cotizaciones de venta — para reparación, repuestos y mantenimiento de un equipo puntual (AA, termocalefón, campana).</p></section>
+
+      <section class="card" style="grid-column:1/-1"><h3>Panel de simulación</h3><p class="desc">Un ejercicio de "si me piden esto, con qué lo cubro" — armás una lista de productos para ver disponibilidad y precio, sin que cuente como nada real todavía.</p>
+        <div class="tip"><b>Importante.</b> Mientras no lo confirmes como cotización real, no reserva stock ni entra en el Reporte para Seguro, Reporte para Joel, ni ningún cálculo real de la app. Es puramente un borrador.</div>
+      </section>
+    </div>
+
+    <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="clientes">Clientes</h4>
+    <section class="card"><h3>Clientes</h3><p class="desc">Nombre y WhatsApp. Se completa solo la primera vez que cargás un teléfono en una cotización o presupuesto, y de ahí en más se reutiliza — no hace falta escribirlo dos veces ni buscarlo para mandar un mensaje.</p></section>
+
+    <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="reportes">Reportes</h4>
+    <div class="grid2">
+      <section class="card"><h3>Panel de indicadores</h3><p class="desc">Ventas del mes, conversión de cotizaciones (ganadas vs. perdidas), producto más vendido de los últimos 90 días, y la estacionalidad de ventas por mes — para detectar la época fuerte de cada producto.</p></section>
+
+      <section class="card"><h3>Reporte para Seguro</h3><p class="desc">Todo lo físico en Paraguay (equipos, repuestos y Zona de playa) valorizado a <b>costo puesto en PY</b> — no a precio de venta, porque el seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla.</p></section>
+
+      <section class="card" style="grid-column:1/-1"><h3>Reporte para Joel</h3><p class="desc">El balance financiero completo: lo físico en Paraguay (a precio de lista), lo que viene en tránsito con sus costos compartidos (flete, despacho, seguro), el estado de las cotizaciones en juego, y la plata por cobrar de ventas comprometidas.</p></section>
+    </div>
+
+    <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="roles">Roles y accesos</h4>
+    <section class="card">
+      <h3>Dos tipos de cuenta</h3>
+      <p class="desc">Cada login tiene un rol asignado, y determina qué ve la app — no es solo un tema de qué botones aparecen, las mismas reglas están del lado del servidor.</p>
+      <div class="roles">
+        <div class="role-card admin">
+          <h4>Admin</h4>
+          <ul><li>Todas las secciones de este manual</li><li>Puede editar precios y el catálogo</li><li>Puede dar de alta usuarios</li></ul>
+        </div>
+        <div class="role-card dep">
+          <h4>Depósito</h4>
+          <ul><li>Solo Depósito, Zona de playa, Entradas y Salidas</li><li>Puede mover stock, no tocar precios</li><li>Sin acceso a ventas, cotizaciones ni clientes</li></ul>
+        </div>
+      </div>
+      <div class="tip gray"><b>Trazabilidad.</b> Cada movimiento (entrada, salida, cambio de stock) queda firmado con el usuario que lo hizo y la fecha — así siempre se puede saber quién cargó qué.</div>
+    </section>
+
+    <a class="top-link" href="#guia-deposito">↑ Volver arriba</a>
+  </main>
+</div>

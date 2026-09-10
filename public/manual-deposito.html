@@ -38,7 +38,7 @@
   .field .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
   .field .v{font-size:13.5px;margin-top:2px}
   ol.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
-  ol.steps li{display:flex;gap:10px;font-size:14px}
+  ol.steps li{display:flex;align-items:flex-start;gap:10px;font-size:14px}
   ol.steps li .num{font-family:var(--font-mono);font-size:12px;color:var(--muted);flex:none;width:16px}
   .tip{margin-top:14px;background:var(--surface-2);border-left:3px solid var(--dep);border-radius:0 10px 10px 0;padding:10px 14px;font-size:13.5px}
   .tip b{font-family:var(--font-head);font-weight:700}
@@ -68,9 +68,9 @@
     <h3>Zona de playa</h3>
     <p class="desc">Todo lo que entra al depósito sin todavía saber bien qué es o adónde va — lo que deja un técnico, una devolución sin identificar, algo dañado. Se carga acá primero y se clasifica después con calma.</p>
     <ol class="steps">
-      <li><span class="num">1</span> Tocá <b>Nuevo ingreso</b>.</li>
-      <li><span class="num">2</span> Cargá fecha, una <b>descripción</b> clara (qué es y de qué modelo, ej. "Horno con display roto, modelo AE-AK630"), la <b>cantidad</b> y quién lo dejó (técnico / cliente / otro).</li>
-      <li><span class="num">3</span> Guardá. Ya queda visible en la lista de playa.</li>
+      <li><span class="num">1</span><span>Tocá <b>Nuevo ingreso</b>.</span></li>
+      <li><span class="num">2</span><span>Cargá fecha, una <b>descripción</b> clara (qué es y de qué modelo, ej. "Horno con display roto, modelo AE-AK630"), la <b>cantidad</b> y quién lo dejó (técnico / cliente / otro).</span></li>
+      <li><span class="num">3</span><span>Guardá. Ya queda visible en la lista de playa.</span></li>
     </ol>
     <p class="desc" style="margin-top:16px">Una vez cargado, cada ítem tiene un botón <b>Derivar a…</b> para moverlo a su destino final:</p>
     <div class="fields">
@@ -97,9 +97,9 @@
     <h3>Salidas</h3>
     <p class="desc">Cuando algo sale físicamente del depósito — venta, préstamo, traslado. La cantidad disponible se descuenta en el momento.</p>
     <ol class="steps">
-      <li><span class="num">1</span> Elegí <b>Categoría de origen</b>: de dónde sale — Stock vendible, Stock con descuento, Muestras, Banco de recuperables, Zona de playa o Repuesto.</li>
-      <li><span class="num">2</span> Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</li>
-      <li><span class="num">3</span> Guardá — el stock de esa categoría baja automáticamente.</li>
+      <li><span class="num">1</span><span>Elegí <b>Categoría de origen</b>: de dónde sale — Stock vendible, Stock con descuento, Muestras, Banco de recuperables, Zona de playa o Repuesto.</span></li>
+      <li><span class="num">2</span><span>Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</span></li>
+      <li><span class="num">3</span><span>Guardá — el stock de esa categoría baja automáticamente.</span></li>
     </ol>
     <div class="tip"><b>Tip.</b> Si la salida corresponde a una cotización ya aprobada, avisale a tu encargado — esas se generan desde la cotización directamente, no hace falta cargarla a mano.</div>
   </section>

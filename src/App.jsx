@@ -6503,6 +6503,20 @@ const CATALOGO_TABS = [
   },
 ];
 
+// Orden fijo de categorías al elegir productos (Cotizaciones y Panel de simulación): aires,
+// cocina, termocalefones y recién al final repuestos — nunca alfabético.
+const ORDEN_CATEGORIA_PRINCIPAL = ["Aire Acondicionado", "Cocina", "Termocalefones", "Repuestos"];
+// Un repuesto no tiene categoriaPrincipal propia útil para este orden (todos son "Repuestos"),
+// pero sí guarda en subcategoria a qué familia de equipo pertenece — se usa esa familia para
+// que los repuestos también queden agrupados aires → cocina → termocalefones.
+const FAMILIA_REPUESTO = {
+  "Aire Acondicionado": 0,
+  "Anafe": 1,
+  "Campanas": 1,
+  "Horno": 1,
+  "Termocalefones": 2,
+};
+
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
 function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo }) {
@@ -7021,9 +7035,13 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
     const claveGrupo = (p) => {
       const tab = CATALOGO_TABS.find((t) => t.filtro(p));
       const ordenes = tab?.ordenesPorNivel || {};
+      // Repuestos no tienen su propio tab en CATALOGO_TABS (ordenes[1] queda vacío), así que
+      // en vez de eso ordenamos por la familia de equipo guardada en su subcategoria.
+      const esRepuesto = p.categoriaPrincipal === "Repuestos";
+      const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
       return [
-        p.categoriaPrincipal || "",
-        indiceEnOrden(p.subcategoria, ordenes[1]), (p.subcategoria || "").trim(),
+        indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
+        subOrden, (p.subcategoria || "").trim(),
         indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
       ];
     };
@@ -7224,9 +7242,13 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
     const claveGrupo = (p) => {
       const tab = CATALOGO_TABS.find((t) => t.filtro(p));
       const ordenes = tab?.ordenesPorNivel || {};
+      // Repuestos no tienen su propio tab en CATALOGO_TABS (ordenes[1] queda vacío), así que
+      // en vez de eso ordenamos por la familia de equipo guardada en su subcategoria.
+      const esRepuesto = p.categoriaPrincipal === "Repuestos";
+      const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
       return [
-        p.categoriaPrincipal || "",
-        indiceEnOrden(p.subcategoria, ordenes[1]), (p.subcategoria || "").trim(),
+        indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
+        subOrden, (p.subcategoria || "").trim(),
         indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
       ];
     };

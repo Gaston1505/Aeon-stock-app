@@ -6816,7 +6816,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
         const sistema = esRepuesto ? (Number(p.stockDisponible) || 0) : (stockPorModelo.get(p.nombre) || 0);
         const c = contados.get(p.nombre);
         return {
-          codigo: p.nombre, descripcion: p.descripcion || "", categoria: p.categoriaPrincipal,
+          id: p.id, codigo: p.nombre, descripcion: p.descripcion || "", categoria: p.categoriaPrincipal,
           sistema, contado: c ? c.cantidadContada : null, contadoPor: c ? c.creadoPorEmail : null,
         };
       })
@@ -6868,7 +6868,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
           {grupos.map(([categoria, filas]) => (
             <div key={categoria}>
               <p className="text-xs font-semibold uppercase tracking-wide px-3.5 py-2" style={{ color: MUTED, backgroundColor: "#FAFBFC" }}>{categoria}</p>
-              {filas.map((item) => <ConteoRowDeposito key={item.codigo} item={item} onGuardar={onGuardar} />)}
+              {filas.map((item) => <ConteoRowDeposito key={item.id} item={item} onGuardar={onGuardar} />)}
             </div>
           ))}
           {filtrados.length === 0 && (
@@ -6919,7 +6919,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
             {filasOrdenadas.map((i) => {
               const diff = i.contado != null ? i.contado - i.sistema : null;
               return (
-                <tr key={i.codigo} className="border-t" style={{ borderColor: BORDER }}>
+                <tr key={i.id} className="border-t" style={{ borderColor: BORDER }}>
                   <td className="px-3.5 py-2"><CodeTag>{i.codigo}</CodeTag></td>
                   <td className="px-3.5 py-2 text-right"><ConteoCeldaAdmin item={i} onGuardar={onGuardar} /></td>
                   <td className="px-3.5 py-2 text-right" style={{ color: MUTED }}>{i.sistema}</td>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
-  CheckCircle2, Clock, ChevronRight, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
+  CheckCircle2, Clock, ChevronRight, ChevronDown, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft,
 } from "lucide-react";
@@ -6663,6 +6663,80 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
 }
 
 // ---------- Conteo de stock ----------
+// Una rama del árbol: colapsada por default, con flecha para desplegar — hojas muestran los
+// códigos como botones clicables; ramas internas se recursan solas al abrirse.
+function RamaCodigoArbol({ label, nodo, nivel, onElegir }) {
+  const [abierto, setAbierto] = useState(false);
+  const esHoja = !!nodo.productos;
+  return (
+    <div style={{ marginLeft: nivel * 12 }}>
+      <button
+        onClick={() => setAbierto((a) => !a)}
+        className="w-full flex items-center gap-1.5 text-left text-xs font-medium px-2 py-1.5 rounded hover:bg-gray-100"
+        style={{ color: INK }}
+      >
+        <ChevronRight size={12} style={{ transform: abierto ? "rotate(90deg)" : "none", transition: "transform .15s", color: MUTED, flexShrink: 0 }} />
+        <span className="truncate">{label}</span>
+        {esHoja && <span style={{ color: MUTED, fontWeight: 400 }}>({nodo.productos.length})</span>}
+      </button>
+      {abierto && (
+        esHoja ? (
+          <div style={{ marginLeft: (nivel + 1) * 12 }}>
+            {nodo.productos.map((p) => (
+              <button
+                key={p.id} onClick={() => onElegir(p.nombre)}
+                className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-100 flex items-center gap-2"
+              >
+                <CodeTag>{p.nombre}</CodeTag>
+                {p.categoriaPrincipal === "Repuestos" && p.descripcion && <span className="truncate" style={{ color: MUTED }}>{p.descripcion}</span>}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <ArbolCodigosNodo nodo={nodo} nivel={nivel + 1} onElegir={onElegir} />
+        )
+      )}
+    </div>
+  );
+}
+function ArbolCodigosNodo({ nodo, nivel, onElegir }) {
+  return (
+    <div>
+      {(nodo.hijos || []).map((hijo) => (
+        <RamaCodigoArbol key={hijo.valor} label={hijo.valor} nodo={hijo} nivel={nivel} onElegir={onElegir} />
+      ))}
+    </div>
+  );
+}
+
+// Buscador de código: escribir filtra la lista de siempre, y la flecha despliega el mismo
+// árbol de categorías que usa Catálogo de productos para navegar sin escribir — elegir un
+// código ahí lo pone como texto de búsqueda, así queda filtrado a esa única fila.
+function BuscadorCodigoArbol({ productos, query, onQuery }) {
+  const [abierto, setAbierto] = useState(false);
+  const arbol = useMemo(() => construirArbolCategorias(productos), [productos]);
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <div className="flex-1"><SearchBox value={query} onChange={onQuery} placeholder="Buscar código o descripción..." /></div>
+        <button
+          onClick={() => setAbierto((a) => !a)}
+          className="p-2 rounded-lg border shrink-0"
+          style={{ borderColor: BORDER, backgroundColor: abierto ? ACCENT_LIGHT : "#FFFFFF" }}
+          title="Explorar por categoría"
+        >
+          <ChevronDown size={16} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </button>
+      </div>
+      {abierto && (
+        <div className="mt-2 rounded-lg border p-2 overflow-y-auto" style={{ borderColor: BORDER, maxHeight: 320 }}>
+          <ArbolCodigosNodo nodo={arbol} nivel={0} onElegir={(codigo) => { onQuery(codigo); setAbierto(false); }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Fila con su propio input controlado — así cada campo se guarda solo (blur o Enter) sin
 // pisar lo que están escribiendo en otras filas al mismo tiempo.
 function ConteoRowDeposito({ item, onGuardar }) {
@@ -6761,7 +6835,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
           </div>
         </div>
         <div className="mb-3">
-          <SearchBox value={query} onChange={onQuery} placeholder="Buscar código o descripción..." />
+          <BuscadorCodigoArbol productos={productos} query={query} onQuery={onQuery} />
         </div>
         <div className="rounded-lg border" style={{ borderColor: BORDER }}>
           {grupos.map(([categoria, filas]) => (
@@ -6797,7 +6871,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
         </div>
       </div>
       <div className="mb-3">
-        <SearchBox value={query} onChange={onQuery} placeholder="Buscar código o descripción..." />
+        <BuscadorCodigoArbol productos={productos} query={query} onQuery={onQuery} />
       </div>
       <div className="rounded-lg border overflow-x-auto" style={{ borderColor: BORDER }}>
         <table className="w-full text-sm">

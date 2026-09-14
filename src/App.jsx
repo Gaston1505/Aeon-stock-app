@@ -6737,6 +6737,33 @@ function BuscadorCodigoArbol({ productos, query, onQuery }) {
   );
 }
 
+// Celda editable de la tabla de admin — a diferencia de la fila de depósito, acá si se ve el
+// sistema al lado, así que no hay nada que ocultar; mismo guardado en blur/Enter.
+function ConteoCeldaAdmin({ item, onGuardar }) {
+  const [valor, setValor] = useState(item.contado != null ? String(item.contado) : "");
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => { setValor(item.contado != null ? String(item.contado) : ""); }, [item.contado]);
+
+  const confirmar = async () => {
+    if (valor.trim() === "" || Number(valor) === item.contado) return;
+    setGuardando(true);
+    await onGuardar(item.codigo, valor);
+    setGuardando(false);
+  };
+
+  return (
+    <input
+      type="number" min="0" inputMode="numeric" value={valor}
+      onChange={(e) => setValor(e.target.value)}
+      onBlur={confirmar}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      placeholder="—" disabled={guardando}
+      className="text-sm text-right rounded-lg px-2.5 py-1.5"
+      style={{ width: 84, border: `1px solid ${BORDER}` }}
+    />
+  );
+}
+
 // Fila con su propio input controlado — así cada campo se guarda solo (blur o Enter) sin
 // pisar lo que están escribiendo en otras filas al mismo tiempo.
 function ConteoRowDeposito({ item, onGuardar }) {
@@ -6852,12 +6879,15 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
     );
   }
 
-  // Vista admin: contado vs sistema vs diferencia, en vivo a medida que depósito va cargando.
-  // Las diferencias van primero (de mayor a menor) para que salten a la vista — lo que ya
-  // cerró OK queda al final, ordenado por código.
+  // Vista admin: contado vs sistema vs diferencia, en vivo a medida que depósito va cargando
+  // — y admin también puede cargar directo acá (ve el sistema, así que no hace falta que sea
+  // a ciegas). Orden: diferencias primero (de mayor a menor), después lo que falta contar,
+  // por último lo que ya cerró OK.
   const conConteo = filtrados.filter((i) => i.contado != null);
   const conDiferencia = conConteo.filter((i) => i.contado !== i.sistema);
+  const sinContar = filtrados.filter((i) => i.contado == null);
   const filasOrdenadas = [...conDiferencia].sort((a, b) => Math.abs(b.contado - b.sistema) - Math.abs(a.contado - a.sistema))
+    .concat([...sinContar].sort((a, b) => a.codigo.localeCompare(b.codigo)))
     .concat([...conConteo.filter((i) => i.contado === i.sistema)].sort((a, b) => a.codigo.localeCompare(b.codigo)));
 
   return (
@@ -6887,14 +6917,16 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
           </thead>
           <tbody>
             {filasOrdenadas.map((i) => {
-              const diff = i.contado - i.sistema;
+              const diff = i.contado != null ? i.contado - i.sistema : null;
               return (
                 <tr key={i.codigo} className="border-t" style={{ borderColor: BORDER }}>
                   <td className="px-3.5 py-2"><CodeTag>{i.codigo}</CodeTag></td>
-                  <td className="px-3.5 py-2 text-right font-medium">{i.contado}</td>
+                  <td className="px-3.5 py-2 text-right"><ConteoCeldaAdmin item={i} onGuardar={onGuardar} /></td>
                   <td className="px-3.5 py-2 text-right" style={{ color: MUTED }}>{i.sistema}</td>
                   <td className="px-3.5 py-2 text-right">
-                    {diff === 0 ? (
+                    {diff == null ? (
+                      <span style={{ color: MUTED }}>—</span>
+                    ) : diff === 0 ? (
                       <span style={{ color: "#15803D" }}>OK</span>
                     ) : (
                       <span className="font-semibold" style={{ color: diff > 0 ? "#B45309" : "#B91C1C" }}>{diff > 0 ? `+${diff}` : diff}</span>
@@ -6902,17 +6934,19 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
                   </td>
                   <td className="px-3.5 py-2 text-xs" style={{ color: MUTED }}>{i.contadoPor}</td>
                   <td className="px-3.5 py-2 text-right">
-                    <button onClick={() => onBorrar(i.codigo)} title="Borrar este conteo">
-                      <Trash2 size={13} style={{ color: MUTED }} />
-                    </button>
+                    {i.contado != null && (
+                      <button onClick={() => onBorrar(i.codigo)} title="Borrar este conteo">
+                        <Trash2 size={13} style={{ color: MUTED }} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        {conConteo.length === 0 && (
-          <p className="text-sm text-center py-6" style={{ color: MUTED }}>Todavía no hay nada contado.</p>
+        {filtrados.length === 0 && (
+          <p className="text-sm text-center py-6" style={{ color: MUTED }}>Sin resultados.</p>
         )}
       </div>
     </div>

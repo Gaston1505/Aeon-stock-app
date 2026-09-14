@@ -56,6 +56,14 @@ service cloud.firestore {
       allow update, delete: if esAdmin();
     }
 
+    // Conteo de stock: depósito carga lo que contó (create/update, un doc por código — nunca
+    // ve el stock del sistema, eso lo calcula el cliente admin comparando contra equipos/
+    // productos que ya lee para otra cosa). Solo admin puede borrar un conteo cargado.
+    match /conteoStock/{docId} {
+      allow read, create, update: if esAdmin() || esDeposito();
+      allow delete: if esAdmin();
+    }
+
     // Catálogo: depósito necesita leerlo (para elegir producto en una entrada/salida) y
     // ajustar el stock de repuestos, pero no puede crear productos ni tocar precios/fichas.
     match /productos/{docId} {

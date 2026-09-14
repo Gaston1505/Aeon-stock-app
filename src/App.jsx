@@ -9,7 +9,7 @@ import {
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, onSnapshot, query, orderBy,
 } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
@@ -137,12 +137,13 @@ const COLLECTIONS = {
   clientes: "clientes",
   transito: "transito",
   solicitudes: "solicitudes",
+  conteoStock: "conteoStock",
 };
 
-// Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas y Salidas.
-// La restricción real está en firestore.rules — esto solo evita que la UI ofrezca algo que
-// después las reglas van a rechazar.
-const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos"];
+// Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas
+// y Conteo de stock. La restricción real está en firestore.rules — esto solo evita que la UI
+// ofrezca algo que después las reglas van a rechazar.
+const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos", "conteo"];
 
 // Manual de uso: dos páginas HTML estáticas servidas junto con la app en GitHub Pages
 // (public/manual.html y public/manual-deposito.html) — así no depende de compartir un
@@ -1157,6 +1158,7 @@ export default function App() {
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
+  const [conteoStock, setConteoStock] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -1204,6 +1206,7 @@ export default function App() {
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
       [COLLECTIONS.solicitudes]: setSolicitudes,
+      [COLLECTIONS.conteoStock]: setConteoStock,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -1334,6 +1337,16 @@ export default function App() {
     updateItem(COLLECTIONS.solicitudes, sol.id, { estado: "Aprobada" });
   };
   const rechazarSolicitud = (id, motivo) => updateItem(COLLECTIONS.solicitudes, id, { estado: "Rechazada", motivoRechazo: motivo || "" });
+
+  // Conteo de stock: un documento por código, con el código de producto como ID del doc —
+  // volver a cargar el mismo código pisa el conteo anterior en vez de duplicarlo. Depósito
+  // solo carga la cantidad que contó; el sistema no le muestra nunca el stock esperado acá.
+  const guardarConteo = (codigo, cantidadContada) =>
+    setDoc(doc(db, COLLECTIONS.conteoStock, codigo), {
+      codigo, cantidadContada: Number(cantidadContada) || 0, createdAt: Date.now(),
+      creadoPorEmail: auth.currentUser?.email || null, creadoPorUid: auth.currentUser?.uid || null,
+    });
+  const borrarConteo = (codigo) => deleteItem(COLLECTIONS.conteoStock, codigo);
 
   function updateEquipoEstadoByCodigo(codigo, estado) {
     equipos.filter((e) => e.codigo === codigo).forEach((e) => updateItem(COLLECTIONS.equipos, e.id, { estado }));
@@ -2189,6 +2202,7 @@ export default function App() {
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
+    { key: "conteo", label: "Conteo de stock", icon: Boxes },
     // Movimientos
     { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine },
     { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine },
@@ -2562,6 +2576,14 @@ export default function App() {
             onImportar={handleImportarCatalogo}
             importando={importandoCatalogo}
             importResultado={importResultado}
+          />
+        )}
+
+        {tab === "conteo" && (
+          <ConteoStockView
+            productos={productos} equipos={equipos} conteoStock={conteoStock}
+            esAdmin={esAdmin} query={query} onQuery={setQuery}
+            onGuardar={guardarConteo} onBorrar={borrarConteo}
           />
         )}
 
@@ -6636,6 +6658,189 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
       ) : (
         <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} />
       )}
+    </div>
+  );
+}
+
+// ---------- Conteo de stock ----------
+// Fila con su propio input controlado — así cada campo se guarda solo (blur o Enter) sin
+// pisar lo que están escribiendo en otras filas al mismo tiempo.
+function ConteoRowDeposito({ item, onGuardar }) {
+  const [valor, setValor] = useState(item.contado != null ? String(item.contado) : "");
+  const [guardando, setGuardando] = useState(false);
+  const guardado = item.contado != null && valor === String(item.contado);
+
+  const confirmar = async () => {
+    if (valor.trim() === "" || Number(valor) === item.contado) return;
+    setGuardando(true);
+    await onGuardar(item.codigo, valor);
+    setGuardando(false);
+  };
+
+  return (
+    <div className="flex items-center gap-3 px-3.5 py-2 border-b" style={{ borderColor: BORDER }}>
+      <div className="min-w-0 flex-1">
+        <CodeTag>{item.codigo}</CodeTag>
+        {item.categoria === "Repuestos" && item.descripcion && (
+          <span className="text-xs ml-2" style={{ color: MUTED }}>{item.descripcion}</span>
+        )}
+      </div>
+      <input
+        type="number" min="0" inputMode="numeric" value={valor}
+        onChange={(e) => setValor(e.target.value)}
+        onBlur={confirmar}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder="Cant."
+        className="text-sm text-right rounded-lg px-2.5 py-1.5"
+        style={{ width: 84, border: `1px solid ${guardado ? "#B7E4C7" : BORDER}`, backgroundColor: guardado ? "#F2FBF5" : "#FFFFFF" }}
+      />
+      <div style={{ width: 18 }}>
+        {guardando ? <Clock size={15} style={{ color: MUTED }} /> : guardado ? <CheckCircle2 size={15} style={{ color: "#15803D" }} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQuery, onGuardar, onBorrar }) {
+  const items = useMemo(() => {
+    const stockPorModelo = new Map();
+    for (const e of equipos) {
+      if (e.estado === "Vendido" || e.estado === "Dado de baja") continue;
+      stockPorModelo.set(e.modelo, (stockPorModelo.get(e.modelo) || 0) + (Number(e.cantidad) || 1));
+    }
+    const contados = new Map(conteoStock.map((c) => [c.codigo, c]));
+    return productos
+      .map((p) => {
+        const esRepuesto = p.categoriaPrincipal === "Repuestos";
+        const sistema = esRepuesto ? (Number(p.stockDisponible) || 0) : (stockPorModelo.get(p.nombre) || 0);
+        const c = contados.get(p.nombre);
+        return {
+          codigo: p.nombre, descripcion: p.descripcion || "", categoria: p.categoriaPrincipal,
+          sistema, contado: c ? c.cantidadContada : null, contadoPor: c ? c.creadoPorEmail : null,
+        };
+      })
+      .sort((a, b) => a.categoria.localeCompare(b.categoria) || a.codigo.localeCompare(b.codigo));
+  }, [productos, equipos, conteoStock]);
+
+  const filtrados = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((i) => i.codigo.toLowerCase().includes(q) || i.descripcion.toLowerCase().includes(q));
+  }, [items, query]);
+
+  const totalContados = items.filter((i) => i.contado != null).length;
+  const progresoPct = items.length ? Math.round((totalContados / items.length) * 100) : 0;
+
+  const grupos = useMemo(() => {
+    const mapa = new Map();
+    for (const i of filtrados) {
+      if (!mapa.has(i.categoria)) mapa.set(i.categoria, []);
+      mapa.get(i.categoria).push(i);
+    }
+    return [...mapa.entries()];
+  }, [filtrados]);
+
+  if (!esAdmin) {
+    return (
+      <div>
+        <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+          <div>
+            <h2 className="text-xl font-bold" style={{ color: INK }}>Conteo de stock</h2>
+            <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+              Contá lo que hay físicamente para cada código y cargá la cantidad acá — se guarda solo al salir del campo.
+            </p>
+          </div>
+        </div>
+        <div className="mb-4 p-3 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
+          <div className="flex items-center justify-between text-xs font-medium mb-1.5" style={{ color: ACCENT }}>
+            <span>{totalContados} de {items.length} contados</span>
+            <span>{progresoPct}%</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "#FFFFFF" }}>
+            <div className="h-full rounded-full" style={{ width: `${progresoPct}%`, backgroundColor: ACCENT }} />
+          </div>
+        </div>
+        <div className="mb-3">
+          <SearchBox value={query} onChange={onQuery} placeholder="Buscar código o descripción..." />
+        </div>
+        <div className="rounded-lg border" style={{ borderColor: BORDER }}>
+          {grupos.map(([categoria, filas]) => (
+            <div key={categoria}>
+              <p className="text-xs font-semibold uppercase tracking-wide px-3.5 py-2" style={{ color: MUTED, backgroundColor: "#FAFBFC" }}>{categoria}</p>
+              {filas.map((item) => <ConteoRowDeposito key={item.codigo} item={item} onGuardar={onGuardar} />)}
+            </div>
+          ))}
+          {filtrados.length === 0 && (
+            <p className="text-sm text-center py-6" style={{ color: MUTED }}>Sin resultados.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Vista admin: contado vs sistema vs diferencia, en vivo a medida que depósito va cargando.
+  // Las diferencias van primero (de mayor a menor) para que salten a la vista — lo que ya
+  // cerró OK queda al final, ordenado por código.
+  const conConteo = filtrados.filter((i) => i.contado != null);
+  const conDiferencia = conConteo.filter((i) => i.contado !== i.sistema);
+  const filasOrdenadas = [...conDiferencia].sort((a, b) => Math.abs(b.contado - b.sistema) - Math.abs(a.contado - a.sistema))
+    .concat([...conConteo.filter((i) => i.contado === i.sistema)].sort((a, b) => a.codigo.localeCompare(b.codigo)));
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Conteo de stock</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            {totalContados} de {items.length} contados · {conDiferencia.length} con diferencia contra el sistema.
+          </p>
+        </div>
+      </div>
+      <div className="mb-3">
+        <SearchBox value={query} onChange={onQuery} placeholder="Buscar código o descripción..." />
+      </div>
+      <div className="rounded-lg border overflow-x-auto" style={{ borderColor: BORDER }}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left" style={{ backgroundColor: "#FAFBFC", color: MUTED }}>
+              <th className="px-3.5 py-2 font-medium">Código</th>
+              <th className="px-3.5 py-2 font-medium text-right">Contado</th>
+              <th className="px-3.5 py-2 font-medium text-right">Sistema</th>
+              <th className="px-3.5 py-2 font-medium text-right">Diferencia</th>
+              <th className="px-3.5 py-2 font-medium">Contado por</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filasOrdenadas.map((i) => {
+              const diff = i.contado - i.sistema;
+              return (
+                <tr key={i.codigo} className="border-t" style={{ borderColor: BORDER }}>
+                  <td className="px-3.5 py-2"><CodeTag>{i.codigo}</CodeTag></td>
+                  <td className="px-3.5 py-2 text-right font-medium">{i.contado}</td>
+                  <td className="px-3.5 py-2 text-right" style={{ color: MUTED }}>{i.sistema}</td>
+                  <td className="px-3.5 py-2 text-right">
+                    {diff === 0 ? (
+                      <span style={{ color: "#15803D" }}>OK</span>
+                    ) : (
+                      <span className="font-semibold" style={{ color: diff > 0 ? "#B45309" : "#B91C1C" }}>{diff > 0 ? `+${diff}` : diff}</span>
+                    )}
+                  </td>
+                  <td className="px-3.5 py-2 text-xs" style={{ color: MUTED }}>{i.contadoPor}</td>
+                  <td className="px-3.5 py-2 text-right">
+                    <button onClick={() => onBorrar(i.codigo)} title="Borrar este conteo">
+                      <Trash2 size={13} style={{ color: MUTED }} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {conConteo.length === 0 && (
+          <p className="text-sm text-center py-6" style={{ color: MUTED }}>Todavía no hay nada contado.</p>
+        )}
+      </div>
     </div>
   );
 }

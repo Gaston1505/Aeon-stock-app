@@ -5157,6 +5157,9 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
     });
   }, [cotizacion, equipos]);
 
+  // seleccion/cantidades van por índice de línea, no por código — una cotización puede tener
+  // el mismo código en dos líneas distintas (nada lo impide al armarla), y si usáramos el
+  // código como clave las dos líneas compartirían el mismo checkbox y cantidad por error.
   const handleCotizacion = (id) => {
     setCotizacionId(id);
     const c = cotizaciones.find((x) => x.id === id);
@@ -5164,20 +5167,20 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
     const retiradas = c.lineasRetiradas || {};
     const nuevaSel = {};
     const nuevaCant = {};
-    for (const l of c.lineas || []) {
+    (c.lineas || []).forEach((l, idx) => {
       const pendiente = Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0));
       const stockDisponible = candidatosParaLinea(equipos, l.codigo).reduce((acc, e) => acc + e.disponible, 0);
       const aRetirar = Math.min(pendiente, stockDisponible);
-      nuevaSel[l.codigo] = aRetirar > 0;
-      nuevaCant[l.codigo] = aRetirar;
-    }
+      nuevaSel[idx] = aRetirar > 0;
+      nuevaCant[idx] = aRetirar;
+    });
     setSeleccion(nuevaSel);
     setCantidades(nuevaCant);
     setError("");
   };
 
-  const toggleLinea = (codigo) => setSeleccion((s) => ({ ...s, [codigo]: !s[codigo] }));
-  const setCantidadLinea = (codigo, v) => setCantidades((c) => ({ ...c, [codigo]: v }));
+  const toggleLinea = (idx) => setSeleccion((s) => ({ ...s, [idx]: !s[idx] }));
+  const setCantidadLinea = (idx, v) => setCantidades((c) => ({ ...c, [idx]: v }));
 
   const handleFoto = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -5207,10 +5210,10 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
     }
 
     const lineasParaGenerar = [];
-    for (const f of filas) {
-      if (!seleccion[f.codigo]) continue;
-      const cantidad = Math.min(Number(cantidades[f.codigo]) || 0, f.pendiente, f.stockDisponible);
-      if (cantidad <= 0) continue;
+    filas.forEach((f, idx) => {
+      if (!seleccion[idx]) return;
+      const cantidad = Math.min(Number(cantidades[idx]) || 0, f.pendiente, f.stockDisponible);
+      if (cantidad <= 0) return;
       let restante = cantidad;
       const batches = [];
       for (const cand of f.candidatos) {
@@ -5223,7 +5226,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
       if (batches.length > 0) {
         lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnit, cantidad: cantidad - restante, batches });
       }
-    }
+    });
     if (lineasParaGenerar.length === 0) {
       setError("No hay productos seleccionados con stock disponible para retirar.");
       return;
@@ -5252,26 +5255,26 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
         <>
           <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos a retirar</p>
           <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
-            {filas.map((f) => {
+            {filas.map((f, idx) => {
               const sinStock = f.stockDisponible === 0;
               const stockInsuficiente = f.stockDisponible > 0 && f.stockDisponible < f.pendiente;
               const yaCompleto = f.pendiente === 0;
               return (
-                <div key={f.codigo} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
+                <div key={idx} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
                   <div className="flex items-center gap-2">
                     <input
-                      type="checkbox" checked={!!seleccion[f.codigo]} disabled={sinStock || yaCompleto}
-                      onChange={() => toggleLinea(f.codigo)}
+                      type="checkbox" checked={!!seleccion[idx]} disabled={sinStock || yaCompleto}
+                      onChange={() => toggleLinea(idx)}
                     />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium" style={{ color: INK }}>{f.descripcion || f.codigo}</span>
                       <span style={{ color: MUTED }}> · {f.codigo}</span>
                     </div>
-                    {seleccion[f.codigo] && !sinStock && !yaCompleto && (
+                    {seleccion[idx] && !sinStock && !yaCompleto && (
                       <input
                         type="number" min="1" max={Math.min(f.pendiente, f.stockDisponible)}
-                        value={cantidades[f.codigo] || 0}
-                        onChange={(e) => setCantidadLinea(f.codigo, e.target.value)}
+                        value={cantidades[idx] || 0}
+                        onChange={(e) => setCantidadLinea(idx, e.target.value)}
                         className="w-16 text-xs px-1.5 py-1 rounded border"
                         style={{ borderColor: BORDER }}
                       />
@@ -5414,26 +5417,28 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
     });
   }, [cotizacion, equipos, comprometidas, transito]);
 
+  // seleccion/cantidades van por índice de línea, no por código — ver el mismo comentario en
+  // SalidaDesdeCotizacionForm.
   const handleCotizacion = (id) => {
     setCotizacionId(id);
     const c = cotizaciones.find((x) => x.id === id);
     if (!c) { setSeleccion({}); setCantidades({}); return; }
     const nuevaSel = {};
     const nuevaCant = {};
-    for (const l of c.lineas || []) {
+    (c.lineas || []).forEach((l, idx) => {
       const pendiente = pendienteDeLinea(c, l);
       const stockDisponible = candidatosParaLinea(equipos, l.codigo).reduce((acc, e) => acc + e.disponible, 0);
       const aComprometer = Math.min(pendiente, stockDisponible);
-      nuevaSel[l.codigo] = aComprometer > 0;
-      nuevaCant[l.codigo] = aComprometer;
-    }
+      nuevaSel[idx] = aComprometer > 0;
+      nuevaCant[idx] = aComprometer;
+    });
     setSeleccion(nuevaSel);
     setCantidades(nuevaCant);
     setError("");
   };
 
-  const toggleLinea = (codigo) => setSeleccion((s) => ({ ...s, [codigo]: !s[codigo] }));
-  const setCantidadLinea = (codigo, v) => setCantidades((c) => ({ ...c, [codigo]: v }));
+  const toggleLinea = (idx) => setSeleccion((s) => ({ ...s, [idx]: !s[idx] }));
+  const setCantidadLinea = (idx, v) => setCantidades((c) => ({ ...c, [idx]: v }));
 
   const submit = () => {
     if (!cotizacion) {
@@ -5441,10 +5446,10 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
       return;
     }
     const lineasParaGenerar = [];
-    for (const f of filas) {
-      if (!seleccion[f.codigo]) continue;
-      const cantidad = Math.min(Number(cantidades[f.codigo]) || 0, f.pendiente, f.stockDisponible);
-      if (cantidad <= 0) continue;
+    filas.forEach((f, idx) => {
+      if (!seleccion[idx]) return;
+      const cantidad = Math.min(Number(cantidades[idx]) || 0, f.pendiente, f.stockDisponible);
+      if (cantidad <= 0) return;
       let restante = cantidad;
       const batches = [];
       for (const cand of f.candidatos) {
@@ -5457,7 +5462,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
       if (batches.length > 0) {
         lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnit, batches });
       }
-    }
+    });
     if (lineasParaGenerar.length === 0) {
       setError("No hay productos seleccionados con stock disponible para comprometer.");
       return;
@@ -5486,26 +5491,26 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
 
           <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Líneas de la cotización</p>
           <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
-            {filas.map((f) => {
+            {filas.map((f, idx) => {
               const sinStock = f.stockDisponible === 0;
               const stockInsuficiente = f.stockDisponible > 0 && f.stockDisponible < f.pendiente;
               const yaCompleto = f.pendiente === 0;
               return (
-                <div key={f.codigo} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
+                <div key={idx} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
                   <div className="flex items-center gap-2">
                     <input
-                      type="checkbox" checked={!!seleccion[f.codigo]} disabled={sinStock || yaCompleto}
-                      onChange={() => toggleLinea(f.codigo)}
+                      type="checkbox" checked={!!seleccion[idx]} disabled={sinStock || yaCompleto}
+                      onChange={() => toggleLinea(idx)}
                     />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium" style={{ color: INK }}>{f.descripcion || f.codigo}</span>
                       <span style={{ color: MUTED }}> · {f.codigo} · U$S {Number(f.precioUnit).toLocaleString()} c/u</span>
                     </div>
-                    {seleccion[f.codigo] && !sinStock && !yaCompleto && (
+                    {seleccion[idx] && !sinStock && !yaCompleto && (
                       <input
                         type="number" min="1" max={Math.min(f.pendiente, f.stockDisponible)}
-                        value={cantidades[f.codigo] || 0}
-                        onChange={(e) => setCantidadLinea(f.codigo, e.target.value)}
+                        value={cantidades[idx] || 0}
+                        onChange={(e) => setCantidadLinea(idx, e.target.value)}
                         className="w-16 text-xs px-1.5 py-1 rounded border"
                         style={{ borderColor: BORDER }}
                       />

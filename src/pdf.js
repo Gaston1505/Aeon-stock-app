@@ -14,15 +14,30 @@ export const COMPANY = {
 // Texto del certificado de garantía (no de una cotización) — misma cláusula de alcance que
 // Certificado_Garantia_AEON_v4.docx, sin las menciones a precios/vigencia de cotización que
 // no aplican a una venta ya confirmada.
-const LEGAL_TEXT =
+//
+// La extensión a 36 meses está atada a un service oficial que solo existe para Aire
+// Acondicionado y Termocalefones (gas refrigerante, ánodo, etc.) — un control remoto, un anafe
+// o un horno no tienen ese programa, así que prometerles una extensión condicionada a un
+// service que no existe es engañoso. `venta.requiereService` (calculado en App.jsx a partir de
+// las categorías de sus líneas) decide cuál de las dos cláusulas corresponde.
+const LEGAL_TEXT_CON_SERVICE =
   "AEON Home Tech Paraguay garantiza al comprador, dentro del territorio nacional, por un plazo de un (1) año " +
   "contado a partir de la fecha de entrega, el correcto funcionamiento de los equipos de la marca, cubriendo " +
   "defectos de fabricación y fallas en materiales bajo condiciones normales de uso. La cobertura podrá extenderse " +
   "hasta un total de treinta y seis (36) meses, siempre que el equipo sea sometido a los servicios de mantenimiento " +
   "oficial programados antes de los doce (12) y veinticuatro (24) meses desde la fecha de entrega.";
+const LEGAL_TEXT_SIN_SERVICE =
+  "AEON Home Tech Paraguay garantiza al comprador, dentro del territorio nacional, por un plazo de un (1) año " +
+  "contado a partir de la fecha de entrega, el correcto funcionamiento de los equipos de la marca, cubriendo " +
+  "defectos de fabricación y fallas en materiales bajo condiciones normales de uso.";
+function legalTextGarantia(requiereService) {
+  return requiereService === false ? LEGAL_TEXT_SIN_SERVICE : LEGAL_TEXT_CON_SERVICE;
+}
 
-// Igual que LEGAL_TEXT, pero la cláusula de instalación depende de si esta cotización puntual la
-// incluye — si el cliente pagó instalación no tiene sentido que el mismo texto diga "no incluye".
+// Texto de la cotización (no del certificado de garantía) — acá sí corresponde mencionar precio
+// en dólares y vigencia de 30 días, porque todavía es una cotización. La cláusula de instalación
+// depende de si esta cotización puntual la incluye — si el cliente pagó instalación no tiene
+// sentido que el mismo texto diga "no incluye".
 function legalTextCotizacion(incluyeInstalacion) {
   return (
     "TODOS LOS PRECIOS SON EN DOLARES E IVA INCLUIDO. La cotización es válida por 30 días. " +
@@ -978,18 +993,21 @@ export async function generateGarantiaPdf(venta) {
 
   y -= 14;
 
-  // Vencimientos de service
-  ensureSpace(40);
-  rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
-  text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
-  text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
-  text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
-  text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
-  y -= 32 + 14;
+  // Vencimientos de service — solo para equipos con programa de service oficial real
+  // (Aire Acondicionado y Termocalefones); ver nota junto a LEGAL_TEXT_CON_SERVICE.
+  if (venta.requiereService !== false) {
+    ensureSpace(40);
+    rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
+    text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
+    text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
+    text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
+    text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
+    y -= 32 + 14;
+  }
 
   // Texto legal
   ensureSpace(60);
-  const legalLines = wrapText(font, LEGAL_TEXT, 6.5, CONTENT_W - 10);
+  const legalLines = wrapText(font, legalTextGarantia(venta.requiereService), 6.5, CONTENT_W - 10);
   const legalH = legalLines.length * 8 + 8;
   rect(MARGIN, y - legalH, CONTENT_W, legalH, { border: BORDER });
   legalLines.forEach((line, i) => text(line, MARGIN + 4, y - 10 - i * 8, { size: 6.5 }));
@@ -1019,6 +1037,320 @@ export function nombreArchivoGarantia(venta) {
 export async function downloadGarantiaPdf(venta) {
   const bytes = await generateGarantiaPdf(venta);
   downloadBlob(bytes, nombreArchivoGarantia(venta), "application/pdf");
+}
+
+// ---------- Certificado de garantía completo (para obras con contrato) ----------
+// Mismo contenido que Certificado_Garantia_AEON_v4.docx: ficha para completar a mano en la
+// entrega + los 10 artículos de términos y condiciones. El certificado corto (arriba) alcanza
+// para una venta chica (un control, un anafe suelto); este es para obras con contrato, donde
+// conviene entregar la letra chica completa.
+function seccionAlcanceGarantia(requiereService) {
+  const base = legalTextGarantia(requiereService);
+  const responsabilidad =
+    requiereService === false
+      ? ""
+      : " Es responsabilidad del cliente coordinar el service dentro de los plazos establecidos; AEON Home Tech podrá " +
+        "notificar proactivamente estos vencimientos, sin que ello constituya una obligación de seguimiento indefinido, " +
+        "y el vencimiento del plazo sin haberse realizado el service correspondiente implica la pérdida de la extensión " +
+        "de garantía.";
+  return { n: "01", titulo: "ALCANCE DE LA GARANTÍA", parrafos: [base + responsabilidad] };
+}
+const TERMINOS_GARANTIA_BASE = [
+  {
+    n: "02", titulo: "CONDICIONES DE VALIDEZ",
+    intro: "La presente garantía será válida únicamente si:",
+    items: [
+      "El producto fue instalado correctamente por personal calificado.",
+      "El equipo se encuentra identificado en el presente certificado, registrado en los registros de venta de AEON Home Tech asociados a la obra/edificio correspondiente.",
+      "El equipo fue utilizado conforme a las instrucciones del fabricante.",
+      "No presenta signos de manipulación indebida.",
+    ],
+  },
+  {
+    n: "03", titulo: "QUÉ CUBRE LA GARANTÍA",
+    intro: "La garantía cubre exclusivamente:",
+    items: [
+      "Fallas de funcionamiento por defectos de fábrica.",
+      "Reemplazo o reparación de piezas defectuosas atribuibles a defectos de fabricación.",
+    ],
+  },
+  {
+    n: "04", titulo: "QUÉ NO CUBRE LA GARANTÍA",
+    intro: "La garantía no cubre:",
+    items: [
+      "La instalación del equipo ni la mano de obra asociada a la misma.",
+      "Daños derivados de una instalación incorrecta (por ej., conexión eléctrica inadecuada).",
+      "Uso indebido, negligente o no conforme a las indicaciones del fabricante.",
+      "Golpes, caídas o daños estéticos.",
+      "Manipulación por personal no autorizado.",
+      "Desgaste normal de componentes (perillas, encendido, rejillas, entre otros).",
+      "Problemas derivados de variaciones de tensión eléctrica.",
+    ],
+  },
+  {
+    n: "05", titulo: "PROCEDIMIENTO PARA HACER VÁLIDA LA GARANTÍA",
+    intro: "Para solicitar servicio técnico, el cliente deberá:",
+    items: [
+      "Contactar al servicio técnico autorizado de AEON Home Tech.",
+      "Indicar la obra/edificio, unidad y datos del equipo consignados en el presente certificado.",
+      "Describir la falla detectada y completar la ficha de reclamo.",
+    ],
+    parrafos: [
+      "El servicio técnico evaluará el equipo y determinará si corresponde reparación, cambio de piezas o reemplazo " +
+        "del producto, conforme a los términos del presente certificado.",
+    ],
+  },
+  {
+    n: "06", titulo: "TIEMPOS DE RESPUESTA",
+    items: [
+      "Diagnóstico: dentro de las 24 a 48 horas hábiles posteriores a la recepción del equipo.",
+      "Reparación: la atención técnica se realizará preferentemente in situ. De requerirse una revisión más exhaustiva, " +
+        "el equipo será trasladado a nuestro taller autorizado y Aeon proporcionará un equipo de reemplazo de " +
+        "prestaciones equivalentes hasta la finalización de la reparación.",
+    ],
+  },
+  {
+    n: "07", titulo: "TRANSPORTE DEL PRODUCTO",
+    parrafos: [
+      "El traslado del equipo para su reparación, cuando la falla esté cubierta por esta garantía, no tiene costo " +
+        "para el cliente. El servicio técnico podrá resolver la falla en el propio domicilio (llevando el repuesto " +
+        "necesario) o, si se requiere una revisión más exhaustiva, retirar el equipo, repararlo en taller y " +
+        "reinstalarlo una vez finalizada la reparación.",
+      "Se recomienda conservar el embalaje original para facilitar el traslado seguro del producto.",
+    ],
+  },
+  {
+    n: "08", titulo: "PRESUPUESTOS Y REPARACIONES FUERA DE GARANTÍA",
+    parrafos: [
+      "Ante fallas no cubiertas por esta garantía (por ejemplo, daños por golpes, mal uso o desgaste), AEON Home " +
+        "Tech presentará un presupuesto formal antes de realizar cualquier trabajo, detallando por separado el costo " +
+        "del repuesto y el costo de instalación. El servicio se ejecutará únicamente una vez que el cliente confirme " +
+        "la aceptación del presupuesto presentado.",
+    ],
+  },
+  {
+    n: "09", titulo: "RECOMENDACIONES DE USO",
+    items: [
+      "No obstruir las salidas de ventilación del equipo.",
+      "Realizar limpieza periódica utilizando productos adecuados.",
+      "Verificar regularmente el estado de las conexiones.",
+      "No utilizar el equipo si presenta fallas visibles.",
+    ],
+  },
+  {
+    n: "10", titulo: "IMPORTANTE",
+    parrafos: [
+      "La presente garantía no reemplaza ni limita los derechos del consumidor establecidos por la legislación " +
+        "vigente en la República del Paraguay.",
+    ],
+  },
+];
+
+export async function generateGarantiaCompletaPdf(venta) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const lineas = venta.lineas || [];
+  const colModelo = 110;
+  const colCant = 40;
+  const colSerie = 90;
+  const colDescripcion = CONTENT_W - colModelo - colCant - colSerie;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 7, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+  function drawParrafo(str, opts = {}) {
+    const size = opts.size || 8;
+    const lines = wrapText(font, str, size, CONTENT_W);
+    ensureSpace(lines.length * (size + 2.5) + 4);
+    lines.forEach((line) => { text(line, MARGIN, y, { size }); y -= size + 2.5; });
+    y -= 4;
+  }
+  function drawItem(str, opts = {}) {
+    const size = opts.size || 8;
+    const indent = 12;
+    const lines = wrapText(font, str, size, CONTENT_W - indent);
+    lines.forEach((line, i) => {
+      ensureSpace(size + 2.5);
+      text(i === 0 ? "•" : "", MARGIN, y, { size });
+      text(line, MARGIN + indent, y, { size });
+      y -= size + 2.5;
+    });
+    y -= 2;
+  }
+  function drawSeccion(s) {
+    ensureSpace(24);
+    text(s.n, MARGIN, y, { bold: true, size: 10, color: ACCENT });
+    text(s.titulo, MARGIN + 22, y, { bold: true, size: 10, color: ACCENT });
+    y -= 16;
+    if (s.intro) drawParrafo(s.intro);
+    (s.items || []).forEach((it) => drawItem(it));
+    (s.parrafos || []).forEach((p) => drawParrafo(p));
+    y -= 4;
+  }
+
+  // Header
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 14;
+
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const title = "CERTIFICADO DE GARANTÍA";
+  const titleW = bold.widthOfTextAtSize(title, 10);
+  text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
+  y -= 18 + 14;
+
+  // Ficha del cliente y de la obra — lo que ya sabemos viene prellenado, el resto se completa
+  // a mano en el momento de la entrega (documento, dirección, instalador, etc.)
+  text("FICHA DEL EQUIPO Y DEL CLIENTE", MARGIN, y, { bold: true, size: 9, color: ACCENT });
+  y -= 6;
+  text("Datos a completar al momento de la entrega del equipo.", MARGIN, y - 8, { size: 7, color: MUTED });
+  y -= 20;
+  const rowH = 16;
+  const fichaRows = [
+    ["Cliente:", venta.cliente || ""],
+    ["Obra:", venta.obra || ""],
+    ["Fecha de entrega:", fmtFecha(venta.fechaVenta)],
+    ["Documento / RUC:", ""],
+    ["Dirección:", ""],
+    ["Teléfono:", ""],
+    ["Correo electrónico:", ""],
+    ["Instalado por:", ""],
+  ];
+  fichaRows.forEach(([label, value]) => {
+    ensureSpace(rowH);
+    rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+    text(label, MARGIN + 4, y - 11, { bold: true, size: 8 });
+    text(value, MARGIN + 130, y - 11, { size: 8 });
+    y -= rowH;
+  });
+  y -= 14;
+
+  // Equipos incluidos en esta venta
+  ensureSpace(40);
+  text("EQUIPOS INCLUIDOS EN ESTA VENTA", MARGIN, y, { bold: true, size: 9, color: ACCENT });
+  y -= 16;
+  function drawHeaderEquipos() {
+    const startX = MARGIN;
+    rect(startX, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
+    let cx = startX;
+    [["Producto / Descripción", colDescripcion], ["Modelo", colModelo], ["Cantidad", colCant], ["N° de serie", colSerie]].forEach(([label, w]) => {
+      centerText(label, cx, y, w, 18, { bold: true, color: ACCENT });
+      cx += w;
+    });
+    y -= 18;
+  }
+  drawHeaderEquipos();
+  lineas.forEach((l) => {
+    ensureSpace(16);
+    if (y === PAGE_H - MARGIN) drawHeaderEquipos();
+    const h = 16;
+    let cx = MARGIN;
+    rect(cx, y - h, colDescripcion, h, { border: BORDER });
+    text(l.descripcion || "", cx + 4, y - 11, { size: 7.5 });
+    cx += colDescripcion;
+    rect(cx, y - h, colModelo, h, { border: BORDER });
+    text(l.modelo || "", cx + 4, y - 11, { size: 7.5 });
+    cx += colModelo;
+    rect(cx, y - h, colCant, h, { border: BORDER });
+    centerText(String(l.cantidad ?? ""), cx, y, colCant, h, { size: 7.5 });
+    cx += colCant;
+    rect(cx, y - h, colSerie, h, { border: BORDER });
+    y -= h;
+  });
+  y -= 14;
+
+  // Vencimientos de service — solo si corresponde (ver nota junto a LEGAL_TEXT_CON_SERVICE)
+  if (venta.requiereService !== false) {
+    ensureSpace(40);
+    rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
+    text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
+    text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
+    text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
+    text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
+    y -= 32 + 14;
+  }
+
+  // Firmas
+  ensureSpace(90);
+  text("Al firmar este documento, el cliente declara haber recibido el equipo en perfectas condiciones", MARGIN, y, { size: 7, color: MUTED });
+  y -= 9;
+  text("y aceptar los términos y condiciones detallados en el presente certificado.", MARGIN, y, { size: 7, color: MUTED });
+  y -= 30;
+  const clienteLineX = MARGIN;
+  page.drawLine({ start: { x: clienteLineX, y }, end: { x: clienteLineX + 200, y }, thickness: 0.5, color: MUTED });
+  text("Firma del cliente", clienteLineX, y - 10, { size: 7.5, color: MUTED });
+  text("Aclaración / C.I. N°: ______________________", clienteLineX, y - 22, { size: 7.5, color: MUTED });
+
+  const aeonLineX = PAGE_W - MARGIN - 160;
+  page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
+  y -= 11;
+  const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
+  text(COMPANY.firmante, aeonLineX + 80 - nameW / 2, y, { size: 8 });
+  y -= 10;
+  const razW = font.widthOfTextAtSize(COMPANY.razonSocial, 7.5);
+  text(COMPANY.razonSocial, aeonLineX + 80 - razW / 2, y, { size: 7.5 });
+
+  // Términos y condiciones — siempre arrancan en página nueva
+  newPage();
+  text("TÉRMINOS Y CONDICIONES", MARGIN, y, { bold: true, size: 13, color: ACCENT });
+  y -= 20;
+  drawParrafo(
+    "AEON Home Tech Paraguay agradece su confianza al adquirir uno de nuestros productos. El presente certificado " +
+      "describe los términos, condiciones, alcances y limitaciones aplicables a la cobertura del equipo. Se recomienda " +
+      "conservarlo junto con la factura o comprobante de compra correspondiente.",
+    { size: 8 }
+  );
+  y -= 6;
+  [seccionAlcanceGarantia(venta.requiereService), ...TERMINOS_GARANTIA_BASE].forEach(drawSeccion);
+
+  return pdf.save();
+}
+
+export function nombreArchivoGarantiaCompleta(venta) {
+  return `Certificado_Garantia_${(venta.cliente || "cliente").replace(/\s+/g, "_")}_${(venta.obra || "").replace(/\s+/g, "_")}.pdf`;
+}
+
+export async function downloadGarantiaCompletaPdf(venta) {
+  const bytes = await generateGarantiaCompletaPdf(venta);
+  downloadBlob(bytes, nombreArchivoGarantiaCompleta(venta), "application/pdf");
 }
 
 // ---------- Reporte de muestras (declaración mensual para el seguro) ----------

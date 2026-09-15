@@ -18,7 +18,7 @@ import {
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
-  downloadListaPdf, downloadGarantiaPdf,
+  downloadListaPdf, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
   COMPANY, fmtFecha,
 } from "./pdf";
 
@@ -168,6 +168,18 @@ function fmtDate(d) {
   if (!d) return "—";
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
+}
+// Solo Aire Acondicionado y Termocalefones tienen un programa real de service oficial (carga
+// de gas refrigerante, revisión de ánodo, etc.). Un control remoto, un anafe o un horno no lo
+// tienen, así que no tiene sentido prometerles una extensión de garantía a 3 años condicionada
+// a un service que no existe — esas ventas quedan con garantía simple de 1 año, sin seguimiento
+// de service 12/24 meses.
+const CATEGORIAS_CON_SERVICE_OFICIAL = ["Aire Acondicionado", "Termocalefones"];
+function requiereServiceOficial(lineas, productos) {
+  return (lineas || []).some((l) => {
+    const p = productos.find((x) => x.nombre === l.modelo);
+    return p && CATEGORIAS_CON_SERVICE_OFICIAL.includes(p.categoriaPrincipal);
+  });
 }
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
 // con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
@@ -1361,12 +1373,16 @@ export default function App() {
   // esta única fecha de venta para toda la obra.
   const generarVentaDesdeCotizacion = (cotizacion, datos) => {
     const fechaVenta = datos.fechaVenta || todayISO();
+    const lineasVenta = (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad }));
+    const requiereService = requiereServiceOficial(lineasVenta, productos);
     addVenta({
       cliente: cotizacion.cliente, obra: cotizacion.obra, cotizacionId: cotizacion.id,
       fechaVenta,
-      lineas: (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad })),
-      vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24),
-      estadoService1: "Pendiente", estadoService2: "Pendiente",
+      lineas: lineasVenta,
+      requiereService,
+      ...(requiereService
+        ? { vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24), estadoService1: "Pendiente", estadoService2: "Pendiente" }
+        : {}),
     });
   };
 
@@ -1534,6 +1550,18 @@ export default function App() {
     } catch (e) {
       console.error("Error generando certificado de garantía", e);
       setPdfError("No se pudo generar el certificado de garantía. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleDescargarGarantiaCompletaPdf = async (venta) => {
+    setDescargandoId(venta.id + ":garantia-completa");
+    setPdfError("");
+    try {
+      await downloadGarantiaCompletaPdf(venta);
+    } catch (e) {
+      console.error("Error generando certificado de garantía completo", e);
+      setPdfError("No se pudo generar el certificado de garantía completo. Probá de nuevo.");
     }
     setDescargandoId(null);
   };
@@ -2552,6 +2580,7 @@ export default function App() {
             onGestionar={(v, f) => setGestion({ venta: v, field: f })}
             onVerFoto={setFotoView}
             onDescargarGarantia={handleDescargarGarantiaPdf}
+            onDescargarGarantiaCompleta={handleDescargarGarantiaCompletaPdf}
             descargandoId={descargandoId}
             pdfError={pdfError}
           />
@@ -3966,7 +3995,7 @@ const COMPROMETIDA_BADGE = {
   Retirada: { color: "#15803D", bg: "#E9F7EF" },
 };
 
-function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, descargandoId, pdfError }) {
+function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, descargandoId, pdfError }) {
   const handleContrato = async (venta, file) => {
     if (!file) return;
     const data = await readFileAsDataUrl(file);
@@ -3999,6 +4028,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
           {ventas.map((v) => {
             const remitos = v.cotizacionId ? movimientos.filter((m) => m.cotizacionId === v.cotizacionId) : [];
             const descargando = descargandoId === v.id + ":garantia";
+            const descargandoCompleto = descargandoId === v.id + ":garantia-completa";
             return (
               <div key={v.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
                 <div className="flex items-start justify-between mb-1">
@@ -4027,8 +4057,14 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                 )}
 
                 <div className="mt-2.5 space-y-1.5">
-                  <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
-                  <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                  {v.requiereService === false ? (
+                    <p className="text-xs" style={{ color: MUTED }}>Garantía simple de 1 año — sin service oficial (no aplica a estos productos).</p>
+                  ) : (
+                    <>
+                      <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                      <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                    </>
+                  )}
                 </div>
 
                 {remitos.length > 0 && (
@@ -4055,8 +4091,18 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                     disabled={descargando}
                     className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
                     style={{ backgroundColor: ACCENT, color: "#FFFFFF", opacity: descargando ? 0.6 : 1 }}
+                    title="Certificado de una página — alcanza para una venta chica (un control, un anafe suelto, etc.)"
                   >
-                    <ShieldCheck size={13} /> {descargando ? "Generando..." : "Certificado de garantía"}
+                    <ShieldCheck size={13} /> {descargando ? "Generando..." : "Certificado corto"}
+                  </button>
+                  <button
+                    onClick={() => onDescargarGarantiaCompleta(v)}
+                    disabled={descargandoCompleto}
+                    className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                    style={{ borderColor: ACCENT, color: ACCENT, opacity: descargandoCompleto ? 0.6 : 1 }}
+                    title="Certificado completo con todos los términos y condiciones — para obras con contrato"
+                  >
+                    <ShieldCheck size={13} /> {descargandoCompleto ? "Generando..." : "Certificado completo"}
                   </button>
                   {v.contratoData ? (
                     <a
@@ -5619,11 +5665,12 @@ function VentaForm({ productos, onSave }) {
       setError("Agregá al menos un modelo vendido.");
       return;
     }
+    const requiereService = requiereServiceOficial(lineas, productos);
     onSave({
-      cliente, obra, fechaVenta, lineas,
-      vtoService1: addMonthsISO(fechaVenta, 12),
-      vtoService2: addMonthsISO(fechaVenta, 24),
-      estadoService1: "Pendiente", estadoService2: "Pendiente",
+      cliente, obra, fechaVenta, lineas, requiereService,
+      ...(requiereService
+        ? { vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24), estadoService1: "Pendiente", estadoService2: "Pendiente" }
+        : {}),
     });
   };
 
@@ -5658,7 +5705,9 @@ function VentaForm({ productos, onSave }) {
       )}
 
       <p className="text-xs mb-3" style={{ color: MUTED }}>
-        Los vencimientos de service (12 y 24 meses) se calculan automáticamente a partir de la fecha de venta.
+        Si algún modelo es Aire Acondicionado o Termocalefón, los vencimientos de service (12 y 24 meses) se calculan
+        automáticamente a partir de la fecha de venta. El resto (anafes, hornos, campanas, controles, etc.) no tiene
+        service oficial y queda con garantía simple de 1 año.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar venta</PrimaryButton>
@@ -5710,7 +5759,8 @@ function VentaDesdeCotizacionForm({ cotizaciones, ventas, cotizacionInicial, onG
         </p>
       )}
       <p className="text-xs mb-3" style={{ color: MUTED }}>
-        Se crea una ficha con todos los modelos y cantidades de la cotización. Los vencimientos de service (12 y 24 meses) se calculan desde la fecha de venta.
+        Se crea una ficha con todos los modelos y cantidades de la cotización. Si incluye Aire Acondicionado o
+        Termocalefón, los vencimientos de service (12 y 24 meses) se calculan desde la fecha de venta.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Generar ficha de venta y garantía</PrimaryButton>

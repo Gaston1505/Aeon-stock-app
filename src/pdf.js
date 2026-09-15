@@ -13,26 +13,15 @@ export const COMPANY = {
 
 // Texto del certificado de garantía (no de una cotización) — misma cláusula de alcance que
 // Certificado_Garantia_AEON_v4.docx, sin las menciones a precios/vigencia de cotización que
-// no aplican a una venta ya confirmada.
-//
-// La extensión a 36 meses está atada a un service oficial que solo existe para Aire
-// Acondicionado y Termocalefones (gas refrigerante, ánodo, etc.) — un control remoto, un anafe
-// o un horno no tienen ese programa, así que prometerles una extensión condicionada a un
-// service que no existe es engañoso. `venta.requiereService` (calculado en App.jsx a partir de
-// las categorías de sus líneas) decide cuál de las dos cláusulas corresponde.
-const LEGAL_TEXT_CON_SERVICE =
+// no aplican a una venta ya confirmada. Se aplica a toda venta por igual — qué productos tienen
+// service oficial en la práctica es un juicio caso por caso, no algo que valga la pena tratar
+// de derivar automáticamente de la categoría del producto.
+const LEGAL_TEXT =
   "AEON Home Tech Paraguay garantiza al comprador, dentro del territorio nacional, por un plazo de un (1) año " +
   "contado a partir de la fecha de entrega, el correcto funcionamiento de los equipos de la marca, cubriendo " +
   "defectos de fabricación y fallas en materiales bajo condiciones normales de uso. La cobertura podrá extenderse " +
   "hasta un total de treinta y seis (36) meses, siempre que el equipo sea sometido a los servicios de mantenimiento " +
   "oficial programados antes de los doce (12) y veinticuatro (24) meses desde la fecha de entrega.";
-const LEGAL_TEXT_SIN_SERVICE =
-  "AEON Home Tech Paraguay garantiza al comprador, dentro del territorio nacional, por un plazo de un (1) año " +
-  "contado a partir de la fecha de entrega, el correcto funcionamiento de los equipos de la marca, cubriendo " +
-  "defectos de fabricación y fallas en materiales bajo condiciones normales de uso.";
-function legalTextGarantia(requiereService) {
-  return requiereService === false ? LEGAL_TEXT_SIN_SERVICE : LEGAL_TEXT_CON_SERVICE;
-}
 
 // Texto de la cotización (no del certificado de garantía) — acá sí corresponde mencionar precio
 // en dólares y vigencia de 30 días, porque todavía es una cotización. La cláusula de instalación
@@ -993,21 +982,18 @@ export async function generateGarantiaPdf(venta) {
 
   y -= 14;
 
-  // Vencimientos de service — solo para equipos con programa de service oficial real
-  // (Aire Acondicionado y Termocalefones); ver nota junto a LEGAL_TEXT_CON_SERVICE.
-  if (venta.requiereService !== false) {
-    ensureSpace(40);
-    rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
-    text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
-    text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
-    text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
-    text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
-    y -= 32 + 14;
-  }
+  // Vencimientos de service
+  ensureSpace(40);
+  rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
+  text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
+  text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
+  text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
+  text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
+  y -= 32 + 14;
 
   // Texto legal
   ensureSpace(60);
-  const legalLines = wrapText(font, legalTextGarantia(venta.requiereService), 6.5, CONTENT_W - 10);
+  const legalLines = wrapText(font, LEGAL_TEXT, 6.5, CONTENT_W - 10);
   const legalH = legalLines.length * 8 + 8;
   rect(MARGIN, y - legalH, CONTENT_W, legalH, { border: BORDER });
   legalLines.forEach((line, i) => text(line, MARGIN + 4, y - 10 - i * 8, { size: 6.5 }));
@@ -1044,17 +1030,16 @@ export async function downloadGarantiaPdf(venta) {
 // entrega + los 10 artículos de términos y condiciones. El certificado corto (arriba) alcanza
 // para una venta chica (un control, un anafe suelto); este es para obras con contrato, donde
 // conviene entregar la letra chica completa.
-function seccionAlcanceGarantia(requiereService) {
-  const base = legalTextGarantia(requiereService);
-  const responsabilidad =
-    requiereService === false
-      ? ""
-      : " Es responsabilidad del cliente coordinar el service dentro de los plazos establecidos; AEON Home Tech podrá " +
-        "notificar proactivamente estos vencimientos, sin que ello constituya una obligación de seguimiento indefinido, " +
-        "y el vencimiento del plazo sin haberse realizado el service correspondiente implica la pérdida de la extensión " +
-        "de garantía.";
-  return { n: "01", titulo: "ALCANCE DE LA GARANTÍA", parrafos: [base + responsabilidad] };
-}
+const SECCION_ALCANCE_GARANTIA = {
+  n: "01", titulo: "ALCANCE DE LA GARANTÍA",
+  parrafos: [
+    LEGAL_TEXT +
+      " Es responsabilidad del cliente coordinar el service dentro de los plazos establecidos; AEON Home Tech podrá " +
+      "notificar proactivamente estos vencimientos, sin que ello constituya una obligación de seguimiento indefinido, " +
+      "y el vencimiento del plazo sin haberse realizado el service correspondiente implica la pérdida de la extensión " +
+      "de garantía.",
+  ],
+};
 const TERMINOS_GARANTIA_BASE = [
   {
     n: "02", titulo: "CONDICIONES DE VALIDEZ",
@@ -1297,16 +1282,14 @@ export async function generateGarantiaCompletaPdf(venta) {
   });
   y -= 14;
 
-  // Vencimientos de service — solo si corresponde (ver nota junto a LEGAL_TEXT_CON_SERVICE)
-  if (venta.requiereService !== false) {
-    ensureSpace(40);
-    rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
-    text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
-    text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
-    text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
-    text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
-    y -= 32 + 14;
-  }
+  // Vencimientos de service
+  ensureSpace(40);
+  rect(MARGIN, y - 32, CONTENT_W, 32, { border: BORDER });
+  text("Vencimiento service 1 (12 meses):", MARGIN + 6, y - 13, { bold: true, size: 8 });
+  text(fmtFecha(venta.vtoService1), MARGIN + 180, y - 13, { size: 8 });
+  text("Vencimiento service 2 (24 meses):", MARGIN + 6, y - 27, { bold: true, size: 8 });
+  text(fmtFecha(venta.vtoService2), MARGIN + 180, y - 27, { size: 8 });
+  y -= 32 + 14;
 
   // Firmas
   ensureSpace(90);
@@ -1339,7 +1322,7 @@ export async function generateGarantiaCompletaPdf(venta) {
     { size: 8 }
   );
   y -= 6;
-  [seccionAlcanceGarantia(venta.requiereService), ...TERMINOS_GARANTIA_BASE].forEach(drawSeccion);
+  [SECCION_ALCANCE_GARANTIA, ...TERMINOS_GARANTIA_BASE].forEach(drawSeccion);
 
   return pdf.save();
 }

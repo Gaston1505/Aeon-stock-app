@@ -169,23 +169,6 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
-// Solo los equipos de Aire Acondicionado y Termocalefones tienen un programa real de service
-// oficial (carga de gas refrigerante, revisión de ánodo, etc.) — un anafe, un horno o un
-// accesorio (ej. un control remoto, categoriaPrincipal "Aire Acondicionado" pero subcategoria
-// "Accesorios") no lo tienen, así que no tiene sentido prometerles una extensión de garantía a
-// 3 años condicionada a un service que no existe. Por eso Aire Acondicionado se filtra además
-// por subcategoria (mismos tipos de equipo reales que usa CATALOGO_TABS "aires"), mientras que
-// Termocalefones no necesita ese filtro — sus productos son todos unidades reales.
-const SUBCATEGORIAS_AC_CON_SERVICE = ["Split Pared", "Cassette", "Piso-Techo", "Ducto", "Multi Split Interior", "Multi Split Exterior"];
-function requiereServiceOficial(lineas, productos) {
-  return (lineas || []).some((l) => {
-    const p = productos.find((x) => x.nombre === l.modelo);
-    if (!p) return false;
-    if (p.categoriaPrincipal === "Termocalefones") return true;
-    if (p.categoriaPrincipal === "Aire Acondicionado") return SUBCATEGORIAS_AC_CON_SERVICE.includes(p.subcategoria);
-    return false;
-  });
-}
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
 // con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
 async function compartirArchivo(bytes, filename, texto) {
@@ -1378,16 +1361,12 @@ export default function App() {
   // esta única fecha de venta para toda la obra.
   const generarVentaDesdeCotizacion = (cotizacion, datos) => {
     const fechaVenta = datos.fechaVenta || todayISO();
-    const lineasVenta = (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad }));
-    const requiereService = requiereServiceOficial(lineasVenta, productos);
     addVenta({
       cliente: cotizacion.cliente, obra: cotizacion.obra, cotizacionId: cotizacion.id,
       fechaVenta,
-      lineas: lineasVenta,
-      requiereService,
-      ...(requiereService
-        ? { vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24), estadoService1: "Pendiente", estadoService2: "Pendiente" }
-        : {}),
+      lineas: (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad })),
+      vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24),
+      estadoService1: "Pendiente", estadoService2: "Pendiente",
     });
   };
 
@@ -4062,14 +4041,8 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                 )}
 
                 <div className="mt-2.5 space-y-1.5">
-                  {v.requiereService === false ? (
-                    <p className="text-xs" style={{ color: MUTED }}>Garantía simple de 1 año — sin service oficial (no aplica a estos productos).</p>
-                  ) : (
-                    <>
-                      <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
-                      <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
-                    </>
-                  )}
+                  <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                  <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
                 </div>
 
                 {remitos.length > 0 && (
@@ -5670,12 +5643,11 @@ function VentaForm({ productos, onSave }) {
       setError("Agregá al menos un modelo vendido.");
       return;
     }
-    const requiereService = requiereServiceOficial(lineas, productos);
     onSave({
-      cliente, obra, fechaVenta, lineas, requiereService,
-      ...(requiereService
-        ? { vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24), estadoService1: "Pendiente", estadoService2: "Pendiente" }
-        : {}),
+      cliente, obra, fechaVenta, lineas,
+      vtoService1: addMonthsISO(fechaVenta, 12),
+      vtoService2: addMonthsISO(fechaVenta, 24),
+      estadoService1: "Pendiente", estadoService2: "Pendiente",
     });
   };
 
@@ -5710,9 +5682,7 @@ function VentaForm({ productos, onSave }) {
       )}
 
       <p className="text-xs mb-3" style={{ color: MUTED }}>
-        Si algún modelo es Aire Acondicionado o Termocalefón, los vencimientos de service (12 y 24 meses) se calculan
-        automáticamente a partir de la fecha de venta. El resto (anafes, hornos, campanas, controles, etc.) no tiene
-        service oficial y queda con garantía simple de 1 año.
+        Los vencimientos de service (12 y 24 meses) se calculan automáticamente a partir de la fecha de venta.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar venta</PrimaryButton>
@@ -5764,8 +5734,7 @@ function VentaDesdeCotizacionForm({ cotizaciones, ventas, cotizacionInicial, onG
         </p>
       )}
       <p className="text-xs mb-3" style={{ color: MUTED }}>
-        Se crea una ficha con todos los modelos y cantidades de la cotización. Si incluye Aire Acondicionado o
-        Termocalefón, los vencimientos de service (12 y 24 meses) se calculan desde la fecha de venta.
+        Se crea una ficha con todos los modelos y cantidades de la cotización. Los vencimientos de service (12 y 24 meses) se calculan desde la fecha de venta.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Generar ficha de venta y garantía</PrimaryButton>

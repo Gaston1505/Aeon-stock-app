@@ -169,16 +169,21 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
-// Solo Aire Acondicionado y Termocalefones tienen un programa real de service oficial (carga
-// de gas refrigerante, revisión de ánodo, etc.). Un control remoto, un anafe o un horno no lo
-// tienen, así que no tiene sentido prometerles una extensión de garantía a 3 años condicionada
-// a un service que no existe — esas ventas quedan con garantía simple de 1 año, sin seguimiento
-// de service 12/24 meses.
-const CATEGORIAS_CON_SERVICE_OFICIAL = ["Aire Acondicionado", "Termocalefones"];
+// Solo los equipos de Aire Acondicionado y Termocalefones tienen un programa real de service
+// oficial (carga de gas refrigerante, revisión de ánodo, etc.) — un anafe, un horno o un
+// accesorio (ej. un control remoto, categoriaPrincipal "Aire Acondicionado" pero subcategoria
+// "Accesorios") no lo tienen, así que no tiene sentido prometerles una extensión de garantía a
+// 3 años condicionada a un service que no existe. Por eso Aire Acondicionado se filtra además
+// por subcategoria (mismos tipos de equipo reales que usa CATALOGO_TABS "aires"), mientras que
+// Termocalefones no necesita ese filtro — sus productos son todos unidades reales.
+const SUBCATEGORIAS_AC_CON_SERVICE = ["Split Pared", "Cassette", "Piso-Techo", "Ducto", "Multi Split Interior", "Multi Split Exterior"];
 function requiereServiceOficial(lineas, productos) {
   return (lineas || []).some((l) => {
     const p = productos.find((x) => x.nombre === l.modelo);
-    return p && CATEGORIAS_CON_SERVICE_OFICIAL.includes(p.categoriaPrincipal);
+    if (!p) return false;
+    if (p.categoriaPrincipal === "Termocalefones") return true;
+    if (p.categoriaPrincipal === "Aire Acondicionado") return SUBCATEGORIAS_AC_CON_SERVICE.includes(p.subcategoria);
+    return false;
   });
 }
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,

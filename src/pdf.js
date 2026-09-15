@@ -11,10 +11,15 @@ export const COMPANY = {
   ruc: "RUC 80116329-3",
 };
 
+// Texto del certificado de garantía (no de una cotización) — misma cláusula de alcance que
+// Certificado_Garantia_AEON_v4.docx, sin las menciones a precios/vigencia de cotización que
+// no aplican a una venta ya confirmada.
 const LEGAL_TEXT =
-  "TODOS LOS PRECIOS SON EN DOLARES E IVA INCLUIDO. La cotización es válida por 30 días. No incluye instalación. " +
-  "Garantía 1 año por daños de fábrica desde su instalación, extendible a 36 meses, siempre y cuando se realice " +
-  "servicio de mantenimiento oficial antes de los 12 y 24 meses respectivamente desde su instalacion.";
+  "AEON Home Tech Paraguay garantiza al comprador, dentro del territorio nacional, por un plazo de un (1) año " +
+  "contado a partir de la fecha de entrega, el correcto funcionamiento de los equipos de la marca, cubriendo " +
+  "defectos de fabricación y fallas en materiales bajo condiciones normales de uso. La cobertura podrá extenderse " +
+  "hasta un total de treinta y seis (36) meses, siempre que el equipo sea sometido a los servicios de mantenimiento " +
+  "oficial programados antes de los doce (12) y veinticuatro (24) meses desde la fecha de entrega.";
 
 // Igual que LEGAL_TEXT, pero la cláusula de instalación depende de si esta cotización puntual la
 // incluye — si el cliente pagó instalación no tiene sentido que el mismo texto diga "no incluye".

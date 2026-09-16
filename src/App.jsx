@@ -151,8 +151,8 @@ const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos", "conteo"]
 // Quantum"), y queda accesible sin ningún login, igual que el resto de la app.
 //
 // Mismo mecanismo para archivos que se comparten con clientes desde el celular: la
-// presentación comercial (public/presentacion-comercial.pdf) y, cuando lo suban, el
-// catálogo en PDF (public/catalogo.pdf) — agregar su link al lado del de la presentación.
+// presentación comercial (public/presentacion-comercial.pdf) y el catálogo de productos
+// (public/catalogo.pdf).
 
 // ---------- Helpers ----------
 function todayISO() {
@@ -2341,6 +2341,15 @@ export default function App() {
             >
               <Send size={16} />
               {descargandoId === "Presentacion_comercial_AEON.pdf" ? "Generando..." : "Presentación comercial"}
+            </button>
+            <button
+              onClick={() => handleCompartirArchivoEstatico(`${import.meta.env.BASE_URL}catalogo.pdf`, "Catalogo_AEON.pdf", "Catálogo de productos — AEON Home Tech")}
+              disabled={descargandoId === "Catalogo_AEON.pdf"}
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
+              style={{ color: MUTED }}
+            >
+              <Send size={16} />
+              {descargandoId === "Catalogo_AEON.pdf" ? "Generando..." : "Catálogo"}
             </button>
           </nav>
           <div className="px-4 py-3 border-t" style={{ borderColor: BORDER }}>

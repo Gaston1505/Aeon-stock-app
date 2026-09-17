@@ -1,0 +1,294 @@
+import ExcelJS from "exceljs";
+import { COMPANY, fmtFecha, fmtNum, montoEnLetras, legalTextCotizacion } from "./pdf";
+
+// Excel de la cotización que imita el diseño del PDF (mismo logo, colores, tabla y totales),
+// pero con las fotos de cada producto insertadas de verdad en la celda — la librería "xlsx"
+// (SheetJS) que usa el resto de la app no soporta escribir imágenes en un .xlsx, por eso esto
+// usa "exceljs" en su lugar, solo para este export puntual.
+
+const ACCENT = "FF565A5F";
+const ACCENT_LIGHT = "FFEBEBEC";
+const BORDER = "FFE4E5E5";
+const MUTED = "FF686D73";
+const WHITE = "FFFFFFFF";
+
+function thinBorder() {
+  const side = { style: "thin", color: { argb: BORDER } };
+  return { top: side, bottom: side, left: side, right: side };
+}
+
+async function fetchArrayBuffer(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function generateCotizacionExcelBuffer(cotizacion) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Cotización", { views: [{ showGridLines: false }] });
+
+  const lineas = cotizacion.lineas || [];
+  const showEspec = lineas.some((l) => l.especValor);
+  const especLabel = lineas.find((l) => l.especLabel)?.especLabel || "Espec.";
+
+  const cols = [
+    { key: "codigo", width: 18 },
+    { key: "foto", width: 13 },
+    { key: "descripcion", width: 46 },
+    ...(showEspec ? [{ key: "espec", width: 14 }] : []),
+    { key: "cantidad", width: 8 },
+    { key: "precio", width: 15 },
+    { key: "total", width: 15 },
+  ];
+  sheet.columns = cols;
+  const numCols = cols.length;
+  const lastCol = numCols;
+
+  function mergeRow(row, opts = {}) {
+    sheet.mergeCells(row, 1, row, lastCol);
+  }
+  function styleCell(cell, opts = {}) {
+    if (opts.fill) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } };
+    if (opts.bold || opts.color) cell.font = { bold: !!opts.bold, size: opts.size || 10, color: { argb: opts.color || "FF1C1E20" } };
+    else if (opts.size) cell.font = { size: opts.size };
+    if (opts.border !== false) cell.border = thinBorder();
+    cell.alignment = { vertical: "middle", horizontal: opts.align || "left", wrapText: !!opts.wrap };
+  }
+
+  const base = import.meta.env.BASE_URL;
+  const [logoBuf, firmaBuf] = await Promise.all([
+    fetchArrayBuffer(`${base}aeon-logo.jpg`),
+    fetchArrayBuffer(`${base}generated/firma.png`),
+  ]);
+
+  let r = 1;
+
+  // Header / letterhead
+  if (logoBuf) {
+    const imgId = workbook.addImage({ buffer: logoBuf, extension: "jpeg" });
+    sheet.addImage(imgId, { tl: { col: 0, row: 0 }, ext: { width: 130, height: 66 } });
+  }
+  sheet.getCell(r, lastCol).value = "Fecha:";
+  sheet.getCell(r, lastCol).font = { bold: true, size: 9 };
+  sheet.getCell(r, lastCol).alignment = { horizontal: "right" };
+  r += 1;
+  sheet.getCell(r, lastCol).value = fmtFecha(cotizacion.fecha);
+  sheet.getCell(r, lastCol).alignment = { horizontal: "right" };
+  r += 4; // deja lugar debajo del logo (alto ~66px)
+
+  const infoLines = [
+    [COMPANY.razonSocial, { bold: true, size: 10 }],
+    [COMPANY.direccion, { size: 8.5, color: MUTED }],
+    [COMPANY.direccion2, { size: 8.5, color: MUTED }],
+    [COMPANY.telefonos, { size: 8.5, color: MUTED }],
+    [COMPANY.emails, { size: 8.5, color: MUTED }],
+  ];
+  infoLines.forEach(([text, opts]) => {
+    const cell = sheet.getCell(r, 1);
+    cell.value = text;
+    cell.font = { bold: !!opts.bold, size: opts.size, color: { argb: opts.color ? "FF686D73" : "FF1C1E20" } };
+    r += 1;
+  });
+  r += 1;
+
+  // Title bar
+  mergeRow(r);
+  const titleCell = sheet.getCell(r, 1);
+  titleCell.value = "COTIZACIÓN ELECTRODOMÉSTICOS";
+  styleCell(titleCell, { fill: ACCENT, bold: true, color: WHITE, size: 11, align: "center" });
+  sheet.getRow(r).height = 22;
+  r += 1;
+
+  // Cliente / Obra
+  [["Cliente:", cotizacion.cliente || ""], ["Obra:", cotizacion.obra || ""]].forEach(([label, value]) => {
+    const labelCell = sheet.getCell(r, 1);
+    labelCell.value = label;
+    styleCell(labelCell, { bold: true });
+    sheet.getCell(r, 2).value = value;
+    styleCell(sheet.getCell(r, 2));
+    for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+    sheet.mergeCells(r, 2, r, lastCol);
+    sheet.getRow(r).height = 16;
+    r += 1;
+  });
+  r += 1;
+
+  // Tabla — encabezado
+  const headers = [
+    "Producto", "Foto Ref.", "Descripción",
+    ...(showEspec ? [especLabel] : []),
+    "Cant.", "Precio Unit. U$S", "TOTAL U$S",
+  ];
+  headers.forEach((h, i) => {
+    const cell = sheet.getCell(r, i + 1);
+    cell.value = h;
+    styleCell(cell, { fill: ACCENT_LIGHT, bold: true, color: "FF565A5F", align: "center" });
+  });
+  sheet.getRow(r).height = 20;
+  const headerRow = r;
+  r += 1;
+
+  let subtotal = 0;
+  for (const l of lineas) {
+    const cant = Number(l.cantidad) || 0;
+    const precio = Number(l.precioUnit) || 0;
+    const total = cant * precio;
+    subtotal += total;
+
+    const row = sheet.getRow(r);
+    row.height = 48;
+
+    let c = 1;
+    const codigoCell = sheet.getCell(r, c); codigoCell.value = l.codigo || ""; styleCell(codigoCell, { align: "center", wrap: true }); c += 1;
+
+    const fotoCell = sheet.getCell(r, c); styleCell(fotoCell, { align: "center" });
+    if (l.foto) {
+      try {
+        const imgId = workbook.addImage({ base64: l.foto, extension: "jpeg" });
+        sheet.addImage(imgId, { tl: { col: c - 1 + 0.15, row: r - 1 + 0.1 }, ext: { width: 50, height: 50 } });
+      } catch (e) { /* foto corrupta o formato no soportado — se deja la celda vacía */ }
+    }
+    c += 1;
+
+    const descCell = sheet.getCell(r, c); descCell.value = l.descripcion || ""; styleCell(descCell, { wrap: true }); c += 1;
+
+    if (showEspec) {
+      const espCell = sheet.getCell(r, c); espCell.value = l.especValor || ""; styleCell(espCell, { align: "center" }); c += 1;
+    }
+
+    const cantCell = sheet.getCell(r, c); cantCell.value = cant; styleCell(cantCell, { align: "center" }); c += 1;
+    const precioCell = sheet.getCell(r, c); precioCell.value = precio; precioCell.numFmt = "#,##0.00"; styleCell(precioCell, { align: "right" }); c += 1;
+    const totalCell = sheet.getCell(r, c); totalCell.value = total; totalCell.numFmt = "#,##0.00"; styleCell(totalCell, { align: "right" });
+
+    r += 1;
+  }
+  sheet.getColumn(1).alignment = { vertical: "middle" };
+
+  const incluirDescuento = !!cotizacion.incluirDescuento;
+  const incluirInstalacion = !!cotizacion.incluirInstalacion;
+  const descuentoValor = incluirDescuento ? Number(cotizacion.descuento) || 0 : 0;
+  const descuentoEsPorcentaje = !!cotizacion.descuentoEsPorcentaje;
+  const descuentoMonto = descuentoEsPorcentaje ? (subtotal * descuentoValor) / 100 : descuentoValor;
+  const totalConDescuento = subtotal - descuentoMonto;
+  const instalacionMonto = incluirInstalacion ? Number(cotizacion.instalacionMonto) || 0 : 0;
+  const totalFinal = totalConDescuento + instalacionMonto;
+
+  function totalRow(label, value, opts = {}) {
+    const labelCell = sheet.getCell(r, 1);
+    labelCell.value = label;
+    styleCell(labelCell, { bold: true, fill: opts.fill, color: opts.fill ? "FF565A5F" : undefined });
+    sheet.mergeCells(r, 1, r, lastCol - 1);
+    for (let c = 2; c < lastCol; c++) styleCell(sheet.getCell(r, c), { fill: opts.fill });
+    const valCell = sheet.getCell(r, lastCol);
+    valCell.value = value;
+    if (typeof value === "number") valCell.numFmt = "#,##0.00";
+    styleCell(valCell, { bold: true, fill: opts.fill, color: opts.fill ? "FF565A5F" : undefined, align: "right" });
+    r += 1;
+  }
+
+  totalRow("Sub-total", subtotal, { fill: ACCENT_LIGHT });
+  if (incluirDescuento) {
+    totalRow("Descuento", descuentoValor === 0 ? "-" : (descuentoEsPorcentaje ? `${fmtNum(descuentoValor)}%` : descuentoValor));
+    totalRow("Total Descuento Incluido", totalConDescuento, { fill: ACCENT_LIGHT });
+  }
+
+  if (cotizacion.comentarios) {
+    const labelCell = sheet.getCell(r, 1);
+    labelCell.value = "Comentarios";
+    styleCell(labelCell, { bold: true });
+    sheet.getCell(r, 2).value = cotizacion.comentarios;
+    styleCell(sheet.getCell(r, 2), { wrap: true });
+    sheet.mergeCells(r, 2, r, lastCol);
+    for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+    sheet.getRow(r).height = 30;
+    r += 1;
+  }
+
+  if (incluirInstalacion) {
+    const labelCell = sheet.getCell(r, 1);
+    labelCell.value = "Instalaciones";
+    styleCell(labelCell, { bold: true });
+    sheet.getCell(r, 2).value = cotizacion.instalacionDescripcion || "";
+    styleCell(sheet.getCell(r, 2), { wrap: true });
+    sheet.mergeCells(r, 2, r, lastCol - 1);
+    for (let c = 3; c < lastCol; c++) styleCell(sheet.getCell(r, c));
+    const instCell = sheet.getCell(r, lastCol);
+    instCell.value = instalacionMonto === 0 ? "-" : instalacionMonto;
+    if (typeof instCell.value === "number") instCell.numFmt = "#,##0.00";
+    styleCell(instCell, { bold: true, align: "right" });
+    r += 1;
+  }
+
+  totalRow("TOTAL IVA INCLUIDO", totalFinal, { fill: ACCENT_LIGHT });
+
+  const letrasCell = sheet.getCell(r, 1);
+  letrasCell.value = `Dólares Americanos: ${montoEnLetras(totalFinal)}`;
+  styleCell(letrasCell);
+  sheet.mergeCells(r, 1, r, lastCol);
+  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  r += 1;
+
+  const entregaCell = sheet.getCell(r, 1);
+  entregaCell.value = `Fecha entrega estimada: ${cotizacion.fechaEntregaEstimada || ""}`;
+  styleCell(entregaCell, { wrap: true });
+  sheet.mergeCells(r, 1, r, lastCol);
+  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  sheet.getRow(r).height = 18;
+  r += 2;
+
+  // Texto legal
+  const legalTexto = [
+    legalTextCotizacion(!!cotizacion.incluirInstalacion),
+    `Forma de pago sugerida: ${cotizacion.formaPago || "A conversar"}.`,
+    `OBS: ${cotizacion.obs || "Productos a retirar de depósito."}`,
+  ].join("\n");
+  const legalCell = sheet.getCell(r, 1);
+  legalCell.value = legalTexto;
+  styleCell(legalCell, { wrap: true, size: 8 });
+  sheet.mergeCells(r, 1, r, lastCol);
+  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  sheet.getRow(r).height = 60;
+  r += 2;
+
+  // Firma
+  if (firmaBuf) {
+    const firmaId = workbook.addImage({ buffer: firmaBuf, extension: "png" });
+    sheet.addImage(firmaId, { tl: { col: lastCol - 2, row: r - 1 }, ext: { width: 100, height: 45 } });
+    r += 3;
+  } else {
+    r += 1;
+  }
+  [COMPANY.firmante, COMPANY.razonSocial, COMPANY.ruc].forEach((line) => {
+    const cell = sheet.getCell(r, lastCol - 1);
+    cell.value = line;
+    cell.alignment = { horizontal: "center" };
+    cell.font = { size: 8 };
+    sheet.mergeCells(r, lastCol - 1, r, lastCol);
+    r += 1;
+  });
+
+  sheet.getRow(headerRow).eachCell((cell) => { cell.border = thinBorder(); });
+
+  return workbook.xlsx.writeBuffer();
+}
+
+export function nombreArchivoCotizacionExcel(cotizacion) {
+  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}.xlsx`;
+}
+
+export async function downloadCotizacionExcel(cotizacion) {
+  const buffer = await generateCotizacionExcelBuffer(cotizacion);
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombreArchivoCotizacionExcel(cotizacion);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}

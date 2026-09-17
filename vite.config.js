@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 const BASE = "/Aeon-stock-app/";
 
@@ -9,6 +10,10 @@ export default defineConfig({
   base: BASE,
   plugins: [
     react(),
+    // exceljs (usado para exportar la cotización a Excel con fotos incluidas) referencia
+    // Buffer/process internamente aunque corra en el navegador — sin este polyfill tira
+    // "Buffer is not defined" en tiempo de ejecución.
+    nodePolyfills({ include: ["buffer", "process"] }),
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["icons/apple-touch-icon.png"],

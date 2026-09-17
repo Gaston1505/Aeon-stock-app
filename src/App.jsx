@@ -21,6 +21,7 @@ import {
   downloadListaPdf, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
   COMPANY, fmtFecha,
 } from "./pdf";
+import { downloadCotizacionExcel } from "./cotizacionExcel";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
 const INK = "#1C1E20";
@@ -1480,6 +1481,18 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const handleDescargarCotizacionExcel = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":excel");
+    setPdfError("");
+    try {
+      await downloadCotizacionExcel(cotizacion);
+    } catch (e) {
+      console.error("Error generando Excel de la cotización", e);
+      setPdfError("No se pudo generar el Excel de la cotización. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const handleDescargarFichas = async (cotizacion) => {
     setDescargandoId(cotizacion.id + ":fichas");
     setPdfError("");
@@ -2616,6 +2629,7 @@ export default function App() {
             onDelete={deleteCotizacion}
             onUpdate={updateCotizacion}
             onDescargarPdf={handleDescargarPdf}
+            onDescargarExcel={handleDescargarCotizacionExcel}
             onDescargarFichas={handleDescargarFichas}
             onCompartir={handleCompartirCotizacion}
             onCompartirFichas={handleCompartirFichas}
@@ -7521,7 +7535,7 @@ function RentabilidadCotizacionView({ c, productos }) {
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
@@ -7572,6 +7586,14 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
           <Download size={13} /> {descargandoId === `${c.id}:pdf` ? "Generando..." : "Descargar PDF"}
         </button>
         <button
+          onClick={() => onDescargarExcel(c)}
+          disabled={descargandoId === `${c.id}:excel`}
+          className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+          style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:excel` ? 0.6 : 1 }}
+        >
+          <Download size={13} /> {descargandoId === `${c.id}:excel` ? "Generando..." : "Descargar Excel"}
+        </button>
+        <button
           onClick={() => onCompartir(c)}
           disabled={descargandoId === `${c.id}:compartir`}
           className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
@@ -7612,7 +7634,7 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
   );
 }
 
-function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = grupo.versiones.slice(1);
   return (
@@ -7628,7 +7650,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
       <CotizacionCard
         c={grupo.activa} esActiva productos={productos}
         onDelete={onDelete} onUpdate={onUpdate}
-        onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+        onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
       />
@@ -7638,7 +7660,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
             <CotizacionCard
               key={v.id} c={v} esActiva={false} productos={productos}
               onDelete={onDelete} onUpdate={onUpdate}
-              onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
             />
@@ -7649,7 +7671,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
   );
 }
 
-function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -7669,7 +7691,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, on
           <ObraGrupo
             key={o.obra} grupo={o} productos={productos}
             onDelete={onDelete} onUpdate={onUpdate}
-            onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+            onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
           />
@@ -7679,7 +7701,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, on
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
 
@@ -7710,7 +7732,7 @@ function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDe
               <ClienteGrupo
                 key={g.cliente} grupo={g} productos={productos}
                 onDelete={onDelete} onUpdate={onUpdate}
-                onDescargarPdf={onDescargarPdf} onDescargarFichas={onDescargarFichas}
+                onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
               />

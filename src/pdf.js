@@ -27,7 +27,7 @@ const LEGAL_TEXT =
 // en dólares y vigencia de 30 días, porque todavía es una cotización. La cláusula de instalación
 // depende de si esta cotización puntual la incluye — si el cliente pagó instalación no tiene
 // sentido que el mismo texto diga "no incluye".
-function legalTextCotizacion(incluyeInstalacion) {
+export function legalTextCotizacion(incluyeInstalacion) {
   return (
     "TODOS LOS PRECIOS SON EN DOLARES E IVA INCLUIDO. La cotización es válida por 30 días. " +
     (incluyeInstalacion ? "" : "No incluye instalación. ") +
@@ -456,7 +456,7 @@ export async function generateCotizacionPdf(cotizacion) {
   return pdf.save();
 }
 
-function fmtNum(n) {
+export function fmtNum(n) {
   return (Number(n) || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtGs(n) {

@@ -21,7 +21,6 @@ import {
   downloadListaPdf, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
   COMPANY, fmtFecha,
 } from "./pdf";
-import { downloadCotizacionExcel } from "./cotizacionExcel";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
 const INK = "#1C1E20";
@@ -1485,6 +1484,9 @@ export default function App() {
     setDescargandoId(cotizacion.id + ":excel");
     setPdfError("");
     try {
+      // exceljs pesa ~2MB — se carga solo al tocar este botón en vez de en el bundle principal,
+      // así no infla la descarga inicial de la app para todos los usuarios.
+      const { downloadCotizacionExcel } = await import("./cotizacionExcel");
       await downloadCotizacionExcel(cotizacion);
     } catch (e) {
       console.error("Error generando Excel de la cotización", e);

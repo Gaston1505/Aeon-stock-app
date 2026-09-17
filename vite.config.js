@@ -34,6 +34,11 @@ export default defineConfig({
         // archivo real. Como la app no tiene rutas propias (todo es un solo path con estado
         // en React), alcanza con excluir del fallback cualquier URL que termine en extensión.
         navigateFallbackDenylist: [/\.[^/]+$/],
+        // El chunk de exceljs (carga dinámica, solo al exportar una cotización a Excel) es
+        // pesado — con el límite por defecto de 2MB, Workbox se niega a precachearlo y hace
+        // fallar el build entero. No hace falta que esté disponible offline, pero que sea grande
+        // no puede tirar abajo el build.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },
       manifest: {
         name: "AEON",

@@ -6191,6 +6191,7 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
   const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stockMinimo ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
+  const [noDisponible, setNoDisponible] = useState(!!producto?.noDisponible);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
   const [error, setError] = useState("");
@@ -6262,7 +6263,7 @@ function ProductoForm({ producto, defaults, onSave }) {
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
-        foto, ...ficha,
+        foto, noDisponible, ...ficha,
       });
     } catch (err) {
       setError("No se pudo leer la ficha técnica. Probá de nuevo.");
@@ -6284,6 +6285,10 @@ function ProductoForm({ producto, defaults, onSave }) {
         <Field label="Especificación — valor"><TextInput value={especValor} onChange={(e) => setEspecValor(e.target.value)} placeholder="Ej: 12.000" /></Field>
       </div>
       <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => setPrecioLista(e.target.value)} /></Field>
+      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+        <input type="checkbox" checked={noDisponible} onChange={(e) => setNoDisponible(e.target.checked)} />
+        No disponible para la venta (no aparece como opción en Cotizaciones ni Panel de simulación)
+      </label>
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Categorización (para agrupar y ordenar el catálogo)</p>
       <div className="flex gap-2">
@@ -6412,6 +6417,11 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo }) {
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
+        {p.noDisponible && (
+          <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>
+            No disponible para la venta
+          </span>
+        )}
         {p.stockDisponible != null && (
           <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: p.stockDisponible > 0 ? "#E9F7EF" : "#FBEAEA", color: p.stockDisponible > 0 ? "#15803D" : "#B91C1C" }}>
             Stock: {p.stockDisponible}
@@ -7190,9 +7200,12 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
   // para que un catálogo grande siga siendo navegable en vez de una lista plana larguísima.
   // Mismos grupos y mismo orden que el Catálogo (Tipo de equipo, ON-OFF antes que Inverter,
   // BTU/capacidad ascendente vía ordenNumerico) — así elegir acá es tan claro como navegarlo allá.
+  // Los marcados "no disponible para la venta" (ver ProductoForm) no deben poder elegirse acá
+  // — siguen visibles/editables en Catálogo para el admin, solo se ocultan del picker.
+  const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
   const productosPorGrupo = useMemo(() => {
     const grupos = new Map();
-    for (const p of productos) {
+    for (const p of productosDisponibles) {
       const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
       const key = path || "Otros";
       if (!grupos.has(key)) grupos.set(key, []);
@@ -7225,7 +7238,7 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       return 0;
     });
     return entries;
-  }, [productos]);
+  }, [productosDisponibles]);
 
   const handleProducto = (id) => {
     setProductoId(id);
@@ -7302,7 +7315,7 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
-          <SelectorProducto productos={productos} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
+          <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
         </Field>
         {productoSel && (
           <>
@@ -7395,9 +7408,12 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
 
   // Mismos grupos y mismo orden que el Catálogo (Tipo de equipo, ON-OFF antes que Inverter,
   // BTU/capacidad ascendente vía ordenNumerico) — así elegir acá es tan claro como navegarlo allá.
+  // Los marcados "no disponible para la venta" (ver ProductoForm) no deben poder elegirse acá
+  // — siguen visibles/editables en Catálogo para el admin, solo se ocultan del picker.
+  const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
   const productosPorGrupo = useMemo(() => {
     const grupos = new Map();
-    for (const p of productos) {
+    for (const p of productosDisponibles) {
       const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
       const key = path || "Otros";
       if (!grupos.has(key)) grupos.set(key, []);
@@ -7430,7 +7446,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       return 0;
     });
     return entries;
-  }, [productos]);
+  }, [productosDisponibles]);
 
   const handleProducto = (id) => {
     setProductoId(id);
@@ -7513,7 +7529,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Productos a simular</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
-          <SelectorProducto productos={productos} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
+          <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
         </Field>
         {productoSel && (
           <>

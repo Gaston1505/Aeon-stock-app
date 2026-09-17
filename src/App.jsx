@@ -6752,7 +6752,7 @@ function RamaCodigoArbol({ label, nodo, nivel, onElegir }) {
           <div style={{ marginLeft: (nivel + 1) * 12 }}>
             {nodo.productos.map((p) => (
               <button
-                key={p.id} onClick={() => onElegir(p.nombre)}
+                key={p.id} onClick={() => onElegir(p)}
                 className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-100 flex items-center gap-2"
               >
                 <CodeTag>{p.nombre}</CodeTag>
@@ -6798,7 +6798,129 @@ function BuscadorCodigoArbol({ productos, query, onQuery }) {
       </div>
       {abierto && (
         <div className="mt-2 rounded-lg border p-2 overflow-y-auto" style={{ borderColor: BORDER, maxHeight: 320 }}>
-          <ArbolCodigosNodo nodo={arbol} nivel={0} onElegir={(codigo) => { onQuery(codigo); setAbierto(false); }} />
+          <ArbolCodigosNodo nodo={arbol} nivel={0} onElegir={(p) => { onQuery(p.nombre); setAbierto(false); }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Reemplaza el <select><optgroup> nativo que tenían Cotizaciones y Panel de simulación para
+// elegir un producto: buscar por código o descripción filtra en vivo en un dropdown con foto y
+// descripción (no hay que saber en qué grupo está ni escrollear una lista larguísima con
+// subtítulos repetidos), y la flecha despliega el mismo árbol de categorías que Catálogo y
+// Conteo de stock para quien prefiera navegar en vez de escribir. Una vez elegido, se muestra
+// como una tarjeta compacta en vez de dejar el buscador abierto.
+function MiniFotoProducto({ p, size }) {
+  return p.foto ? (
+    <img src={p.foto} alt="" className="rounded border shrink-0" style={{ width: size, height: size, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+  ) : (
+    <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: size, height: size, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+      <Tag size={Math.round(size * 0.45)} style={{ color: MUTED }} />
+    </div>
+  );
+}
+function SelectorProducto({ productos, productosPorGrupo, value, onChange, placeholder }) {
+  const [query, setQuery] = useState("");
+  const [abierto, setAbierto] = useState(false);
+  const [arbolAbierto, setArbolAbierto] = useState(false);
+  const boxRef = useRef(null);
+  const productoSel = productos.find((p) => p.id === value);
+  const arbol = useMemo(() => construirArbolCategorias(productos), [productos]);
+
+  useEffect(() => {
+    function onClickFuera(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) {
+        setAbierto(false);
+        setArbolAbierto(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickFuera);
+    return () => document.removeEventListener("mousedown", onClickFuera);
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const gruposFiltrados = useMemo(() => {
+    if (!q) return productosPorGrupo;
+    return productosPorGrupo
+      .map((g) => ({ ...g, items: g.items.filter((p) => (p.nombre || "").toLowerCase().includes(q) || (p.descripcion || "").toLowerCase().includes(q)) }))
+      .filter((g) => g.items.length > 0);
+  }, [productosPorGrupo, q]);
+
+  const elegir = (p) => {
+    onChange(p.id);
+    setQuery("");
+    setAbierto(false);
+    setArbolAbierto(false);
+  };
+
+  if (productoSel && !abierto) {
+    return (
+      <div className="flex items-center gap-2.5 p-2 rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+        <MiniFotoProducto p={productoSel} size={40} />
+        <div className="min-w-0 flex-1">
+          <CodeTag>{productoSel.nombre}</CodeTag>
+          {productoSel.descripcion && <p className="text-xs mt-0.5 truncate" style={{ color: MUTED }}>{productoSel.descripcion}</p>}
+        </div>
+        <button onClick={() => { onChange(""); setAbierto(true); }} className="p-1.5 rounded hover:bg-gray-100 shrink-0" title="Cambiar producto">
+          <X size={14} style={{ color: MUTED }} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <div className="flex items-center gap-2">
+        <div className="flex-1 relative">
+          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: MUTED }} />
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setAbierto(true); setArbolAbierto(false); }}
+            onFocus={() => setAbierto(true)}
+            placeholder={placeholder || "Buscar por código o descripción..."}
+            className="w-full text-sm pl-8 pr-3 py-2 rounded-md border outline-none"
+            style={inputStyle}
+          />
+        </div>
+        <button
+          onClick={() => { setArbolAbierto((a) => !a); setAbierto(true); }}
+          className="p-2 rounded-lg border shrink-0"
+          style={{ borderColor: BORDER, backgroundColor: arbolAbierto ? ACCENT_LIGHT : "#FFFFFF" }}
+          title="Explorar por categoría"
+        >
+          <ChevronDown size={16} style={{ color: ACCENT, transform: arbolAbierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </button>
+      </div>
+
+      {abierto && (
+        <div className="absolute z-20 mt-1 w-full rounded-lg border shadow-lg overflow-y-auto" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF", maxHeight: 360 }}>
+          {arbolAbierto ? (
+            <div className="p-2">
+              <ArbolCodigosNodo nodo={arbol} nivel={0} onElegir={elegir} />
+            </div>
+          ) : gruposFiltrados.length === 0 ? (
+            <p className="text-xs px-3 py-4 text-center" style={{ color: MUTED }}>Sin resultados para "{query}"</p>
+          ) : (
+            gruposFiltrados.map(({ key, items }) => (
+              <div key={key}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1 sticky top-0" style={{ color: MUTED, backgroundColor: "#FFFFFF" }}>{key}</p>
+                {items.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => elegir(p)}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left hover:bg-gray-50"
+                  >
+                    <MiniFotoProducto p={p} size={28} />
+                    <CodeTag>{p.nombre}</CodeTag>
+                    {(p.categoriaPrincipal === "Repuestos" ? p.descripcion : null) && (
+                      <span className="text-xs truncate" style={{ color: MUTED }}>{p.descripcion}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -7180,18 +7302,7 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
-          <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
-            <option value="">Seleccionar...</option>
-            {productosPorGrupo.map(({ key, items }) => (
-              <optgroup key={key} label={key}>
-                {items.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.categoriaPrincipal === "Repuestos" && p.descripcion ? p.descripcion : p.nombre}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </Select>
+          <SelectorProducto productos={productos} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
         </Field>
         {productoSel && (
           <>
@@ -7207,12 +7318,21 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       {lineas.length > 0 && (
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
           {lineas.map((l, i) => (
-            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <div className="min-w-0">
-                <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
-                <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.precioUnit).toLocaleString()} = U$S {(l.cantidad * l.precioUnit).toLocaleString()}</span>
+            <div key={i} className="flex items-center gap-2.5 justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="flex items-center gap-2.5 min-w-0">
+                {l.foto ? (
+                  <img src={l.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+                ) : (
+                  <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+                    <Tag size={13} style={{ color: MUTED }} />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
+                  <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.precioUnit).toLocaleString()} = U$S {(l.cantidad * l.precioUnit).toLocaleString()}</span>
+                </div>
               </div>
-              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+              <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
             </div>
           ))}
           <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
@@ -7393,18 +7513,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Productos a simular</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
-          <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
-            <option value="">Seleccionar...</option>
-            {productosPorGrupo.map(({ key, items }) => (
-              <optgroup key={key} label={key}>
-                {items.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.categoriaPrincipal === "Repuestos" && p.descripcion ? p.descripcion : p.nombre}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </Select>
+          <SelectorProducto productos={productos} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
         </Field>
         {productoSel && (
           <>

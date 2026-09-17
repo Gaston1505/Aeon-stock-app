@@ -222,20 +222,29 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     r += 1;
   }
 
+  // Un renglón de aire entre el bloque de subtotal/descuento/instalación y el total final —
+  // sin esto quedaban pegados y se leía como una sola masa de filas.
+  r += 1;
   totalRow("TOTAL IVA INCLUIDO", totalFinal, { fill: ACCENT_LIGHT });
 
-  const letrasCell = sheet.getCell(r, 1);
-  letrasCell.value = `Dólares Americanos: ${montoEnLetras(totalFinal)}`;
-  styleCell(letrasCell);
-  sheet.mergeCells(r, 1, r, lastCol);
-  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  // Etiqueta + valor en columnas separadas (igual que Cliente:/Obra:), no un solo texto largo
+  // fusionado en toda la fila — más prolijo y más fácil de leer de un vistazo.
+  const letrasLabelCell = sheet.getCell(r, 1);
+  letrasLabelCell.value = "Dólares Americanos:";
+  styleCell(letrasLabelCell, { bold: true });
+  sheet.getCell(r, 2).value = montoEnLetras(totalFinal);
+  styleCell(sheet.getCell(r, 2));
+  for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  sheet.mergeCells(r, 2, r, lastCol);
   r += 1;
 
-  const entregaCell = sheet.getCell(r, 1);
-  entregaCell.value = `Fecha entrega estimada: ${cotizacion.fechaEntregaEstimada || ""}`;
-  styleCell(entregaCell, { wrap: true });
-  sheet.mergeCells(r, 1, r, lastCol);
-  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  const entregaLabelCell = sheet.getCell(r, 1);
+  entregaLabelCell.value = "Fecha entrega estimada:";
+  styleCell(entregaLabelCell, { bold: true });
+  sheet.getCell(r, 2).value = cotizacion.fechaEntregaEstimada || "";
+  styleCell(sheet.getCell(r, 2), { wrap: true });
+  for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  sheet.mergeCells(r, 2, r, lastCol);
   sheet.getRow(r).height = 18;
   r += 1;
 

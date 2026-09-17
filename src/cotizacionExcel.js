@@ -115,7 +115,6 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     sheet.getRow(r).height = 16;
     r += 1;
   });
-  r += 1;
 
   // Tabla — encabezado
   const headers = [
@@ -238,7 +237,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
   sheet.mergeCells(r, 1, r, lastCol);
   for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
   sheet.getRow(r).height = 18;
-  r += 2;
+  r += 1;
 
   // Texto legal
   const legalTexto = [
@@ -262,12 +261,14 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
   } else {
     r += 1;
   }
+  // Sin merge: centrado en esta única columna, la misma donde arranca la firma arriba — si se
+  // fusiona con la columna de al lado, Excel centra el texto en todo ese ancho y queda corrido
+  // respecto a la imagen, que es más angosta.
   [COMPANY.firmante, COMPANY.razonSocial, COMPANY.ruc].forEach((line) => {
     const cell = sheet.getCell(r, lastCol - 1);
     cell.value = line;
     cell.alignment = { horizontal: "center" };
     cell.font = { size: 8 };
-    sheet.mergeCells(r, lastCol - 1, r, lastCol);
     r += 1;
   });
 

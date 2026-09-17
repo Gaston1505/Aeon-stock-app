@@ -144,7 +144,11 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     let c = 1;
     const codigoCell = sheet.getCell(r, c); codigoCell.value = l.codigo || ""; styleCell(codigoCell, { align: "center", wrap: true }); c += 1;
 
-    const fotoCell = sheet.getCell(r, c); styleCell(fotoCell, { align: "center" });
+    // wrap:true acá también aunque la celda no tenga texto largo: si otra celda alineada al
+    // centro en esta fila (ej. el código) pide wrap y ésta no, ExcelJS puede terminar
+    // compartiendo un mismo estilo interno entre ambas y perder el ajuste de texto en la que sí
+    // lo necesitaba.
+    const fotoCell = sheet.getCell(r, c); styleCell(fotoCell, { align: "center", wrap: true });
     if (l.foto) {
       try {
         const imgId = workbook.addImage({ base64: l.foto, extension: "jpeg" });
@@ -156,12 +160,12 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     const descCell = sheet.getCell(r, c); descCell.value = l.descripcion || ""; styleCell(descCell, { wrap: true }); c += 1;
 
     if (showEspec) {
-      const espCell = sheet.getCell(r, c); espCell.value = l.especValor || ""; styleCell(espCell, { align: "center" }); c += 1;
+      const espCell = sheet.getCell(r, c); espCell.value = l.especValor || ""; styleCell(espCell, { align: "center", wrap: true }); c += 1;
     }
 
-    const cantCell = sheet.getCell(r, c); cantCell.value = cant; styleCell(cantCell, { align: "center" }); c += 1;
-    const precioCell = sheet.getCell(r, c); precioCell.value = precio; precioCell.numFmt = "#,##0.00"; styleCell(precioCell, { align: "right" }); c += 1;
-    const totalCell = sheet.getCell(r, c); totalCell.value = total; totalCell.numFmt = "#,##0.00"; styleCell(totalCell, { align: "right" });
+    const cantCell = sheet.getCell(r, c); cantCell.value = cant; styleCell(cantCell, { align: "center", wrap: true }); c += 1;
+    const precioCell = sheet.getCell(r, c); precioCell.value = precio; precioCell.numFmt = "#,##0.00"; styleCell(precioCell, { align: "right", wrap: true }); c += 1;
+    const totalCell = sheet.getCell(r, c); totalCell.value = total; totalCell.numFmt = "#,##0.00"; styleCell(totalCell, { align: "right", wrap: true });
 
     r += 1;
   }
@@ -202,7 +206,10 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     sheet.getCell(r, 2).value = cotizacion.comentarios;
     styleCell(sheet.getCell(r, 2), { wrap: true });
     sheet.mergeCells(r, 2, r, lastCol);
-    for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+    // Mismas opciones (wrap incluido) que la celda de arriba: si una celda sin wrap comparte el
+    // mismo estilo interno que esta, ExcelJS puede terminar aplicando ESE estilo (sin wrap) a
+    // ambas y el texto se corta en vez de ajustarse.
+    for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c), { wrap: true });
     sheet.getRow(r).height = 30;
     r += 1;
   }
@@ -214,7 +221,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     sheet.getCell(r, 2).value = cotizacion.instalacionDescripcion || "";
     styleCell(sheet.getCell(r, 2), { wrap: true });
     sheet.mergeCells(r, 2, r, lastCol - 1);
-    for (let c = 3; c < lastCol; c++) styleCell(sheet.getCell(r, c));
+    for (let c = 3; c < lastCol; c++) styleCell(sheet.getCell(r, c), { wrap: true });
     const instCell = sheet.getCell(r, lastCol);
     instCell.value = instalacionMonto === 0 ? "-" : instalacionMonto;
     if (typeof instCell.value === "number") instCell.numFmt = "#,##0.00";
@@ -243,7 +250,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
   styleCell(entregaLabelCell, { bold: true });
   sheet.getCell(r, 2).value = cotizacion.fechaEntregaEstimada || "";
   styleCell(sheet.getCell(r, 2), { wrap: true });
-  for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
+  for (let c = 3; c <= lastCol; c++) styleCell(sheet.getCell(r, c), { wrap: true });
   sheet.mergeCells(r, 2, r, lastCol);
   sheet.getRow(r).height = 18;
   r += 1;
@@ -258,8 +265,8 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
   legalCell.value = legalTexto;
   styleCell(legalCell, { wrap: true, size: 8 });
   sheet.mergeCells(r, 1, r, lastCol);
-  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c));
-  sheet.getRow(r).height = 60;
+  for (let c = 2; c <= lastCol; c++) styleCell(sheet.getCell(r, c), { wrap: true, size: 8 });
+  sheet.getRow(r).height = 75;
   r += 2;
 
   // Firma

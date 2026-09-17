@@ -8,12 +8,21 @@ const BASE = "/Aeon-stock-app/";
 // base must match the GitHub Pages project path: https://<user>.github.io/Aeon-stock-app/
 export default defineConfig({
   base: BASE,
+  resolve: {
+    alias: {
+      // El "main" del package.json de exceljs apunta a su build para Node (usa fs/stream de
+      // verdad); el build para navegador es un bundle aparte pensado para <script> tags. Sin
+      // este alias, Vite puede terminar resolviendo el de Node al hacer `vite build` y fallar
+      // al no poder resolver esos módulos nativos.
+      exceljs: "exceljs/dist/exceljs.min.js",
+    },
+  },
   plugins: [
     react(),
-    // exceljs (usado para exportar la cotización a Excel con fotos incluidas) referencia
-    // Buffer/process internamente aunque corra en el navegador — sin este polyfill tira
+    // El bundle de navegador de exceljs (armado con browserify) todavía espera Buffer/process
+    // como globales, algo que el navegador no provee — sin este polyfill tira
     // "Buffer is not defined" en tiempo de ejecución.
-    nodePolyfills({ include: ["buffer", "process"] }),
+    nodePolyfills(),
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["icons/apple-touch-icon.png"],

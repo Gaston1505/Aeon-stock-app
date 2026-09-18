@@ -170,6 +170,11 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
+// Pone mayúscula la primera letra de cada palabra (nombre de cliente/constructora) sin tocar
+// el resto de cada palabra — así una sigla ya escrita en mayúsculas (CCI, SA) no se rompe.
+function capitalizarPalabras(s) {
+  return (s || "").replace(/(^|\s)(\S)/g, (_, sep, letra) => sep + letra.toUpperCase());
+}
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
 // con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
 async function compartirArchivo(bytes, filename, texto) {
@@ -7325,8 +7330,9 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
   // solo mientras el teléfono siga siendo el que se autocompletó antes, para no pisar un
   // número que el usuario haya escrito a mano para este cliente puntual.
   const handleClienteChange = (v) => {
-    setCliente(v);
-    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === v.trim().toLowerCase());
+    const nombre = capitalizarPalabras(v);
+    setCliente(nombre);
+    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === nombre.trim().toLowerCase());
     const sugerido = match ? (match.telefono || "") : "";
     if (telefono === "" || telefono === telefonoAutoRef.current) {
       setTelefono(sugerido);
@@ -8122,8 +8128,9 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   // Autocompleta el teléfono si el nombre tipeado coincide con un cliente ya guardado — solo
   // mientras el teléfono siga siendo el que se autocompletó, para no pisar uno tipeado a mano.
   const handleClienteChange = (v) => {
-    setCliente(v);
-    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === v.trim().toLowerCase());
+    const nombre = capitalizarPalabras(v);
+    setCliente(nombre);
+    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === nombre.trim().toLowerCase());
     const sugerido = match ? (match.telefono || "") : "";
     if (telefono === "" || telefono === telefonoAutoRef.current) {
       setTelefono(sugerido);
@@ -8477,7 +8484,7 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
               {clientes.map((c) => (
                 <tr key={c.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
                   <td className="px-3 py-1.5" style={{ minWidth: 160 }}>
-                    <ComentarioEditor value={c.nombre} onSave={(v) => onUpdateField(c.id, "nombre", v)} placeholder="Nombre" />
+                    <ComentarioEditor value={c.nombre} onSave={(v) => onUpdateField(c.id, "nombre", capitalizarPalabras(v))} placeholder="Nombre" />
                   </td>
                   <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
                     <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: Constructora CCI" />
@@ -8520,7 +8527,7 @@ function ClienteForm({ onSave }) {
 
   return (
     <div>
-      <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Persona con la que hablás" /></Field>
+      <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(capitalizarPalabras(e.target.value))} placeholder="Persona con la que hablás" /></Field>
       <Field label="Empresa">
         <TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: Constructora CCI" />
       </Field>

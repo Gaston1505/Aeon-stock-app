@@ -7019,10 +7019,12 @@ function SelectorProducto({ productos, productosPorGrupo, value, onChange, place
 
 // Campo de cliente con sugerencias visibles mientras se tipea — antes era un <input> con
 // <datalist> nativo, que en varios navegadores (sobre todo mobile) casi no se nota que existe,
-// así que en la práctica nadie lo notaba y tipeaba el nombre completo a mano cada vez. Elegir
-// una sugerencia llama a `onChange` con el nombre guardado tal cual, así el autocompletado de
-// teléfono (que compara nombre exacto) engancha igual que si se hubiera tipeado completo.
-function SelectorCliente({ clientes, value, onChange, placeholder }) {
+// así que en la práctica nadie lo notaba y tipeaba el nombre completo a mano cada vez. El texto
+// del campo es la constructora/empresa (lo que sale en el PDF de la cotización), así que buscar
+// coincide tanto por empresa como por el nombre de la persona de contacto, pero al elegir una
+// sugerencia `onSeleccionar` recibe el cliente completo para poder cargar la EMPRESA en el
+// campo (no el nombre de la persona) y el teléfono de ese contacto en un solo paso.
+function SelectorCliente({ clientes, value, onChange, onSeleccionar, placeholder }) {
   const [abierto, setAbierto] = useState(false);
   const boxRef = useRef(null);
 
@@ -7042,10 +7044,10 @@ function SelectorCliente({ clientes, value, onChange, placeholder }) {
     return lista.slice(0, 8);
   }, [clientes, q]);
 
-  // Si lo tipeado ya coincide exacto con la única sugerencia, no tiene sentido seguir mostrando
-  // la lista (ya está elegido).
+  // Si lo tipeado ya coincide exacto con la única sugerencia (empresa, o nombre si no tiene
+  // empresa cargada), no tiene sentido seguir mostrando la lista — ya está elegido.
   const mostrarLista = abierto && sugerencias.length > 0 &&
-    !(sugerencias.length === 1 && (sugerencias[0].nombre || "").trim().toLowerCase() === q);
+    !(sugerencias.length === 1 && ((sugerencias[0].empresa || sugerencias[0].nombre || "").trim().toLowerCase() === q));
 
   return (
     <div className="relative" ref={boxRef}>
@@ -7057,23 +7059,25 @@ function SelectorCliente({ clientes, value, onChange, placeholder }) {
       />
       {mostrarLista && (
         <div className="absolute z-20 mt-1 w-full rounded-lg border shadow-lg overflow-y-auto" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF", maxHeight: 220 }}>
-          {sugerencias.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => { onChange(c.nombre); setAbierto(false); }}
-              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 border-b last:border-0"
-              style={{ borderColor: BORDER }}
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate" style={{ color: INK }}>{c.nombre}</p>
-                {(c.empresa || c.rol) && (
-                  <p className="text-xs truncate" style={{ color: MUTED }}>{[c.empresa, c.rol].filter(Boolean).join(" · ")}</p>
-                )}
-              </div>
-              {c.telefono && <span className="text-xs shrink-0" style={{ color: MUTED }}>{c.telefono}</span>}
-            </button>
-          ))}
+          {sugerencias.map((c) => {
+            const principal = (c.empresa || c.nombre || "").trim();
+            const secundaria = [c.empresa && c.nombre ? `Contacto: ${c.nombre}` : null, c.rol].filter(Boolean).join(" · ");
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => { onSeleccionar(c); setAbierto(false); }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 border-b last:border-0"
+                style={{ borderColor: BORDER }}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate" style={{ color: INK }}>{principal}</p>
+                  {secundaria && <p className="text-xs truncate" style={{ color: MUTED }}>{secundaria}</p>}
+                </div>
+                {c.telefono && <span className="text-xs shrink-0" style={{ color: MUTED }}>{c.telefono}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -7326,18 +7330,30 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
 
-  // Autocompleta el teléfono si el nombre tipeado coincide con un cliente ya guardado — pero
-  // solo mientras el teléfono siga siendo el que se autocompletó antes, para no pisar un
-  // número que el usuario haya escrito a mano para este cliente puntual.
+  // Autocompleta el teléfono si lo tipeado coincide con la empresa (o, si no tiene empresa
+  // cargada, con el nombre) de un cliente ya guardado — pero solo mientras el teléfono siga
+  // siendo el que se autocompletó antes, para no pisar un número que el usuario haya escrito a
+  // mano para este cliente puntual.
   const handleClienteChange = (v) => {
     const nombre = capitalizarPalabras(v);
     setCliente(nombre);
-    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === nombre.trim().toLowerCase());
+    const n = nombre.trim().toLowerCase();
+    const match = (clientes || []).find((c) => (c.empresa || c.nombre || "").trim().toLowerCase() === n);
     const sugerido = match ? (match.telefono || "") : "";
     if (telefono === "" || telefono === telefonoAutoRef.current) {
       setTelefono(sugerido);
       telefonoAutoRef.current = sugerido;
     }
+  };
+
+  // Elegir una sugerencia del SelectorCliente: a diferencia de tipear, acá tenemos el cliente
+  // completo — carga la EMPRESA (lo que va en el PDF) y el teléfono de ese contacto de una vez,
+  // sin depender de que el texto matchee de nuevo contra la lista.
+  const handleSeleccionarCliente = (c) => {
+    setCliente((c.empresa || c.nombre || "").trim());
+    const t = c.telefono || "";
+    setTelefono(t);
+    telefonoAutoRef.current = t;
   };
 
   // Agrupa el selector de productos por categoría (categoriaPrincipal > subcategoria > ...)
@@ -7455,7 +7471,10 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       )}
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Cliente (constructora/desarrolladora — sale en el PDF)">
-        <SelectorCliente clientes={clientes} value={cliente} onChange={handleClienteChange} placeholder="Nombre del cliente" />
+        <SelectorCliente
+          clientes={clientes} value={cliente} onChange={handleClienteChange} onSeleccionar={handleSeleccionarCliente}
+          placeholder="Nombre de la empresa o del contacto"
+        />
       </Field>
       <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
         <TextInput
@@ -8125,17 +8144,28 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
     return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [productos]);
 
-  // Autocompleta el teléfono si el nombre tipeado coincide con un cliente ya guardado — solo
-  // mientras el teléfono siga siendo el que se autocompletó, para no pisar uno tipeado a mano.
+  // Autocompleta el teléfono si lo tipeado coincide con la empresa (o, si no tiene empresa
+  // cargada, con el nombre) de un cliente ya guardado — solo mientras el teléfono siga siendo
+  // el que se autocompletó, para no pisar uno tipeado a mano.
   const handleClienteChange = (v) => {
     const nombre = capitalizarPalabras(v);
     setCliente(nombre);
-    const match = (clientes || []).find((c) => (c.nombre || "").trim().toLowerCase() === nombre.trim().toLowerCase());
+    const n = nombre.trim().toLowerCase();
+    const match = (clientes || []).find((c) => (c.empresa || c.nombre || "").trim().toLowerCase() === n);
     const sugerido = match ? (match.telefono || "") : "";
     if (telefono === "" || telefono === telefonoAutoRef.current) {
       setTelefono(sugerido);
       telefonoAutoRef.current = sugerido;
     }
+  };
+
+  // Elegir una sugerencia del SelectorCliente: carga la EMPRESA y el teléfono de ese contacto
+  // de una vez, sin depender de que el texto matchee de nuevo contra la lista.
+  const handleSeleccionarCliente = (c) => {
+    setCliente((c.empresa || c.nombre || "").trim());
+    const t = c.telefono || "";
+    setTelefono(t);
+    telefonoAutoRef.current = t;
   };
 
   const handleTipo = (t) => {
@@ -8237,7 +8267,10 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
 
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Cliente">
-        <SelectorCliente clientes={clientes} value={cliente} onChange={handleClienteChange} placeholder="Nombre del cliente" />
+        <SelectorCliente
+          clientes={clientes} value={cliente} onChange={handleClienteChange} onSeleccionar={handleSeleccionarCliente}
+          placeholder="Nombre de la empresa o del contacto"
+        />
       </Field>
       <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
         <TextInput

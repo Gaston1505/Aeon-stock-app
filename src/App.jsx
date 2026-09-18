@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
-  CheckCircle2, Clock, ChevronRight, ChevronDown, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
+  CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft,
 } from "lucide-react";
@@ -7279,6 +7279,23 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
 
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
 
+  // Editar cantidad/precio de una línea ya agregada, sin tener que sacarla y volver a
+  // cargarla — útil sobre todo en cotizaciones precargadas desde el Panel de simulación.
+  const actualizarLinea = (idx, campo, valor) =>
+    setLineas(lineas.map((l, i) => (i === idx ? { ...l, [campo]: valor } : l)));
+
+  // Reordenar líneas a mano: el orden con el que se van agregando normalmente ya sigue una
+  // lógica (categoría, y de menor a mayor capacidad/potencia dentro de cada una), pero al
+  // completar una cotización precargada agregando algo que faltaba, puede hacer falta
+  // ubicarlo en su lugar en vez de que quede al final.
+  const moverLinea = (idx, dir) => {
+    const destino = idx + dir;
+    if (destino < 0 || destino >= lineas.length) return;
+    const nuevas = [...lineas];
+    [nuevas[idx], nuevas[destino]] = [nuevas[destino], nuevas[idx]];
+    setLineas(nuevas);
+  };
+
   const submit = () => {
     if (!cliente.trim()) {
       setError("Ingresá el cliente.");
@@ -7344,18 +7361,43 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       {lineas.length > 0 && (
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
           {lineas.map((l, i) => (
-            <div key={i} className="flex items-center gap-2.5 justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <div className="flex items-center gap-2.5 min-w-0">
-                {l.foto ? (
-                  <img src={l.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
-                ) : (
-                  <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
-                    <Tag size={13} style={{ color: MUTED }} />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
-                  <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.precioUnit).toLocaleString()} = U$S {(l.cantidad * l.precioUnit).toLocaleString()}</span>
+            <div key={i} className="flex items-center gap-2 px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="flex flex-col shrink-0">
+                <button
+                  onClick={() => moverLinea(i, -1)} disabled={i === 0}
+                  className="disabled:opacity-25" title="Subir"
+                >
+                  <ChevronUp size={13} style={{ color: MUTED }} />
+                </button>
+                <button
+                  onClick={() => moverLinea(i, 1)} disabled={i === lineas.length - 1}
+                  className="disabled:opacity-25" title="Bajar"
+                >
+                  <ChevronDown size={13} style={{ color: MUTED }} />
+                </button>
+              </div>
+              {l.foto ? (
+                <img src={l.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+              ) : (
+                <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+                  <Tag size={13} style={{ color: MUTED }} />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="number" min="1" value={l.cantidad}
+                    onChange={(e) => actualizarLinea(i, "cantidad", Number(e.target.value) || 0)}
+                    className="border rounded px-1 py-0.5 text-xs" style={{ width: 44, borderColor: BORDER }}
+                  />
+                  <span style={{ color: MUTED }}>× U$S</span>
+                  <input
+                    type="number" value={l.precioUnit}
+                    onChange={(e) => actualizarLinea(i, "precioUnit", Number(e.target.value) || 0)}
+                    className="border rounded px-1 py-0.5 text-xs" style={{ width: 72, borderColor: BORDER }}
+                  />
+                  <span style={{ color: MUTED }}>= U$S {((Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0)).toLocaleString()}</span>
                 </div>
               </div>
               <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>

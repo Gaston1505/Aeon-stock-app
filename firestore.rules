@@ -82,5 +82,6 @@ service cloud.firestore {
     match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
     match /clientes/{docId} { allow read, write: if esAdmin(); }
     match /transito/{docId} { allow read, write: if esAdmin(); }
+    match /preciosMercado/{docId} { allow read, write: if esAdmin(); }
   }
 }

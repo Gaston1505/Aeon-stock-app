@@ -138,6 +138,7 @@ const COLLECTIONS = {
   transito: "transito",
   solicitudes: "solicitudes",
   conteoStock: "conteoStock",
+  preciosMercado: "preciosMercado",
 };
 
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas
@@ -1159,6 +1160,7 @@ export default function App() {
   const [transito, setTransito] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
   const [conteoStock, setConteoStock] = useState([]);
+  const [preciosMercado, setPreciosMercado] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -1207,6 +1209,7 @@ export default function App() {
       [COLLECTIONS.transito]: setTransito,
       [COLLECTIONS.solicitudes]: setSolicitudes,
       [COLLECTIONS.conteoStock]: setConteoStock,
+      [COLLECTIONS.preciosMercado]: setPreciosMercado,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -1627,6 +1630,13 @@ export default function App() {
       addItem(COLLECTIONS.clientes, { nombre: n, telefono: t });
     }
   };
+
+  // Inteligencia de mercado: precios de la competencia relevados a mano (planilla, web,
+  // redes) o por la investigación mensual automática — para comparar contra nuestro
+  // precioLista por producto y saber cómo estamos parados.
+  const addPrecioMercado = (data) => addItem(COLLECTIONS.preciosMercado, data);
+  const updatePrecioMercado = (id, data) => updateItem(COLLECTIONS.preciosMercado, id, data);
+  const deletePrecioMercado = (id) => deleteItem(COLLECTIONS.preciosMercado, id);
 
   // Tránsito: mercadería fabricándose/en camino desde China, todavía no es stock físico real
   // — se traslada a Maestro de equipos recién cuando llega (manualmente, como una entrada más).
@@ -2245,6 +2255,7 @@ export default function App() {
     { key: "clientes", label: "Clientes", icon: Phone },
     // Reportes
     { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
+    { key: "precios-mercado", label: "Precios de mercado", icon: Search },
     { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
     { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
   ];
@@ -2671,6 +2682,15 @@ export default function App() {
           />
         )}
 
+        {tab === "precios-mercado" && (
+          <PreciosMercadoView
+            preciosMercado={preciosMercado} productos={productos} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("precio-mercado")}
+            onDelete={deletePrecioMercado}
+            onUpdateField={(id, field, value) => updatePrecioMercado(id, { [field]: value })}
+          />
+        )}
+
         {tab === "transito" && (
           <TransitoView
             transito={filteredTransito} query={query} onQuery={setQuery}
@@ -2776,6 +2796,9 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "cliente"} onClose={() => setDrawer(null)} title="Nuevo cliente">
         <ClienteForm onSave={(d) => { addCliente(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "precio-mercado"} onClose={() => setDrawer(null)} title="Nuevo precio de mercado">
+        <PrecioMercadoForm onSave={(d) => { addPrecioMercado(d); setDrawer(null); }} />
       </Drawer>
       <Drawer
         open={drawer === "transito"} onClose={() => { setDrawer(null); setEnvioEditando(null); }}
@@ -6589,6 +6612,45 @@ const FAMILIA_REPUESTO = {
   "Termocalefones": 2,
 };
 
+// Agrupa un catálogo de productos por categoría (categoriaPrincipal > subcategoria > ...) en el
+// mismo orden que el Catálogo (Tipo de equipo, ON-OFF antes que Inverter, BTU/capacidad
+// ascendente vía ordenNumerico) — lo usa cualquier selector de producto (Cotizaciones, Panel de
+// simulación, Precios de mercado) para que elegir ahí sea tan claro como navegar el Catálogo.
+function agruparProductosPorCategoria(productos) {
+  const grupos = new Map();
+  for (const p of productos) {
+    const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
+    const key = path || "Otros";
+    if (!grupos.has(key)) grupos.set(key, []);
+    grupos.get(key).push(p);
+  }
+  const indiceEnOrden = (valor, orden) => {
+    if (!orden) return 999;
+    const i = orden.indexOf((valor || "").trim());
+    return i === -1 ? orden.length : i;
+  };
+  const claveGrupo = (p) => {
+    const tab = CATALOGO_TABS.find((t) => t.filtro(p));
+    const ordenes = tab?.ordenesPorNivel || {};
+    const esRepuesto = p.categoriaPrincipal === "Repuestos";
+    const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
+    return [
+      indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
+      subOrden, (p.subcategoria || "").trim(),
+      indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
+    ];
+  };
+  const entries = [...grupos.entries()].map(([key, items]) => ({ key, items: ordenarProductos(items), clave: claveGrupo(items[0]) }));
+  entries.sort((a, b) => {
+    for (let i = 0; i < a.clave.length; i++) {
+      if (a.clave[i] === b.clave[i]) continue;
+      return typeof a.clave[i] === "number" ? a.clave[i] - b.clave[i] : String(a.clave[i]).localeCompare(String(b.clave[i]));
+    }
+    return 0;
+  });
+  return entries;
+}
+
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
 function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo }) {
@@ -8414,6 +8476,163 @@ function ClienteForm({ onSave }) {
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar cliente</PrimaryButton>
     </div>
+  );
+}
+
+const FUENTE_TIPOS_MERCADO = ["Planilla propia", "Búsqueda web", "Instagram / Facebook", "Manual"];
+const SUBCATEGORIAS_COCINA = ["Anafe", "Campana", "Horno"];
+
+function PrecioMercadoForm({ onSave }) {
+  const [fecha, setFecha] = useState(todayISO());
+  const [categoriaPrincipal, setCategoriaPrincipal] = useState("Aire Acondicionado");
+  const [subcategoria, setSubcategoria] = useState("");
+  const [especificacion, setEspecificacion] = useState("");
+  const [marca, setMarca] = useState("");
+  const [empresa, setEmpresa] = useState("");
+  const [precioGs, setPrecioGs] = useState("");
+  const [precioUsd, setPrecioUsd] = useState("");
+  const [fuenteTipo, setFuenteTipo] = useState(FUENTE_TIPOS_MERCADO[0]);
+  const [notas, setNotas] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    if (!empresa.trim() || !especificacion.trim()) {
+      setError("Ingresá al menos la empresa y la especificación del producto.");
+      return;
+    }
+    onSave({
+      fecha, categoriaPrincipal, subcategoria: categoriaPrincipal === "Cocina" ? subcategoria : "",
+      especificacion: especificacion.trim(), marca: marca.trim(), empresa: empresa.trim(),
+      precioGs: Number(precioGs) || 0, precioUsd: Number(precioUsd) || 0,
+      fuenteTipo, notas: notas.trim(), productoEquivalenteId: "",
+    });
+  };
+
+  return (
+    <div>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Categoría">
+        <select value={categoriaPrincipal} onChange={(e) => setCategoriaPrincipal(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+          {ORDEN_CATEGORIA_PRINCIPAL.filter((c) => c !== "Repuestos").map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </Field>
+      {categoriaPrincipal === "Cocina" && (
+        <Field label="Subcategoría">
+          <select value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+            <option value="">Elegir...</option>
+            {SUBCATEGORIAS_COCINA.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+      )}
+      <Field label="Especificación (lo que identifica al producto)">
+        <TextInput value={especificacion} onChange={(e) => setEspecificacion(e.target.value)} placeholder="Ej: 12.000 BTU · Split de pared · On Off" />
+      </Field>
+      <Field label="Marca"><TextInput value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Ej: Samsung, Midea..." /></Field>
+      <Field label="Empresa / tienda que vende"><TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: Tupi, Bristol, Instagram @..." /></Field>
+      <div className="flex gap-2">
+        <Field label="Precio Gs"><TextInput type="number" value={precioGs} onChange={(e) => setPrecioGs(e.target.value)} /></Field>
+        <Field label="Precio U$S"><TextInput type="number" value={precioUsd} onChange={(e) => setPrecioUsd(e.target.value)} /></Field>
+      </div>
+      <Field label="Fuente">
+        <select value={fuenteTipo} onChange={(e) => setFuenteTipo(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+          {FUENTE_TIPOS_MERCADO.map((f) => <option key={f} value={f}>{f}</option>)}
+        </select>
+      </Field>
+      <Field label="Notas (ej: descuento aplicado, promo, cuotas)"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar registro</PrimaryButton>
+    </div>
+  );
+}
+
+// Compara precios de la competencia (relevados a mano, por planilla o por la futura
+// investigación mensual) contra nuestro precioLista, producto por producto — para saber cómo
+// estamos parados en precio sin tener que armar la comparación a ojo cada vez.
+function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, onDelete, onUpdateField }) {
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productos), [productos]);
+
+  const filtrados = useMemo(() => {
+    const q = query.toLowerCase();
+    return preciosMercado.filter((r) => !q ||
+      [r.empresa, r.marca, r.especificacion, r.categoriaPrincipal, r.subcategoria].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [preciosMercado, query]);
+
+  const ordenados = useMemo(() => [...filtrados].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "")), [filtrados]);
+
+  return (
+    <Section
+      title="Precios de mercado"
+      subtitle="Precios de la competencia relevados a mano o por la investigación mensual — vinculá cada uno a un producto nuestro para comparar contra nuestro precio de lista."
+      query={query} onQuery={onQuery}
+      onNew={onNew} newLabel="Nuevo registro"
+    >
+      {ordenados.length === 0 ? (
+        <EmptyState icon={TrendingUp} title="Todavía no hay precios de mercado cargados" subtitle="Cargalos a mano, importalos de una planilla, o esperá la próxima investigación mensual." />
+      ) : (
+        <div className="space-y-2.5">
+          {ordenados.map((r) => {
+            const producto = productos.find((p) => p.id === r.productoEquivalenteId);
+            const nuestro = producto ? Number(producto.precioLista) || 0 : 0;
+            const diferencia = producto && nuestro && r.precioUsd ? ((r.precioUsd - nuestro) / nuestro) * 100 : null;
+            return (
+              <div key={r.id} className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium" style={{ color: INK }}>{r.especificacion}</p>
+                    <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+                      {[r.categoriaPrincipal, r.subcategoria].filter(Boolean).join(" — ")} · {r.fecha} · {r.fuenteTipo}
+                    </p>
+                  </div>
+                  <button onClick={() => onDelete(r.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                    <Trash2 size={14} style={{ color: MUTED }} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                  <div>
+                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
+                    <ComentarioEditor value={r.empresa} onSave={(v) => onUpdateField(r.id, "empresa", v)} placeholder="Empresa" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Marca</p>
+                    <ComentarioEditor value={r.marca} onSave={(v) => onUpdateField(r.id, "marca", v)} placeholder="Marca" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio Gs</p>
+                    <ComentarioEditor value={String(r.precioGs || "")} onSave={(v) => onUpdateField(r.id, "precioGs", Number(v) || 0)} placeholder="0" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio U$S</p>
+                    <ComentarioEditor value={String(r.precioUsd || "")} onSave={(v) => onUpdateField(r.id, "precioUsd", Number(v) || 0)} placeholder="0" />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <p className="text-[11px] mb-1" style={{ color: MUTED }}>Producto equivalente en nuestro catálogo</p>
+                  <SelectorProducto
+                    productos={productos} productosPorGrupo={productosPorGrupo}
+                    value={r.productoEquivalenteId} onChange={(id) => onUpdateField(r.id, "productoEquivalenteId", id)}
+                    placeholder="Vincular a un producto nuestro..."
+                  />
+                </div>
+                {producto && (
+                  <div
+                    className="mt-2 px-2.5 py-2 rounded-md text-xs flex items-center justify-between flex-wrap gap-1"
+                    style={{ backgroundColor: diferencia > 0 ? "#ECFDF5" : diferencia < 0 ? "#FEF2F2" : "#F7F8FA", color: INK }}
+                  >
+                    <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
+                    {diferencia !== null && (
+                      <span className="font-semibold">
+                        {diferencia > 0 ? "Estamos más caros" : diferencia < 0 ? "Estamos más baratos" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
+                      </span>
+                    )}
+                  </div>
+                )}
+                {r.notas && <p className="text-xs mt-1.5 italic" style={{ color: MUTED }}>{r.notas}</p>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Section>
   );
 }
 

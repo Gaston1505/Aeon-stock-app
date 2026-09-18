@@ -8471,39 +8471,33 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
       {clientes.length === 0 ? (
         <EmptyState icon={Phone} title="Todavía no hay clientes cargados" subtitle="Se agregan solos al poner un teléfono en una cotización, o cargalos acá directo." />
       ) : (
-        <div className="overflow-auto rounded-lg border" style={{ borderColor: BORDER, maxHeight: "80vh" }}>
-          <table className="text-sm" style={{ minWidth: 780 }}>
-            <thead>
-              <tr>
-                {["Nombre", "Empresa", "Teléfono / WhatsApp", "Rol en la empresa", ""].map((h) => (
-                  <th key={h} className="text-left font-medium px-3 py-2 border-b sticky top-0 z-10 whitespace-nowrap" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {clientes.map((c) => (
-                <tr key={c.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                  <td className="px-3 py-1.5" style={{ minWidth: 160 }}>
-                    <ComentarioEditor value={c.nombre} onSave={(v) => onUpdateField(c.id, "nombre", capitalizarPalabras(v))} placeholder="Nombre" />
-                  </td>
-                  <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
-                    <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: Constructora CCI" />
-                  </td>
-                  <td className="px-3 py-1.5" style={{ minWidth: 160 }}>
-                    <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
-                  </td>
-                  <td className="px-3 py-1.5" style={{ minWidth: 200 }}>
-                    <ComentarioEditor value={c.rol} onSave={(v) => onUpdateField(c.id, "rol", v)} placeholder="Ej: Dueño, Gerente de compras, Encargada de obra" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
-                      <Trash2 size={14} style={{ color: MUTED }} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2.5">
+          {clientes.map((c) => (
+            <div key={c.id} className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-1 min-w-0">
+                  <ComentarioEditor value={c.nombre} onSave={(v) => onUpdateField(c.id, "nombre", capitalizarPalabras(v))} placeholder="Nombre" />
+                </div>
+                <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                  <Trash2 size={14} style={{ color: MUTED }} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
+                  <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: Constructora CCI" />
+                </div>
+                <div>
+                  <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Teléfono / WhatsApp</p>
+                  <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
+                </div>
+                <div>
+                  <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Rol en la empresa</p>
+                  <ComentarioEditor value={c.rol} onSave={(v) => onUpdateField(c.id, "rol", v)} placeholder="Ej: Dueño, Gerente de compras, Encargada de obra" />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </Section>

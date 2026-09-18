@@ -821,8 +821,8 @@ function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion
       },
       {
         label: "Clientes", tab: "clientes",
-        items: clientes.filter((c) => match(c.nombre) || match(c.telefono)).slice(0, 6)
-          .map((c) => ({ id: c.id, filtro: c.nombre, texto: `${c.nombre}${c.telefono ? " — " + c.telefono : ""}` })),
+        items: clientes.filter((c) => match(c.nombre) || match(c.telefono) || match(c.empresa) || match(c.rol)).slice(0, 6)
+          .map((c) => ({ id: c.id, filtro: c.nombre, texto: `${c.nombre}${c.empresa ? " — " + c.empresa : ""}${c.telefono ? " — " + c.telefono : ""}` })),
       },
     ].filter((g) => g.items.length > 0);
   }, [query, equipos, productos, cotizaciones, presupuestosReparacion, clientes]);
@@ -2075,7 +2075,7 @@ export default function App() {
 
   const filteredClientes = useMemo(() => {
     const q = query.toLowerCase();
-    return clientes.filter((c) => !q || [c.nombre, c.telefono].some((v) => (v || "").toLowerCase().includes(q)));
+    return clientes.filter((c) => !q || [c.nombre, c.telefono, c.empresa, c.rol].some((v) => (v || "").toLowerCase().includes(q)));
   }, [clientes, query]);
 
   const filteredTransito = useMemo(() => {
@@ -8296,7 +8296,7 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
   return (
     <Section
       title="Clientes"
-      subtitle="Nombre y WhatsApp — se completa solo al cargar un teléfono en una cotización o presupuesto, y se reutiliza para enviar por WhatsApp sin volver a escribirlo."
+      subtitle="Datos de la persona de contacto — el nombre y WhatsApp se completan solos al cargar un teléfono en una cotización o presupuesto; empresa y rol se cargan a mano."
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo cliente"
     >
@@ -8304,10 +8304,10 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
         <EmptyState icon={Phone} title="Todavía no hay clientes cargados" subtitle="Se agregan solos al poner un teléfono en una cotización, o cargalos acá directo." />
       ) : (
         <div className="overflow-auto rounded-lg border" style={{ borderColor: BORDER, maxHeight: "80vh" }}>
-          <table className="text-sm" style={{ minWidth: 640 }}>
+          <table className="text-sm" style={{ minWidth: 780 }}>
             <thead>
               <tr>
-                {["Nombre", "Teléfono / WhatsApp", "Rol / empresa", ""].map((h) => (
+                {["Nombre", "Empresa", "Teléfono / WhatsApp", "Rol en la empresa", ""].map((h) => (
                   <th key={h} className="text-left font-medium px-3 py-2 border-b sticky top-0 z-10 whitespace-nowrap" style={{ color: MUTED, borderColor: BORDER, fontSize: 12, backgroundColor: "#FAFBFC" }}>{h}</th>
                 ))}
               </tr>
@@ -8315,14 +8315,17 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
             <tbody>
               {clientes.map((c) => (
                 <tr key={c.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                  <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
+                  <td className="px-3 py-1.5" style={{ minWidth: 160 }}>
                     <ComentarioEditor value={c.nombre} onSave={(v) => onUpdateField(c.id, "nombre", v)} placeholder="Nombre" />
+                  </td>
+                  <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
+                    <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: Constructora CCI" />
                   </td>
                   <td className="px-3 py-1.5" style={{ minWidth: 160 }}>
                     <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
                   </td>
-                  <td className="px-3 py-1.5" style={{ minWidth: 220 }}>
-                    <ComentarioEditor value={c.notas} onSave={(v) => onUpdateField(c.id, "notas", v)} placeholder="Ej: Dueño de..., Gerente de ventas de..., Constructora/desarrolladora" />
+                  <td className="px-3 py-1.5" style={{ minWidth: 200 }}>
+                    <ComentarioEditor value={c.rol} onSave={(v) => onUpdateField(c.id, "rol", v)} placeholder="Ej: Dueño, Gerente de compras, Encargada de obra" />
                   </td>
                   <td className="px-2 py-1.5">
                     <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
@@ -8341,8 +8344,9 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
 
 function ClienteForm({ onSave }) {
   const [nombre, setNombre] = useState("");
+  const [empresa, setEmpresa] = useState("");
   const [telefono, setTelefono] = useState("");
-  const [notas, setNotas] = useState("");
+  const [rol, setRol] = useState("");
   const [error, setError] = useState("");
 
   const submit = () => {
@@ -8350,17 +8354,20 @@ function ClienteForm({ onSave }) {
       setError("Ingresá el nombre.");
       return;
     }
-    onSave({ nombre: nombre.trim(), telefono: telefono.trim(), notas });
+    onSave({ nombre: nombre.trim(), empresa: empresa.trim(), telefono: telefono.trim(), rol: rol.trim() });
   };
 
   return (
     <div>
-      <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
+      <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Persona con la que hablás" /></Field>
+      <Field label="Empresa">
+        <TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: Constructora CCI" />
+      </Field>
       <Field label="Teléfono / WhatsApp">
         <TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 595981234567 (con código de país, sin +)" />
       </Field>
-      <Field label="Rol / empresa">
-        <TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: Dueño de..., Gerente de ventas de..., Constructora/desarrolladora" />
+      <Field label="Rol en la empresa">
+        <TextInput value={rol} onChange={(e) => setRol(e.target.value)} placeholder="Ej: Dueño, Gerente de compras, Encargada de obra" />
       </Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar cliente</PrimaryButton>

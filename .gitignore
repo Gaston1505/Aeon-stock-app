@@ -4,3 +4,5 @@ dist
 *.local
 public/icons
 public/generated
+scripts/precios_mercado_batch.json
+scripts/precios_mercado_commit.json

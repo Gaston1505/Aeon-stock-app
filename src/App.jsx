@@ -8621,7 +8621,9 @@ function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, 
                     <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
                     {diferencia !== null && (
                       <span className="font-semibold">
-                        {diferencia > 0 ? "Estamos más caros" : diferencia < 0 ? "Estamos más baratos" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
+                        {/* diferencia = (precio del competidor - nuestro) / nuestro — positiva significa que el
+                            competidor cobra más que nosotros, o sea que nosotros estamos más baratos. */}
+                        {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
                       </span>
                     )}
                   </div>

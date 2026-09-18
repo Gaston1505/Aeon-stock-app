@@ -2233,10 +2233,12 @@ export default function App() {
     // Movimientos
     { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine },
     { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine },
-    // Ventas
+    // Ventas — en orden de embudo: primero se cotiza, después queda comprometida (reservada) y
+    // recién al cerrarse pasa a Ventas y garantías. Presupuestos de reparación y el Panel de
+    // simulación son flujos aparte, van al final del bloque.
+    { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
     { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
-    { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
     { key: "simulador", label: "Panel de simulación", icon: FlaskConical },
     // Clientes
@@ -2404,6 +2406,7 @@ export default function App() {
             playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
             stockBajo={stockBajo}
             onNavigate={navigateTo}
+            onNuevaCotizacion={() => { navigateTo("cotizaciones"); setDrawer("cotizacion"); }}
           />
         )}
 
@@ -3246,7 +3249,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
   );
 }
 
-function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
+function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate, onNuevaCotizacion }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
 
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
@@ -3360,6 +3363,16 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, pro
       </div>
 
       <VentasCerradasPanel ventasCerradas={ventasCerradas} />
+
+      {/* Acceso rápido: crear una cotización sin tener que ir primero a esa pestaña. */}
+      <button
+        onClick={onNuevaCotizacion}
+        className="fixed flex items-center justify-center rounded-full shadow-lg z-30"
+        style={{ bottom: 24, right: 24, width: 52, height: 52, backgroundColor: ACCENT, color: "#FFFFFF" }}
+        title="Nueva cotización"
+      >
+        <Plus size={24} />
+      </button>
     </div>
   );
 }

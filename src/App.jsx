@@ -7012,6 +7012,69 @@ function SelectorProducto({ productos, productosPorGrupo, value, onChange, place
   );
 }
 
+// Campo de cliente con sugerencias visibles mientras se tipea — antes era un <input> con
+// <datalist> nativo, que en varios navegadores (sobre todo mobile) casi no se nota que existe,
+// así que en la práctica nadie lo notaba y tipeaba el nombre completo a mano cada vez. Elegir
+// una sugerencia llama a `onChange` con el nombre guardado tal cual, así el autocompletado de
+// teléfono (que compara nombre exacto) engancha igual que si se hubiera tipeado completo.
+function SelectorCliente({ clientes, value, onChange, placeholder }) {
+  const [abierto, setAbierto] = useState(false);
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    function onClickFuera(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setAbierto(false);
+    }
+    document.addEventListener("mousedown", onClickFuera);
+    return () => document.removeEventListener("mousedown", onClickFuera);
+  }, []);
+
+  const q = (value || "").trim().toLowerCase();
+  const sugerencias = useMemo(() => {
+    const lista = !q
+      ? (clientes || [])
+      : (clientes || []).filter((c) => (c.nombre || "").toLowerCase().includes(q) || (c.empresa || "").toLowerCase().includes(q));
+    return lista.slice(0, 8);
+  }, [clientes, q]);
+
+  // Si lo tipeado ya coincide exacto con la única sugerencia, no tiene sentido seguir mostrando
+  // la lista (ya está elegido).
+  const mostrarLista = abierto && sugerencias.length > 0 &&
+    !(sugerencias.length === 1 && (sugerencias[0].nombre || "").trim().toLowerCase() === q);
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <TextInput
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setAbierto(true); }}
+        onFocus={() => setAbierto(true)}
+        placeholder={placeholder}
+      />
+      {mostrarLista && (
+        <div className="absolute z-20 mt-1 w-full rounded-lg border shadow-lg overflow-y-auto" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF", maxHeight: 220 }}>
+          {sugerencias.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => { onChange(c.nombre); setAbierto(false); }}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 border-b last:border-0"
+              style={{ borderColor: BORDER }}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate" style={{ color: INK }}>{c.nombre}</p>
+                {(c.empresa || c.rol) && (
+                  <p className="text-xs truncate" style={{ color: MUTED }}>{[c.empresa, c.rol].filter(Boolean).join(" · ")}</p>
+                )}
+              </div>
+              {c.telefono && <span className="text-xs shrink-0" style={{ color: MUTED }}>{c.telefono}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Celda editable de la tabla de admin — a diferencia de la fila de depósito, acá si se ve el
 // sistema al lado, así que no hay nada que ocultar; mismo guardado en blur/Enter.
 function ConteoCeldaAdmin({ item, onGuardar }) {
@@ -7386,11 +7449,8 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       )}
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Cliente (constructora/desarrolladora — sale en el PDF)">
-        <TextInput value={cliente} list="clientes-datalist" onChange={(e) => handleClienteChange(e.target.value)} />
+        <SelectorCliente clientes={clientes} value={cliente} onChange={handleClienteChange} placeholder="Nombre del cliente" />
       </Field>
-      <datalist id="clientes-datalist">
-        {(clientes || []).map((c) => <option key={c.id} value={c.nombre} />)}
-      </datalist>
       <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
         <TextInput
           value={telefono}
@@ -8170,11 +8230,8 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
 
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Cliente">
-        <TextInput value={cliente} list="clientes-datalist" onChange={(e) => handleClienteChange(e.target.value)} />
+        <SelectorCliente clientes={clientes} value={cliente} onChange={handleClienteChange} placeholder="Nombre del cliente" />
       </Field>
-      <datalist id="clientes-datalist">
-        {(clientes || []).map((c) => <option key={c.id} value={c.nombre} />)}
-      </datalist>
       <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
         <TextInput
           value={telefono}

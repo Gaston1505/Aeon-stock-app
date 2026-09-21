@@ -199,6 +199,10 @@ function calcularTotalCotizacion(c) {
   return subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
 }
 
+// Comisión de Gastón como comercial: % fijo sobre el total vendido de cada cotización (no
+// sobre el margen) — se descuenta del margen bruto para mostrar cuánto le queda a la empresa.
+const COMISION_COMERCIAL_PCT = 1.5;
+
 // Rentabilidad de una cotización: por cada línea, cruza el precio YA NEGOCIADO contra el costo
 // cargado en el catálogo (puesto en PY si está, si no origen) — el descuento general, si tiene,
 // se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo). La
@@ -228,8 +232,14 @@ function calcularRentabilidadCotizacion(c, productos) {
   const costoTotal = costoProductos;
   const margenTotal = ventaTotal - costoTotal;
   const margenTotalPct = ventaTotal > 0 ? (margenTotal / ventaTotal) * 100 : 0;
+  const comision = ventaTotal * (COMISION_COMERCIAL_PCT / 100);
+  const margenEmpresa = margenTotal - comision;
+  const margenEmpresaPct = ventaTotal > 0 ? (margenEmpresa / ventaTotal) * 100 : 0;
 
-  return { filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, descuentoPct };
+  return {
+    filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, descuentoPct,
+    comision, margenEmpresa, margenEmpresaPct,
+  };
 }
 
 // Estado de cumplimiento de la salida de depósito para una cotización Ganada — cuánto de lo
@@ -7835,8 +7845,22 @@ function RentabilidadCotizacionView({ c, productos }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2">
         <div><p style={{ color: MUTED }}>Venta</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.ventaTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Costo</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.costoTotal)}</p></div>
-        <div><p style={{ color: MUTED }}>Margen</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>U$S {fmt(r.margenTotal)}</p></div>
-        <div><p style={{ color: MUTED }}>Margen %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{r.margenTotalPct.toFixed(1)}%</p></div>
+        <div><p style={{ color: MUTED }}>Margen bruto</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>U$S {fmt(r.margenTotal)}</p></div>
+        <div><p style={{ color: MUTED }}>Margen bruto %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{r.margenTotalPct.toFixed(1)}%</p></div>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs mb-2 p-2 rounded" style={{ backgroundColor: ACCENT_LIGHT }}>
+        <div>
+          <p style={{ color: MUTED }}>Comisión Gastón ({COMISION_COMERCIAL_PCT}%)</p>
+          <p className="font-semibold" style={{ color: ACCENT }}>U$S {fmt(r.comision)}</p>
+        </div>
+        <div>
+          <p style={{ color: MUTED }}>Margen empresa</p>
+          <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>U$S {fmt(r.margenEmpresa)}</p>
+        </div>
+        <div>
+          <p style={{ color: MUTED }}>Margen empresa %</p>
+          <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>{r.margenEmpresaPct.toFixed(1)}%</p>
+        </div>
       </div>
       {r.descuentoPct > 0 && (
         <p className="text-xs mb-1.5" style={{ color: MUTED }}>Incluye el descuento del {r.descuentoPct}% prorrateado en todos los productos.</p>

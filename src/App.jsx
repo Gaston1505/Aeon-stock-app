@@ -262,29 +262,43 @@ function estadoSalidaCotizacion(c) {
   return "pendiente";
 }
 
-// Agrupa cotizaciones por Cliente (constructora/desarrolladora) y, dentro de cada uno,
-// por Obra — mismo texto de Obra = misma "cadena" que va mutando en el tiempo. La versión
-// más nueva de cada obra (ya vienen ordenadas desc por createdAt) es la "activa": la que
+// Agrupa cotizaciones por Cliente (constructora/desarrolladora), dentro de cada uno por Obra,
+// y dentro de cada obra por Categoría — mismo texto de Obra + misma Categoría = misma "cadena"
+// que va mutando en el tiempo (ej. la cotización de aires de un edificio, que se va revisando).
+// Una obra grande suele tener varias categorías en paralelo (aires, cocina, termo), cada una con
+// su propia historia de versiones — no son revisiones entre sí, aunque compartan la obra. La
+// versión más nueva de cada hilo (ya vienen ordenadas desc por createdAt) es la "activa": la que
 // cuenta para los totales y cuyo estado se puede editar. Las anteriores quedan de historial.
 function agruparCotizaciones(cotizaciones) {
   const porCliente = new Map();
   for (const c of cotizaciones) {
     const clienteKey = (c.cliente || "").trim() || "(Sin cliente)";
     const obraKey = (c.obra || "").trim() || "(Sin obra)";
+    const categoriaKey = (c.categoria || "").trim() || "(Sin categoría)";
     if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, new Map());
     const porObra = porCliente.get(clienteKey);
-    if (!porObra.has(obraKey)) porObra.set(obraKey, []);
-    porObra.get(obraKey).push(c);
+    if (!porObra.has(obraKey)) porObra.set(obraKey, new Map());
+    const porCategoria = porObra.get(obraKey);
+    if (!porCategoria.has(categoriaKey)) porCategoria.set(categoriaKey, []);
+    porCategoria.get(categoriaKey).push(c);
   }
   const clientes = [];
   for (const [cliente, porObra] of porCliente) {
     const obras = [];
-    for (const [obra, versiones] of porObra) obras.push({ obra, versiones, activa: versiones[0] });
-    obras.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
+    for (const [obra, porCategoria] of porObra) {
+      const hilos = [];
+      for (const [categoria, versiones] of porCategoria) hilos.push({ categoria, versiones, activa: versiones[0] });
+      hilos.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
+      obras.push({ obra, hilos });
+    }
+    obras.sort((a, b) => {
+      const masReciente = (o) => Math.max(...o.hilos.map((h) => h.activa.createdAt || 0));
+      return masReciente(b) - masReciente(a);
+    });
     clientes.push({ cliente, obras });
   }
   clientes.sort((a, b) => {
-    const masReciente = (g) => Math.max(...g.obras.map((o) => o.activa.createdAt || 0));
+    const masReciente = (g) => Math.max(...g.obras.flatMap((o) => o.hilos.map((h) => h.activa.createdAt || 0)));
     return masReciente(b) - masReciente(a);
   });
   return clientes;
@@ -297,9 +311,9 @@ const ESTADO_COTIZACION_BADGE = {
   Perdida: { color: "#B91C1C", bg: "#FBEAEA" },
 };
 // Resume Total cotizado / Ganadas / Perdidas / Pendientes tomando solo la versión activa
-// de cada obra dentro de la lista de grupos de cliente que se le pase.
+// de cada hilo (obra + categoría) dentro de la lista de grupos de cliente que se le pase.
 function resumirCotizaciones(clientes) {
-  const activas = clientes.flatMap((g) => g.obras.map((o) => o.activa));
+  const activas = clientes.flatMap((g) => g.obras.flatMap((o) => o.hilos.map((h) => h.activa)));
   const resumen = { total: 0, Ganada: { n: 0, total: 0 }, Perdida: { n: 0, total: 0 }, Pendiente: { n: 0, total: 0 } };
   for (const c of activas) {
     const monto = calcularTotalCotizacion(c);
@@ -7987,21 +8001,22 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
   );
 }
 
-function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+// Una obra puede tener varias categorías en paralelo (aires, cocina, termo) — cada una es su
+// propio hilo con su propia versión activa e historial, no una revisión de las otras.
+function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
-  const historial = grupo.versiones.slice(1);
+  const historial = hilo.versiones.slice(1);
   return (
     <div>
-      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-        <p className="text-base font-bold" style={{ color: INK }}>{grupo.obra}</p>
-        {historial.length > 0 && (
-          <button onClick={() => setExpandido(!expandido)} className="text-xs shrink-0" style={{ color: ACCENT }}>
+      {historial.length > 0 && (
+        <div className="flex justify-end mb-1">
+          <button onClick={() => setExpandido(!expandido)} className="text-xs" style={{ color: ACCENT }}>
             {expandido ? "Ocultar historial" : `Ver historial (${historial.length})`}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <CotizacionCard
-        c={grupo.activa} esActiva productos={productos}
+        c={hilo.activa} esActiva productos={productos}
         onDelete={onDelete} onUpdate={onUpdate}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -8020,6 +8035,25 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+  return (
+    <div>
+      <p className="text-base font-bold mb-1" style={{ color: INK }}>{grupo.obra}</p>
+      <div className="space-y-3">
+        {grupo.hilos.map((h) => (
+          <HiloCategoriaGrupo
+            key={h.categoria} hilo={h} productos={productos}
+            onDelete={onDelete} onUpdate={onUpdate}
+            onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+            onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
+            descargandoId={descargandoId}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -9379,8 +9413,8 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
   // (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones) corresponde la plata cotizada
   // — cruzando cada línea contra el catálogo, mismas categorías que ya usa Catálogo de productos.
   const detalleCotizaciones = useMemo(
-    () => gruposCotizacion.flatMap((g) => g.obras.map((o) => {
-      const c = o.activa;
+    () => gruposCotizacion.flatMap((g) => g.obras.flatMap((o) => o.hilos.map((h) => {
+      const c = h.activa;
       const categoriasMap = new Map();
       for (const l of c.lineas || []) {
         const p = productos.find((pp) => pp.nombre === l.codigo);
@@ -9394,7 +9428,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         estado: ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
         categorias: [...categoriasMap.entries()].map(([label, monto]) => ({ label, monto })),
       };
-    })),
+    }))),
     [gruposCotizacion, productos]
   );
 

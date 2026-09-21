@@ -51,12 +51,21 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
   function mergeRow(row, opts = {}) {
     sheet.mergeCells(row, 1, row, lastCol);
   }
+  // OJO: asignar fill/font/border/alignment como propiedades sueltas (cell.fill = ..., luego
+  // cell.border = ..., etc.) hace que ExcelJS vaya cacheando/reusando estilos parciales por
+  // cada asignación individual — en la práctica, dos celdas con las MISMAS opciones podían
+  // terminar con un alignment distinto (confirmado inspeccionando el XML real: la celda de
+  // código de una línea y la barra de título perdían el horizontal/wrapText pedido). Armar el
+  // objeto de estilo completo y asignarlo de una sola vez (`cell.style = ...`) evita ese bug,
+  // porque ExcelJS lo resuelve como un único estilo en vez de ir mutando uno parcial.
   function styleCell(cell, opts = {}) {
-    if (opts.fill) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } };
-    if (opts.bold || opts.color) cell.font = { bold: !!opts.bold, size: opts.size || 10, color: { argb: opts.color || "FF1C1E20" } };
-    else if (opts.size) cell.font = { size: opts.size };
-    if (opts.border !== false) cell.border = thinBorder();
-    cell.alignment = { vertical: "middle", horizontal: opts.align || "left", wrapText: !!opts.wrap };
+    const style = {};
+    if (opts.fill) style.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } };
+    if (opts.bold || opts.color) style.font = { bold: !!opts.bold, size: opts.size || 10, color: { argb: opts.color || "FF1C1E20" } };
+    else if (opts.size) style.font = { size: opts.size };
+    if (opts.border !== false) style.border = thinBorder();
+    style.alignment = { vertical: "middle", horizontal: opts.align || "left", wrapText: !!opts.wrap };
+    cell.style = style;
   }
 
   const base = import.meta.env.BASE_URL;

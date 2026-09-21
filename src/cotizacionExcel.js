@@ -100,6 +100,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     const cell = sheet.getCell(r, 1);
     cell.value = text;
     cell.font = { bold: !!opts.bold, size: opts.size, color: { argb: opts.color ? "FF686D73" : "FF1C1E20" } };
+    cell.alignment = { vertical: "middle" };
     r += 1;
   });
   r += 1;
@@ -178,7 +179,6 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
 
     r += 1;
   }
-  sheet.getColumn(1).alignment = { vertical: "middle" };
 
   const incluirDescuento = !!cotizacion.incluirDescuento;
   const incluirInstalacion = !!cotizacion.incluirInstalacion;

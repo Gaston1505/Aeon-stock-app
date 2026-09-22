@@ -205,8 +205,81 @@ const COMISION_COMERCIAL_PCT = 1.5;
 
 // El monto de instalación de una cotización no es margen puro: AEON contrata a un técnico
 // externo para hacerla, y le suma este % aprox como margen propio — el resto es lo que se le
-// paga al técnico (costo real, aunque no esté cargado línea por línea en ningún lado).
+// paga al técnico. Este % es el fallback para cotizaciones viejas / cargadas a mano sin el
+// desglose real (ver SERVICIO_TECNICO_PRECIOS abajo) — cuando SÍ hay desglose real, se usa ese.
 const MARGEN_INSTALACION_PCT = 15;
+
+// Costos reales que cobra Luis (técnico tercerizado) por servicio — todo en guaraníes, tal cual
+// los pasa él. De acá se arma la sugerencia de precio para el cliente (Luis × 1.15 o 1.2,
+// redondeado hacia arriba a 0/5) y, por separado, el costo real que se usa en Rentabilidad.
+// null = ese producto no tiene ese servicio definido en la lista de Luis.
+const SERVICIO_TECNICO_TIPOS = ["Instalación", "Desinstalación", "Mantenimiento", "Asistencia Técnica"];
+const SERVICIO_TECNICO_PRODUCTOS = ["Horno", "Anafe", "Campana", "Termocalefón", "Aire Acondicionado"];
+const SERVICIO_TECNICO_CANTIDAD_TIERS = ["1 a 9", "10 a 49", "Más de 50"];
+const AA_BTU_RANGOS = ["9.000 - 12.000 BTU", "18.000 - 36.000 BTU", "48.000 - 64.000 BTU"];
+
+const SERVICIO_TECNICO_PRECIOS = {
+  Horno: {
+    "Instalación": [180000, 130000, 115000],
+    "Desinstalación": [50000, 50000, 50000],
+    "Mantenimiento": [null, null, null],
+    "Asistencia Técnica": [250000, 250000, 250000],
+  },
+  Anafe: {
+    "Instalación": [180000, 130000, 115000],
+    "Desinstalación": [50000, 50000, 50000],
+    "Mantenimiento": [null, null, null],
+    "Asistencia Técnica": [null, null, null],
+  },
+  Campana: {
+    "Instalación": [160000, 120000, 110000],
+    "Desinstalación": [50000, 50000, 50000],
+    "Mantenimiento": [250000, 250000, 250000],
+    "Asistencia Técnica": [null, null, null],
+  },
+  "Termocalefón": {
+    "Instalación": [200000, 180000, 150000],
+    "Desinstalación": [50000, 50000, 50000],
+    "Mantenimiento": [300000, 300000, 300000],
+    "Asistencia Técnica": [null, null, null],
+  },
+  "Aire Acondicionado": {
+    porBtu: {
+      "9.000 - 12.000 BTU": {
+        "Instalación": [250000, 230000, 200000],
+        "Desinstalación": [180000, 150000, 130000],
+        "Mantenimiento": [250000, 230000, 200000],
+        "Asistencia Técnica": [250000, 250000, 250000],
+      },
+      "18.000 - 36.000 BTU": {
+        "Instalación": [380000, 350000, 300000],
+        "Desinstalación": [280000, 250000, 230000],
+        "Mantenimiento": [350000, 330000, 300000],
+        "Asistencia Técnica": [250000, 250000, 250000],
+      },
+      "48.000 - 64.000 BTU": {
+        "Instalación": [580000, 550000, 500000],
+        "Desinstalación": [380000, 350000, 330000],
+        "Mantenimiento": [480000, 450000, 430000],
+        "Asistencia Técnica": [250000, 250000, 250000],
+      },
+    },
+  },
+};
+
+function costoLuisServicio(producto, tipo, tierIdx, btuRango) {
+  const info = SERVICIO_TECNICO_PRECIOS[producto];
+  if (!info) return null;
+  const tabla = info.porBtu ? info.porBtu[btuRango] : info;
+  if (!tabla) return null;
+  const arr = tabla[tipo];
+  return arr ? arr[tierIdx] : null;
+}
+
+// "El número final... lo redondees a 0 o 5, siempre para arriba" — para que quede presentable.
+function redondearArriba5(n) {
+  return Math.ceil(n / 5) * 5;
+}
 
 // Rentabilidad de una cotización: por cada línea, cruza el precio YA NEGOCIADO contra el costo
 // cargado en el catálogo (puesto en PY si está, si no origen) — el descuento general, si tiene,
@@ -232,7 +305,14 @@ function calcularRentabilidadCotizacion(c, productos) {
   const ventaProductos = filas.reduce((acc, f) => acc + f.ventaNeta, 0);
   const costoProductos = filas.reduce((acc, f) => acc + f.costoTotal, 0);
   const instalacionMonto = c.incluirInstalacion ? (Number(c.instalacionMonto) || 0) : 0;
-  const costoInstalacion = instalacionMonto * (1 - MARGEN_INSTALACION_PCT / 100);
+  // Si algún servicio se agregó con el sugeridor (tabla de Luis), ya sabemos su costo real en
+  // U$S — se usa ese en vez del 15% aproximado. El 15% solo se aplica al resto del monto de
+  // instalación que se haya cargado a mano (sin pasar por el sugeridor).
+  const serviciosAdicionales = c.serviciosAdicionales || [];
+  const montoServiciosSugeridos = serviciosAdicionales.reduce((acc, s) => acc + (Number(s.monto) || 0), 0);
+  const costoServiciosSugeridos = serviciosAdicionales.reduce((acc, s) => acc + (Number(s.costoLuisUsd) || 0), 0);
+  const montoInstalacionManual = Math.max(0, instalacionMonto - montoServiciosSugeridos);
+  const costoInstalacion = montoInstalacionManual * (1 - MARGEN_INSTALACION_PCT / 100) + costoServiciosSugeridos;
   const ventaTotal = ventaProductos + instalacionMonto;
   const costoTotal = costoProductos + costoInstalacion;
   const margenTotal = ventaTotal - costoTotal;
@@ -243,7 +323,7 @@ function calcularRentabilidadCotizacion(c, productos) {
 
   return {
     filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, costoInstalacion, descuentoPct,
-    comision, margenEmpresa, margenEmpresaPct,
+    comision, margenEmpresa, margenEmpresaPct, serviciosAdicionales,
   };
 }
 
@@ -7118,6 +7198,111 @@ function SelectorCliente({ clientes, value, onChange, onSeleccionar, placeholder
   );
 }
 
+// Sugiere el precio de un servicio técnico (instalación, desinstalación, mantenimiento,
+// asistencia técnica) a partir de la tabla de costos reales de Luis (el técnico tercerizado):
+// costo Luis × margen elegido (1,15 o 1,2), redondeado hacia arriba a 0/5. El tipo de cambio se
+// pide cada vez (no hay uno fijo guardado) porque la tabla de Luis está en guaraníes y el monto
+// de la cotización es en dólares. Guarda también el costo real en dólares — no aparece en el
+// PDF, solo lo usa Rentabilidad para no asumir un margen aproximado cuando hay dato real.
+function SugeridorServicioTecnico({ onAgregar }) {
+  const [tipo, setTipo] = useState(SERVICIO_TECNICO_TIPOS[0]);
+  const [producto, setProducto] = useState(SERVICIO_TECNICO_PRODUCTOS[0]);
+  const [cantidad, setCantidad] = useState(1);
+  const [btuRango, setBtuRango] = useState(AA_BTU_RANGOS[0]);
+  const [multiplicador, setMultiplicador] = useState(1.15);
+  const [tipoCambio, setTipoCambio] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+
+  const esAA = producto === "Aire Acondicionado";
+  const cant = Number(cantidad) || 1;
+  const tierIdx = cant >= 50 ? 2 : cant >= 10 ? 1 : 0;
+  const costoLuisGs = costoLuisServicio(producto, tipo, tierIdx, esAA ? btuRango : undefined);
+  const montoAeonGs = costoLuisGs != null ? redondearArriba5(costoLuisGs * multiplicador) : null;
+  const tc = Number(tipoCambio) || 0;
+  const montoAeonUsd = montoAeonGs != null && tc > 0 ? montoAeonGs / tc : null;
+  const costoLuisUsd = costoLuisGs != null && tc > 0 ? costoLuisGs / tc : null;
+  const descripcionFinal = descripcion.trim() || `${tipo} de ${producto}${esAA ? ` (${btuRango})` : ""}`;
+
+  const agregar = () => {
+    if (montoAeonUsd == null) return;
+    onAgregar({
+      id: randId(), tipo, monto: Math.round(montoAeonUsd * 100) / 100, costoLuisUsd: Math.round(costoLuisUsd * 100) / 100,
+      descripcion: descripcionFinal,
+    });
+    setDescripcion("");
+    setTipoCambio("");
+  };
+
+  return (
+    <div className="p-2.5 rounded mb-2" style={{ backgroundColor: "#FFFFFF", border: `1px dashed ${BORDER}` }}>
+      <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>Sugerir costo (tabla de Luis)</p>
+      <div className="flex gap-2 flex-wrap mb-2">
+        <div style={{ minWidth: 150 }}>
+          <Field label="Servicio">
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+              {SERVICIO_TECNICO_TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ minWidth: 170 }}>
+          <Field label="Producto">
+            <select value={producto} onChange={(e) => setProducto(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+              {SERVICIO_TECNICO_PRODUCTOS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </Field>
+        </div>
+        {esAA && (
+          <div style={{ minWidth: 170 }}>
+            <Field label="Capacidad">
+              <select value={btuRango} onChange={(e) => setBtuRango(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+                {AA_BTU_RANGOS.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
+        <div style={{ width: 90 }}>
+          <Field label="Cantidad"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+        </div>
+      </div>
+
+      <p className="text-xs mb-1" style={{ color: MUTED }}>Margen sobre el costo de Luis</p>
+      <div className="flex items-center gap-2 mb-2">
+        {[1.15, 1.2].map((m) => (
+          <button
+            key={m} type="button" onClick={() => setMultiplicador(m)}
+            className="text-xs px-2.5 py-1 rounded-full"
+            style={multiplicador === m ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+          >
+            ×{m.toFixed(2)}
+          </button>
+        ))}
+      </div>
+
+      {costoLuisGs == null ? (
+        <p className="text-xs mb-1" style={{ color: "#B45309" }}>Luis no tiene precio definido para esta combinación — cargalo a mano abajo.</p>
+      ) : (
+        <>
+          <p className="text-xs mb-2" style={{ color: MUTED }}>
+            Costo Luis ₲ {costoLuisGs.toLocaleString()} · Sugerido AEON ₲ {montoAeonGs.toLocaleString()}
+          </p>
+          <Field label="Tipo de cambio hoy (₲ por U$S)">
+            <TextInput type="number" value={tipoCambio} onChange={(e) => setTipoCambio(e.target.value)} placeholder="Ej: 7300" />
+          </Field>
+          {montoAeonUsd != null && (
+            <p className="text-xs mb-2" style={{ color: ACCENT }}>
+              ≈ U$S {montoAeonUsd.toFixed(2)} al cliente · costo real U$S {costoLuisUsd.toFixed(2)}
+            </p>
+          )}
+          <Field label="Descripción (opcional)"><TextInput value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder={descripcionFinal} /></Field>
+          <SecondaryButton onClick={agregar} disabled={montoAeonUsd == null}>
+            <Plus size={14} /> Agregar este servicio
+          </SecondaryButton>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Celda editable de la tabla de admin — a diferencia de la fila de depósito, acá si se ve el
 // sistema al lado, así que no hay nada que ocultar; mismo guardado en blur/Enter.
 function ConteoCeldaAdmin({ item, onGuardar }) {
@@ -7377,6 +7562,12 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
   const [error, setError] = useState("");
   const [conflictoObra, setConflictoObra] = useState(null);
   const [conflictoResuelto, setConflictoResuelto] = useState(false);
+  const [serviciosAdicionales, setServiciosAdicionales] = useState([]);
+  const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
+
+  const agregarServicio = (s) => setServiciosAdicionales([...serviciosAdicionales, s]);
+  const quitarServicio = (id) => setServiciosAdicionales(serviciosAdicionales.filter((s) => s.id !== id));
+  const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
@@ -7496,10 +7687,23 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
 
   const guardarFinal = (hiloId) => {
     if (onGuardarCliente) onGuardarCliente(cliente, telefono);
+    // Los servicios sugeridos (instalación/desinstalación/mantenimiento/asistencia técnica) se
+    // combinan con el bloque manual de instalación en un solo monto/descripción — así el PDF y
+    // el Excel, que ya saben mostrar "instalación", no necesitan ningún cambio. El detalle real
+    // de cada servicio (con su costo de Luis) se guarda aparte para que Rentabilidad no tenga
+    // que aproximar el margen cuando ya lo sabemos con precisión.
+    const montoManual = Number(instalacionMonto) || 0;
+    const montoFinal = montoManual + totalServicios;
+    const descripcionFinal = [
+      instalacionDescripcion.trim(),
+      ...serviciosAdicionales.map((s) => `${s.tipo}: ${s.descripcion}`),
+    ].filter(Boolean).join(" | ");
     onSave({
       fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
       incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
-      incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
+      incluirInstalacion: incluirInstalacion || serviciosAdicionales.length > 0,
+      instalacionDescripcion: descripcionFinal, instalacionMonto: montoFinal,
+      serviciosAdicionales,
       fechaEntregaEstimada, formaPago, obs,
       clienteReal, estado: "Pendiente", hiloId,
     });
@@ -7650,10 +7854,39 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
           <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
         </div>
       )}
+
+      <p className="text-sm font-semibold mb-1" style={{ color: INK }}>Otros servicios (instalación, desinstalación, mantenimiento, asistencia técnica)</p>
+      {serviciosAdicionales.length > 0 && (
+        <div className="mb-2 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {serviciosAdicionales.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
+                <span style={{ color: MUTED }}> · {s.descripcion} · U$S {s.monto.toFixed(2)}</span>
+              </div>
+              <button onClick={() => quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+          <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <span>Subtotal servicios</span><span>U$S {totalServicios.toFixed(2)}</span>
+          </div>
+        </div>
+      )}
+      {mostrarSugeridor ? (
+        <SugeridorServicioTecnico onAgregar={(s) => { agregarServicio(s); setMostrarSugeridor(false); }} />
+      ) : (
+        <SecondaryButton onClick={() => setMostrarSugeridor(true)}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
+      )}
+
       {lineas.length > 0 && (
-        <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+        <div className="px-2.5 py-2 mb-3 mt-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
           <span>Total final</span>
-          <span>U$S {(subtotal - (incluirDescuento ? subtotal * (Number(descuento) || 0) / 100 : 0) + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
+          <span>
+            U$S {(
+              subtotal - (incluirDescuento ? subtotal * (Number(descuento) || 0) / 100 : 0)
+              + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0) + totalServicios
+            ).toLocaleString()}
+          </span>
         </div>
       )}
 
@@ -7947,8 +8180,9 @@ function RentabilidadCotizacionView({ c, productos }) {
       )}
       {r.instalacionMonto > 0 && (
         <p className="text-xs mb-1.5" style={{ color: MUTED }}>
-          Instalación U$S {fmt(r.instalacionMonto)} sumada a la venta — costo estimado del técnico U$S {fmt(r.costoInstalacion)}
-          {" "}({100 - MARGEN_INSTALACION_PCT}%), margen AEON {MARGEN_INSTALACION_PCT}%.
+          Instalación/servicios U$S {fmt(r.instalacionMonto)} sumado a la venta — costo del técnico U$S {fmt(r.costoInstalacion)}
+          {" "}({r.instalacionMonto > 0 ? ((r.costoInstalacion / r.instalacionMonto) * 100).toFixed(0) : 0}%
+          {r.serviciosAdicionales?.length > 0 ? ", con costo real de Luis donde se cargó con el sugeridor" : ", estimado"}).
         </p>
       )}
       <div className="rounded border overflow-hidden" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>

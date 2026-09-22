@@ -364,7 +364,10 @@ function agruparCotizaciones(cotizaciones) {
   for (const c of cotizaciones) {
     const clienteKey = (c.cliente || "").trim() || "(Sin cliente)";
     const obraKey = (c.obra || "").trim() || "(Sin obra)";
-    const hiloKey = c.hiloId || `legacy:${(c.categoria || "").trim().toLowerCase()}`;
+    // Sin .toLowerCase() a propósito: es exactamente la misma comparación (case-sensitive) que
+    // ya se usaba antes de que existiera hiloId — cambiarla ahora fusionaría de nuevo cotizaciones
+    // viejas que quedaron separadas justamente por una diferencia de mayúsculas en la categoría.
+    const hiloKey = c.hiloId || `legacy:${(c.categoria || "").trim()}`;
     if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, new Map());
     const porObra = porCliente.get(clienteKey);
     if (!porObra.has(obraKey)) porObra.set(obraKey, new Map());

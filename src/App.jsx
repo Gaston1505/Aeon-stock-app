@@ -203,10 +203,14 @@ function calcularTotalCotizacion(c) {
 // sobre el margen) — se descuenta del margen bruto para mostrar cuánto le queda a la empresa.
 const COMISION_COMERCIAL_PCT = 1.5;
 
+// El monto de instalación de una cotización no es margen puro: AEON contrata a un técnico
+// externo para hacerla, y le suma este % aprox como margen propio — el resto es lo que se le
+// paga al técnico (costo real, aunque no esté cargado línea por línea en ningún lado).
+const MARGEN_INSTALACION_PCT = 15;
+
 // Rentabilidad de una cotización: por cada línea, cruza el precio YA NEGOCIADO contra el costo
 // cargado en el catálogo (puesto en PY si está, si no origen) — el descuento general, si tiene,
-// se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo). La
-// instalación no tiene costo cargado en ningún lado de la app, así que entra como margen puro.
+// se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo).
 function calcularRentabilidadCotizacion(c, productos) {
   const lineas = c.lineas || [];
   const descuentoPct = c.incluirDescuento ? (Number(c.descuento) || 0) : 0;
@@ -228,8 +232,9 @@ function calcularRentabilidadCotizacion(c, productos) {
   const ventaProductos = filas.reduce((acc, f) => acc + f.ventaNeta, 0);
   const costoProductos = filas.reduce((acc, f) => acc + f.costoTotal, 0);
   const instalacionMonto = c.incluirInstalacion ? (Number(c.instalacionMonto) || 0) : 0;
+  const costoInstalacion = instalacionMonto * (1 - MARGEN_INSTALACION_PCT / 100);
   const ventaTotal = ventaProductos + instalacionMonto;
-  const costoTotal = costoProductos;
+  const costoTotal = costoProductos + costoInstalacion;
   const margenTotal = ventaTotal - costoTotal;
   const margenTotalPct = ventaTotal > 0 ? (margenTotal / ventaTotal) * 100 : 0;
   const comision = ventaTotal * (COMISION_COMERCIAL_PCT / 100);
@@ -237,7 +242,7 @@ function calcularRentabilidadCotizacion(c, productos) {
   const margenEmpresaPct = ventaTotal > 0 ? (margenEmpresa / ventaTotal) * 100 : 0;
 
   return {
-    filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, descuentoPct,
+    filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, costoInstalacion, descuentoPct,
     comision, margenEmpresa, margenEmpresaPct,
   };
 }
@@ -7941,7 +7946,10 @@ function RentabilidadCotizacionView({ c, productos }) {
         <p className="text-xs mb-1.5" style={{ color: MUTED }}>Incluye el descuento del {r.descuentoPct}% prorrateado en todos los productos.</p>
       )}
       {r.instalacionMonto > 0 && (
-        <p className="text-xs mb-1.5" style={{ color: MUTED }}>Instalación U$S {fmt(r.instalacionMonto)} sumada a la venta — sin costo cargado, margen 100%.</p>
+        <p className="text-xs mb-1.5" style={{ color: MUTED }}>
+          Instalación U$S {fmt(r.instalacionMonto)} sumada a la venta — costo estimado del técnico U$S {fmt(r.costoInstalacion)}
+          {" "}({100 - MARGEN_INSTALACION_PCT}%), margen AEON {MARGEN_INSTALACION_PCT}%.
+        </p>
       )}
       <div className="rounded border overflow-hidden" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
         {r.filas.map((f, i) => (

@@ -7902,7 +7902,7 @@ function RentabilidadCotizacionView({ c, productos }) {
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
@@ -7924,6 +7924,16 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: badgeSalida.bg, color: badgeSalida.color }}>
             {badgeSalida.label}
           </span>
+        )}
+        {historialCount > 0 && (
+          <button
+            onClick={onToggleHistorial}
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+            style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}
+          >
+            <Clock size={10} />
+            {expandidoHistorial ? "Ocultar versiones anteriores" : `${historialCount} versión${historialCount > 1 ? "es" : ""} anterior${historialCount > 1 ? "es" : ""}`}
+          </button>
         )}
       </div>
 
@@ -8008,15 +8018,9 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onDescargarPd
   const historial = hilo.versiones.slice(1);
   return (
     <div>
-      {historial.length > 0 && (
-        <div className="flex justify-end mb-1">
-          <button onClick={() => setExpandido(!expandido)} className="text-xs" style={{ color: ACCENT }}>
-            {expandido ? "Ocultar historial" : `Ver historial (${historial.length})`}
-          </button>
-        </div>
-      )}
       <CotizacionCard
         c={hilo.activa} esActiva productos={productos}
+        historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
         onDelete={onDelete} onUpdate={onUpdate}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}

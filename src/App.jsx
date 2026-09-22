@@ -263,31 +263,36 @@ function estadoSalidaCotizacion(c) {
 }
 
 // Agrupa cotizaciones por Cliente (constructora/desarrolladora), dentro de cada uno por Obra,
-// y dentro de cada obra por Categoría — mismo texto de Obra + misma Categoría = misma "cadena"
-// que va mutando en el tiempo (ej. la cotización de aires de un edificio, que se va revisando).
-// Una obra grande suele tener varias categorías en paralelo (aires, cocina, termo), cada una con
-// su propia historia de versiones — no son revisiones entre sí, aunque compartan la obra. La
-// versión más nueva de cada hilo (ya vienen ordenadas desc por createdAt) es la "activa": la que
-// cuenta para los totales y cuyo estado se puede editar. Las anteriores quedan de historial.
+// y dentro de cada obra por hilo — mismo hilo = misma "cadena" que va mutando en el tiempo (ej.
+// la cotización de aires de un edificio, que se va revisando). Una obra grande suele tener
+// varias categorías en paralelo (aires, cocina, termo), cada una con su propia historia de
+// versiones — no son revisiones entre sí, aunque compartan la obra.
+//
+// El hilo lo decide `hiloId` (campo explícito, asignado al guardar — ver CotizacionForm y el
+// diálogo "¿es una revisión o es aparte?"): dos cotizaciones son la misma cadena solo si
+// comparten hiloId. Las cotizaciones viejas, de antes de que existiera ese campo, no lo tienen
+// — para esas se sigue usando la categoría como aproximación (mismo comportamiento que había).
+// La versión más nueva de cada hilo (ya vienen ordenadas desc por createdAt) es la "activa": la
+// que cuenta para los totales y cuyo estado se puede editar. Las anteriores quedan de historial.
 function agruparCotizaciones(cotizaciones) {
   const porCliente = new Map();
   for (const c of cotizaciones) {
     const clienteKey = (c.cliente || "").trim() || "(Sin cliente)";
     const obraKey = (c.obra || "").trim() || "(Sin obra)";
-    const categoriaKey = (c.categoria || "").trim() || "(Sin categoría)";
+    const hiloKey = c.hiloId || `legacy:${(c.categoria || "").trim().toLowerCase()}`;
     if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, new Map());
     const porObra = porCliente.get(clienteKey);
     if (!porObra.has(obraKey)) porObra.set(obraKey, new Map());
-    const porCategoria = porObra.get(obraKey);
-    if (!porCategoria.has(categoriaKey)) porCategoria.set(categoriaKey, []);
-    porCategoria.get(categoriaKey).push(c);
+    const porHilo = porObra.get(obraKey);
+    if (!porHilo.has(hiloKey)) porHilo.set(hiloKey, []);
+    porHilo.get(hiloKey).push(c);
   }
   const clientes = [];
   for (const [cliente, porObra] of porCliente) {
     const obras = [];
-    for (const [obra, porCategoria] of porObra) {
+    for (const [obra, porHilo] of porObra) {
       const hilos = [];
-      for (const [categoria, versiones] of porCategoria) hilos.push({ categoria, versiones, activa: versiones[0] });
+      for (const [, versiones] of porHilo) hilos.push({ categoria: versiones[0].categoria, versiones, activa: versiones[0] });
       hilos.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
       obras.push({ obra, hilos });
     }
@@ -2809,7 +2814,7 @@ export default function App() {
         title="Nueva cotización"
       >
         <CotizacionForm
-          productos={productos} clientes={clientes}
+          productos={productos} clientes={clientes} cotizaciones={cotizaciones}
           initial={cotizacionPrefill}
           onGuardarCliente={upsertClienteTelefono}
           onSave={(d) => { addCotizacion(d); setDrawer(null); setCotizacionPrefill(null); }}
@@ -7328,7 +7333,22 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
 const FECHA_ENTREGA_DEFAULT = "Una vez aprobado el presupuesto la entrega se concreta de 150 a 200 dias";
 const OBS_DEFAULT = "Productos a retirar de depósito.";
 
-function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial }) {
+// Busca la cotización más reciente para el mismo cliente + misma obra (cualquier categoría) —
+// para poder preguntar, al guardar una nueva, si es una revisión de esa (mismo hilo, nueva
+// versión) o una cotización aparte para la misma obra (hilo propio). No decide solo: el usuario
+// eligió que se le pregunte cada vez, porque a veces sí es la misma línea evolucionando y a
+// veces es un servicio distinto (aires, cocina, termo) que solo comparte el edificio.
+function buscarCotizacionMismaObra(cotizaciones, cliente, obra) {
+  const clienteKey = cliente.trim().toLowerCase();
+  const obraKey = obra.trim().toLowerCase();
+  if (!clienteKey || !obraKey) return null;
+  const candidatas = (cotizaciones || [])
+    .filter((c) => (c.cliente || "").trim().toLowerCase() === clienteKey && (c.obra || "").trim().toLowerCase() === obraKey)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return candidatas[0] || null;
+}
+
+function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, onSave, initial }) {
   const [fecha, setFecha] = useState(todayISO());
   const [cliente, setCliente] = useState(initial?.cliente || "");
   const [telefono, setTelefono] = useState("");
@@ -7350,6 +7370,8 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
   const [cantidadNueva, setCantidadNueva] = useState(1);
   const [precioNuevo, setPrecioNuevo] = useState("");
   const [error, setError] = useState("");
+  const [conflictoObra, setConflictoObra] = useState(null);
+  const [conflictoResuelto, setConflictoResuelto] = useState(false);
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
@@ -7467,6 +7489,17 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
     setLineas(nuevas);
   };
 
+  const guardarFinal = (hiloId) => {
+    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
+    onSave({
+      fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
+      incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
+      incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
+      fechaEntregaEstimada, formaPago, obs,
+      clienteReal, estado: "Pendiente", hiloId,
+    });
+  };
+
   const submit = () => {
     if (!cliente.trim()) {
       setError("Ingresá el cliente.");
@@ -7476,14 +7509,28 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       setError("Agregá al menos un producto.");
       return;
     }
-    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
-    onSave({
-      fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
-      incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
-      incluirInstalacion, instalacionDescripcion, instalacionMonto: Number(instalacionMonto) || 0,
-      fechaEntregaEstimada, formaPago, obs,
-      clienteReal, estado: "Pendiente",
-    });
+    setError("");
+    if (!conflictoResuelto) {
+      const existente = buscarCotizacionMismaObra(cotizaciones, cliente, obra);
+      if (existente) {
+        setConflictoObra(existente);
+        return;
+      }
+    }
+    guardarFinal(randId());
+  };
+
+  const elegirEsRevision = () => {
+    const hiloId = conflictoObra.hiloId || conflictoObra.id;
+    setConflictoObra(null);
+    setConflictoResuelto(true);
+    guardarFinal(hiloId);
+  };
+
+  const elegirEsAparte = () => {
+    setConflictoObra(null);
+    setConflictoResuelto(true);
+    guardarFinal(randId());
   };
 
   return (
@@ -7612,7 +7659,21 @@ function CotizacionForm({ productos, clientes, onGuardarCliente, onSave, initial
       <Field label="Observaciones"><TextInput value={obs} onChange={(e) => setObs(e.target.value)} /></Field>
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar cotización</PrimaryButton>
+
+      {conflictoObra && (
+        <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
+          <p className="text-sm font-medium mb-1" style={{ color: INK }}>Ya hay una cotización para "{obra || cliente}"</p>
+          <p className="text-xs mb-2" style={{ color: MUTED }}>
+            {conflictoObra.categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(conflictoObra).toLocaleString()} · {fmtDate(conflictoObra.fecha)}
+          </p>
+          <p className="text-xs mb-2" style={{ color: INK }}>¿Qué es esta cotización nueva?</p>
+          <div className="flex gap-2 flex-wrap">
+            <SecondaryButton onClick={elegirEsRevision}>Es una revisión de esa</SecondaryButton>
+            <PrimaryButton onClick={elegirEsAparte}>Es aparte, misma obra</PrimaryButton>
+          </div>
+        </div>
+      )}
+      {!conflictoObra && <PrimaryButton onClick={submit}>Guardar cotización</PrimaryButton>}
     </div>
   );
 }

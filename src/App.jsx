@@ -8490,6 +8490,12 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   const [instalacionMonto, setInstalacionMonto] = useState("");
   const [plazoEstimado, setPlazoEstimado] = useState(PLAZO_ESTIMADO_DEFAULT.reparacion);
   const [error, setError] = useState("");
+  const [serviciosAdicionales, setServiciosAdicionales] = useState([]);
+  const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
+
+  const agregarServicio = (s) => setServiciosAdicionales([...serviciosAdicionales, s]);
+  const quitarServicio = (id) => setServiciosAdicionales(serviciosAdicionales.filter((s) => s.id !== id));
+  const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
 
   const [lineasMantenimiento, setLineasMantenimiento] = useState([]);
   const [categoriaActiva, setCategoriaActiva] = useState(MANTENIMIENTO_CATEGORIAS[0]);
@@ -8605,11 +8611,17 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
       return;
     }
     if (onGuardarCliente) onGuardarCliente(cliente, telefono);
+    // Igual que en Cotizaciones: los servicios sugeridos se combinan con el monto/descripción
+    // manual de instalación en un solo campo (así no hace falta tocar el PDF), y el detalle real
+    // (con el costo de Luis) queda guardado aparte en serviciosAdicionales.
+    const montoManual = tipo === "reparacion" ? (Number(instalacionMonto) || 0) : 0;
+    const totalServiciosFinal = tipo === "reparacion" ? totalServicios : 0;
     onSave({
       tipo, fecha, cliente, clienteTelefono: telefono.trim(), obra, equipoAfectado, fallaReportada, lineas,
       lineasMantenimiento: tipo === "mantenimiento" ? lineasMantenimiento : [],
-      incluirInstalacion: tipo === "reparacion" && incluirInstalacion,
-      instalacionMonto: Number(instalacionMonto) || 0,
+      incluirInstalacion: tipo === "reparacion" && (incluirInstalacion || serviciosAdicionales.length > 0),
+      instalacionMonto: montoManual + totalServiciosFinal,
+      serviciosAdicionales: tipo === "reparacion" ? serviciosAdicionales : [],
       plazoEstimado,
     });
   };
@@ -8759,10 +8771,34 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
           {incluirInstalacion && (
             <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
           )}
+
+          <p className="text-sm font-semibold mb-1" style={{ color: INK }}>Otros servicios (instalación, desinstalación, mantenimiento, asistencia técnica)</p>
+          {serviciosAdicionales.length > 0 && (
+            <div className="mb-2 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+              {serviciosAdicionales.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+                  <div className="min-w-0">
+                    <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
+                    <span style={{ color: MUTED }}> · {s.descripcion} · U$S {s.monto.toFixed(2)}</span>
+                  </div>
+                  <button onClick={() => quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+                </div>
+              ))}
+              <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+                <span>Subtotal servicios</span><span>U$S {totalServicios.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+          {mostrarSugeridor ? (
+            <SugeridorServicioTecnico onAgregar={(s) => { agregarServicio(s); setMostrarSugeridor(false); }} />
+          ) : (
+            <SecondaryButton onClick={() => setMostrarSugeridor(true)}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
+          )}
+
           {lineas.length > 0 && (
-            <div className="px-2.5 py-2 mb-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <div className="px-2.5 py-2 mb-3 mt-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
               <span>Total final</span>
-              <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0)).toLocaleString()}</span>
+              <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0) + totalServicios).toLocaleString()}</span>
             </div>
           )}
         </>

@@ -8833,6 +8833,14 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
               <ComentarioEditor value={c.clienteReal} onSave={(v) => onUpdate(c.id, { clienteReal: v })} placeholder="Cliente real / inversor" />
             </div>
           </div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Validez (días) — sí aparece en el PDF y el Excel</p>
+          <div style={{ width: 90 }}>
+            <ComentarioEditor
+              value={String(c.diasValidez || 30)}
+              onSave={(v) => onUpdate(c.id, { diasValidez: Number(v) || 30 })}
+              placeholder="30"
+            />
+          </div>
         </div>
       )}
 

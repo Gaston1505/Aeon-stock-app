@@ -161,7 +161,11 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
     const fotoCell = sheet.getCell(r, c); styleCell(fotoCell, { align: "center", wrap: true });
     if (l.foto) {
       try {
-        const imgId = workbook.addImage({ base64: l.foto, extension: "jpeg" });
+        // No todas las fotos de producto son JPEG (Multi Split Interior, Termocalefones son
+        // PNG) — declarar "jpeg" a mano para bytes que en realidad son PNG hacía que ExcelJS
+        // dejara la celda vacía en silencio. Se detecta el formato real del propio data URL.
+        const extension = l.foto.startsWith("data:image/png") ? "png" : "jpeg";
+        const imgId = workbook.addImage({ base64: l.foto, extension });
         sheet.addImage(imgId, { tl: { col: c - 1 + 0.15, row: r - 1 + 0.1 }, ext: { width: 50, height: 50 } });
       } catch (e) { /* foto corrupta o formato no soportado — se deja la celda vacía */ }
     }

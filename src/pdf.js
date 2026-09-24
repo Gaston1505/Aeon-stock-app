@@ -121,6 +121,21 @@ function dataUrlToBytes(dataUrl) {
   return bytes;
 }
 
+// Las fotos de producto en el catálogo no son todas el mismo formato (la mayoría son JPEG, pero
+// varias — Multi Split Interior, Termocalefones — son PNG). embedJpg tira si los bytes no son
+// JPEG de verdad, así que asumirlo siempre rompía en silencio (el catch de "skip broken image"
+// se comía el error y la foto no salía) para cualquier línea con foto PNG. Se elige el método
+// según lo que diga el propio data URL, con la otra opción como respaldo si no coincide.
+async function embedImagenDataUrl(pdf, dataUrl) {
+  const bytes = dataUrlToBytes(dataUrl);
+  const esPng = dataUrl.startsWith("data:image/png");
+  try {
+    return esPng ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+  } catch (e) {
+    return esPng ? await pdf.embedJpg(bytes) : await pdf.embedPng(bytes);
+  }
+}
+
 async function fetchBytes(url) {
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -295,8 +310,7 @@ export async function generateCotizacionPdf(cotizacion) {
     rect(cx, y - rowH2, colFoto, rowH2, { border: BORDER });
     if (linea.foto) {
       try {
-        const imgBytes = dataUrlToBytes(linea.foto);
-        const img = await pdf.embedJpg(imgBytes);
+        const img = await embedImagenDataUrl(pdf, linea.foto);
         drawImageContained(img, cx, y, colFoto, rowH2, 4);
       } catch (e) { /* skip broken image */ }
     }

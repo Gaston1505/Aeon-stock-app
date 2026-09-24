@@ -270,7 +270,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
 
   // Texto legal
   const legalTexto = [
-    legalTextCotizacion(!!cotizacion.incluirInstalacion),
+    legalTextCotizacion(!!cotizacion.incluirInstalacion, cotizacion.diasValidez),
     `Forma de pago sugerida: ${cotizacion.formaPago || "A conversar"}.`,
     `OBS: ${cotizacion.obs || "Productos a retirar de depósito."}`,
   ].join("\n");

@@ -8118,6 +8118,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
   const [instalacionDescripcion, setInstalacionDescripcion] = useState("Instalación de equipos");
   const [instalacionMonto, setInstalacionMonto] = useState("");
   const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
+  const [diasValidez, setDiasValidez] = useState("30");
   const [formaPago, setFormaPago] = useState("A conversar");
   const [obs, setObs] = useState(OBS_DEFAULT);
   const [lineas, setLineas] = useState(initial?.lineas || []);
@@ -8279,7 +8280,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
       incluirInstalacion: incluirInstalacion || serviciosAdicionales.length > 0,
       instalacionDescripcion: descripcionFinal, instalacionMonto: montoFinal,
       serviciosAdicionales,
-      fechaEntregaEstimada, formaPago, obs,
+      fechaEntregaEstimada, diasValidez: Number(diasValidez) || 30, formaPago, obs,
       clienteReal, estado: "Pendiente", hiloId,
     });
   };
@@ -8471,6 +8472,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
       <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>
       <Field label="Fecha de entrega estimada"><TextInput value={fechaEntregaEstimada} onChange={(e) => setFechaEntregaEstimada(e.target.value)} /></Field>
+      <Field label="Validez de la cotización (días)"><TextInput type="number" min="1" value={diasValidez} onChange={(e) => setDiasValidez(e.target.value)} /></Field>
       <Field label="Forma de pago"><TextInput value={formaPago} onChange={(e) => setFormaPago(e.target.value)} /></Field>
       <Field label="Observaciones"><TextInput value={obs} onChange={(e) => setObs(e.target.value)} /></Field>
 

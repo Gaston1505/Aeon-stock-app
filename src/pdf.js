@@ -24,12 +24,13 @@ const LEGAL_TEXT =
   "oficial programados antes de los doce (12) y veinticuatro (24) meses desde la fecha de entrega.";
 
 // Texto de la cotización (no del certificado de garantía) — acá sí corresponde mencionar precio
-// en dólares y vigencia de 30 días, porque todavía es una cotización. La cláusula de instalación
-// depende de si esta cotización puntual la incluye — si el cliente pagó instalación no tiene
-// sentido que el mismo texto diga "no incluye".
-export function legalTextCotizacion(incluyeInstalacion) {
+// en dólares y vigencia (editable por cotización, 30 días por defecto), porque todavía es una
+// cotización. La cláusula de instalación depende de si esta cotización puntual la incluye — si
+// el cliente pagó instalación no tiene sentido que el mismo texto diga "no incluye".
+export function legalTextCotizacion(incluyeInstalacion, diasValidez) {
+  const dias = Number(diasValidez) || 30;
   return (
-    "TODOS LOS PRECIOS SON EN DOLARES E IVA INCLUIDO. La cotización es válida por 30 días. " +
+    `TODOS LOS PRECIOS SON EN DOLARES E IVA INCLUIDO. La cotización es válida por ${dias} día${dias === 1 ? "" : "s"}. ` +
     (incluyeInstalacion ? "" : "No incluye instalación. ") +
     "Garantía 1 año por daños de fábrica desde su instalación, extendible a 36 meses, siempre y cuando se realice " +
     "servicio de mantenimiento oficial antes de los 12 y 24 meses respectivamente desde su instalacion."
@@ -436,7 +437,7 @@ export async function generateCotizacionPdf(cotizacion) {
 
   // Legal terms
   ensureSpace(70);
-  const legalLines = wrapText(font, legalTextCotizacion(!!cotizacion.incluirInstalacion), 6.5, CONTENT_W - 10);
+  const legalLines = wrapText(font, legalTextCotizacion(!!cotizacion.incluirInstalacion, cotizacion.diasValidez), 6.5, CONTENT_W - 10);
   const formaPagoLine = `Forma de pago sugerida: ${cotizacion.formaPago || "A conversar"}.`;
   const obsLine = `OBS: ${cotizacion.obs || "Productos a retirar de depósito."}`;
   const allLegal = [...legalLines, formaPagoLine, obsLine];

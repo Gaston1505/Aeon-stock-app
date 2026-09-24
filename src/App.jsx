@@ -281,6 +281,412 @@ function redondearArriba5(n) {
   return Math.ceil(n / 5) * 5;
 }
 
+// Tabla de combinaciones de Midea para Multi Split (equipos R32 Latinoamérica, 20260422-V2):
+// para cada capacidad de exterior (BTU en miles), qué combinaciones de interiores admite,
+// agrupadas por cantidad de unidades ("n"). `verificar:true` = Midea marca esa combinación
+// puntual como "a verificar/probar" (no 100% confirmada) — se sigue ofreciendo, pero con aviso.
+// Los valores cubren todo lo que la tabla real permite (incluida la interior de 7.000 BTU); cuál
+// de esas combinaciones se puede ARMAR HOY se decide en tiempo real cruzando contra el catálogo
+// (ver combosDisponiblesMultiSplit) — si mañana el 7.000 tiene precio y deja de estar "no
+// disponible", esas combinaciones quedan utilizables solas, sin tocar esta tabla.
+const MULTI_SPLIT_COMBINACIONES = {
+  18: [
+    { n: 1, valores: [12], verificar: false },
+    { n: 1, valores: [18], verificar: false },
+    { n: 2, valores: [12, 12], verificar: false },
+    { n: 2, valores: [12, 18], verificar: false },
+    { n: 2, valores: [7, 12], verificar: false },
+    { n: 2, valores: [7, 18], verificar: false },
+    { n: 2, valores: [7, 7], verificar: false },
+    { n: 2, valores: [7, 9], verificar: false },
+    { n: 2, valores: [9, 12], verificar: false },
+    { n: 2, valores: [9, 18], verificar: false },
+    { n: 2, valores: [9, 9], verificar: false },
+  ],
+  27: [
+    { n: 1, valores: [18], verificar: false },
+    { n: 1, valores: [24], verificar: false },
+    { n: 2, valores: [12, 12], verificar: false },
+    { n: 2, valores: [12, 18], verificar: false },
+    { n: 2, valores: [18, 18], verificar: true },
+    { n: 2, valores: [7, 12], verificar: false },
+    { n: 2, valores: [7, 18], verificar: false },
+    { n: 2, valores: [7, 7], verificar: false },
+    { n: 2, valores: [7, 9], verificar: false },
+    { n: 2, valores: [9, 12], verificar: false },
+    { n: 2, valores: [9, 18], verificar: false },
+    { n: 2, valores: [9, 24], verificar: false },
+    { n: 2, valores: [9, 9], verificar: false },
+    { n: 3, valores: [12, 12, 12], verificar: false },
+    { n: 3, valores: [7, 12, 12], verificar: false },
+    { n: 3, valores: [7, 12, 18], verificar: false },
+    { n: 3, valores: [7, 7, 12], verificar: false },
+    { n: 3, valores: [7, 7, 18], verificar: false },
+    { n: 3, valores: [7, 7, 7], verificar: false },
+    { n: 3, valores: [7, 7, 9], verificar: false },
+    { n: 3, valores: [7, 9, 12], verificar: false },
+    { n: 3, valores: [7, 9, 18], verificar: false },
+    { n: 3, valores: [7, 9, 9], verificar: false },
+    { n: 3, valores: [9, 12, 12], verificar: false },
+    { n: 3, valores: [9, 9, 12], verificar: false },
+    { n: 3, valores: [9, 9, 18], verificar: false },
+    { n: 3, valores: [9, 9, 9], verificar: false },
+  ],
+  36: [
+    { n: 2, valores: [12, 12], verificar: false },
+    { n: 2, valores: [12, 18], verificar: false },
+    { n: 2, valores: [12, 24], verificar: false },
+    { n: 2, valores: [18, 18], verificar: false },
+    { n: 2, valores: [7, 12], verificar: false },
+    { n: 2, valores: [7, 18], verificar: false },
+    { n: 2, valores: [7, 24], verificar: false },
+    { n: 2, valores: [9, 12], verificar: false },
+    { n: 2, valores: [9, 18], verificar: false },
+    { n: 2, valores: [9, 24], verificar: false },
+    { n: 2, valores: [9, 9], verificar: false },
+    { n: 3, valores: [12, 12, 12], verificar: false },
+    { n: 3, valores: [12, 12, 18], verificar: false },
+    { n: 3, valores: [12, 12, 24], verificar: false },
+    { n: 3, valores: [7, 12, 12], verificar: false },
+    { n: 3, valores: [7, 12, 18], verificar: false },
+    { n: 3, valores: [7, 12, 24], verificar: false },
+    { n: 3, valores: [7, 18, 18], verificar: false },
+    { n: 3, valores: [7, 7, 12], verificar: false },
+    { n: 3, valores: [7, 7, 18], verificar: false },
+    { n: 3, valores: [7, 7, 24], verificar: false },
+    { n: 3, valores: [7, 7, 7], verificar: false },
+    { n: 3, valores: [7, 7, 9], verificar: false },
+    { n: 3, valores: [7, 9, 12], verificar: false },
+    { n: 3, valores: [7, 9, 18], verificar: false },
+    { n: 3, valores: [7, 9, 24], verificar: false },
+    { n: 3, valores: [7, 9, 9], verificar: false },
+    { n: 3, valores: [9, 12, 12], verificar: false },
+    { n: 3, valores: [9, 12, 18], verificar: false },
+    { n: 3, valores: [9, 12, 24], verificar: false },
+    { n: 3, valores: [9, 18, 18], verificar: false },
+    { n: 3, valores: [9, 9, 12], verificar: false },
+    { n: 3, valores: [9, 9, 18], verificar: false },
+    { n: 3, valores: [9, 9, 24], verificar: false },
+    { n: 3, valores: [9, 9, 9], verificar: false },
+    { n: 4, valores: [12, 12, 12, 12], verificar: false },
+    { n: 4, valores: [7, 12, 12, 12], verificar: false },
+    { n: 4, valores: [7, 7, 12, 12], verificar: false },
+    { n: 4, valores: [7, 7, 12, 18], verificar: false },
+    { n: 4, valores: [7, 7, 7, 12], verificar: false },
+    { n: 4, valores: [7, 7, 7, 18], verificar: false },
+    { n: 4, valores: [7, 7, 7, 24], verificar: false },
+    { n: 4, valores: [7, 7, 7, 7], verificar: false },
+    { n: 4, valores: [7, 7, 7, 9], verificar: false },
+    { n: 4, valores: [7, 7, 9, 12], verificar: false },
+    { n: 4, valores: [7, 7, 9, 18], verificar: false },
+    { n: 4, valores: [7, 7, 9, 24], verificar: false },
+    { n: 4, valores: [7, 7, 9, 9], verificar: false },
+    { n: 4, valores: [7, 9, 12, 12], verificar: false },
+    { n: 4, valores: [7, 9, 12, 18], verificar: false },
+    { n: 4, valores: [7, 9, 9, 12], verificar: false },
+    { n: 4, valores: [7, 9, 9, 18], verificar: false },
+    { n: 4, valores: [7, 9, 9, 9], verificar: false },
+    { n: 4, valores: [9, 12, 12, 12], verificar: false },
+    { n: 4, valores: [9, 9, 12, 12], verificar: false },
+    { n: 4, valores: [9, 9, 12, 18], verificar: false },
+    { n: 4, valores: [9, 9, 9, 12], verificar: false },
+    { n: 4, valores: [9, 9, 9, 18], verificar: false },
+    { n: 4, valores: [9, 9, 9, 9], verificar: false },
+  ],
+  42: [
+    { n: 2, valores: [12, 12], verificar: false },
+    { n: 2, valores: [12, 18], verificar: false },
+    { n: 2, valores: [12, 24], verificar: false },
+    { n: 2, valores: [18, 18], verificar: false },
+    { n: 2, valores: [18, 24], verificar: false },
+    { n: 2, valores: [24, 24], verificar: true },
+    { n: 2, valores: [7, 18], verificar: false },
+    { n: 2, valores: [7, 24], verificar: false },
+    { n: 2, valores: [9, 12], verificar: false },
+    { n: 2, valores: [9, 18], verificar: false },
+    { n: 2, valores: [9, 24], verificar: false },
+    { n: 3, valores: [12, 12, 12], verificar: false },
+    { n: 3, valores: [12, 12, 18], verificar: false },
+    { n: 3, valores: [12, 12, 24], verificar: false },
+    { n: 3, valores: [12, 18, 18], verificar: false },
+    { n: 3, valores: [18, 18, 18], verificar: true },
+    { n: 3, valores: [7, 12, 12], verificar: false },
+    { n: 3, valores: [7, 12, 18], verificar: false },
+    { n: 3, valores: [7, 12, 24], verificar: false },
+    { n: 3, valores: [7, 18, 18], verificar: false },
+    { n: 3, valores: [7, 7, 12], verificar: false },
+    { n: 3, valores: [7, 7, 18], verificar: false },
+    { n: 3, valores: [7, 7, 24], verificar: false },
+    { n: 3, valores: [7, 7, 7], verificar: false },
+    { n: 3, valores: [7, 7, 9], verificar: false },
+    { n: 3, valores: [7, 9, 12], verificar: false },
+    { n: 3, valores: [7, 9, 18], verificar: false },
+    { n: 3, valores: [7, 9, 24], verificar: false },
+    { n: 3, valores: [7, 9, 9], verificar: false },
+    { n: 3, valores: [9, 12, 12], verificar: false },
+    { n: 3, valores: [9, 12, 18], verificar: false },
+    { n: 3, valores: [9, 12, 24], verificar: false },
+    { n: 3, valores: [9, 18, 18], verificar: false },
+    { n: 3, valores: [9, 9, 12], verificar: false },
+    { n: 3, valores: [9, 9, 18], verificar: false },
+    { n: 3, valores: [9, 9, 24], verificar: false },
+    { n: 3, valores: [9, 9, 9], verificar: false },
+    { n: 4, valores: [12, 12, 12, 12], verificar: false },
+    { n: 4, valores: [12, 12, 12, 18], verificar: false },
+    { n: 4, valores: [12, 12, 12, 24], verificar: false },
+    { n: 4, valores: [7, 12, 12, 12], verificar: false },
+    { n: 4, valores: [7, 12, 12, 18], verificar: false },
+    { n: 4, valores: [7, 12, 12, 24], verificar: false },
+    { n: 4, valores: [7, 12, 18, 18], verificar: false },
+    { n: 4, valores: [7, 18, 18, 18], verificar: true },
+    { n: 4, valores: [7, 7, 12, 12], verificar: false },
+    { n: 4, valores: [7, 7, 12, 18], verificar: false },
+    { n: 4, valores: [7, 7, 12, 24], verificar: false },
+    { n: 4, valores: [7, 7, 18, 18], verificar: false },
+    { n: 4, valores: [7, 7, 7, 12], verificar: false },
+    { n: 4, valores: [7, 7, 7, 18], verificar: false },
+    { n: 4, valores: [7, 7, 7, 24], verificar: false },
+    { n: 4, valores: [7, 7, 7, 7], verificar: false },
+    { n: 4, valores: [7, 7, 7, 9], verificar: false },
+    { n: 4, valores: [7, 7, 9, 12], verificar: false },
+    { n: 4, valores: [7, 7, 9, 18], verificar: false },
+    { n: 4, valores: [7, 7, 9, 24], verificar: false },
+    { n: 4, valores: [7, 7, 9, 9], verificar: false },
+    { n: 4, valores: [7, 9, 12, 12], verificar: false },
+    { n: 4, valores: [7, 9, 12, 18], verificar: false },
+    { n: 4, valores: [7, 9, 12, 24], verificar: false },
+    { n: 4, valores: [7, 9, 18, 18], verificar: false },
+    { n: 4, valores: [7, 9, 9, 12], verificar: false },
+    { n: 4, valores: [7, 9, 9, 18], verificar: false },
+    { n: 4, valores: [7, 9, 9, 24], verificar: false },
+    { n: 4, valores: [7, 9, 9, 9], verificar: false },
+    { n: 4, valores: [9, 12, 12, 12], verificar: false },
+    { n: 4, valores: [9, 12, 12, 18], verificar: false },
+    { n: 4, valores: [9, 12, 12, 24], verificar: false },
+    { n: 4, valores: [9, 9, 12, 12], verificar: false },
+    { n: 4, valores: [9, 9, 12, 18], verificar: false },
+    { n: 4, valores: [9, 9, 12, 24], verificar: false },
+    { n: 4, valores: [9, 9, 18, 18], verificar: false },
+    { n: 4, valores: [9, 9, 9, 12], verificar: false },
+    { n: 4, valores: [9, 9, 9, 18], verificar: false },
+    { n: 4, valores: [9, 9, 9, 24], verificar: false },
+    { n: 4, valores: [9, 9, 9, 9], verificar: false },
+    { n: 5, valores: [12, 12, 12, 12, 12], verificar: false },
+    { n: 5, valores: [12, 12, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 12, 12, 12, 12], verificar: false },
+    { n: 5, valores: [7, 12, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 12, 12, 18, 18], verificar: true },
+    { n: 5, valores: [7, 7, 12, 12, 12], verificar: false },
+    { n: 5, valores: [7, 7, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 7, 12, 12, 24], verificar: false },
+    { n: 5, valores: [7, 7, 12, 18, 18], verificar: false },
+    { n: 5, valores: [7, 7, 18, 18, 18], verificar: true },
+    { n: 5, valores: [7, 7, 7, 12, 12], verificar: false },
+    { n: 5, valores: [7, 7, 7, 12, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 12, 24], verificar: false },
+    { n: 5, valores: [7, 7, 7, 18, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 12], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 24], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 7], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 9], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 12], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 24], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 9], verificar: false },
+    { n: 5, valores: [7, 7, 9, 12, 12], verificar: false },
+    { n: 5, valores: [7, 7, 9, 12, 18], verificar: false },
+    { n: 5, valores: [7, 7, 9, 12, 24], verificar: false },
+    { n: 5, valores: [7, 7, 9, 18, 18], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 12], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 18], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 24], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 9], verificar: false },
+    { n: 5, valores: [7, 9, 12, 12, 12], verificar: false },
+    { n: 5, valores: [7, 9, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 9, 12, 12, 24], verificar: false },
+    { n: 5, valores: [7, 9, 12, 18, 18], verificar: false },
+    { n: 5, valores: [7, 9, 9, 12, 12], verificar: false },
+    { n: 5, valores: [7, 9, 9, 12, 18], verificar: false },
+    { n: 5, valores: [7, 9, 9, 12, 24], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 12], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 18], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 24], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 9], verificar: false },
+    { n: 5, valores: [9, 12, 12, 12, 12], verificar: false },
+    { n: 5, valores: [9, 12, 12, 12, 18], verificar: false },
+    { n: 5, valores: [9, 12, 12, 18, 18], verificar: true },
+    { n: 5, valores: [9, 9, 12, 12, 12], verificar: false },
+    { n: 5, valores: [9, 9, 12, 12, 18], verificar: false },
+    { n: 5, valores: [9, 9, 12, 12, 24], verificar: false },
+    { n: 5, valores: [9, 9, 12, 18, 18], verificar: true },
+    { n: 5, valores: [9, 9, 9, 12, 12], verificar: false },
+    { n: 5, valores: [9, 9, 9, 12, 18], verificar: false },
+    { n: 5, valores: [9, 9, 9, 12, 24], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 12], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 18], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 24], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 9], verificar: false },
+  ],
+  48: [
+    { n: 2, valores: [12, 12], verificar: false },
+    { n: 2, valores: [12, 18], verificar: false },
+    { n: 2, valores: [12, 24], verificar: false },
+    { n: 2, valores: [18, 18], verificar: false },
+    { n: 2, valores: [18, 24], verificar: false },
+    { n: 2, valores: [24, 24], verificar: true },
+    { n: 2, valores: [7, 18], verificar: false },
+    { n: 2, valores: [7, 24], verificar: false },
+    { n: 2, valores: [9, 12], verificar: false },
+    { n: 2, valores: [9, 18], verificar: false },
+    { n: 2, valores: [9, 24], verificar: false },
+    { n: 3, valores: [12, 12, 12], verificar: false },
+    { n: 3, valores: [12, 12, 18], verificar: false },
+    { n: 3, valores: [12, 12, 24], verificar: false },
+    { n: 3, valores: [12, 18, 18], verificar: false },
+    { n: 3, valores: [18, 18, 18], verificar: true },
+    { n: 3, valores: [7, 12, 12], verificar: false },
+    { n: 3, valores: [7, 12, 18], verificar: false },
+    { n: 3, valores: [7, 12, 24], verificar: false },
+    { n: 3, valores: [7, 18, 18], verificar: false },
+    { n: 3, valores: [7, 7, 12], verificar: false },
+    { n: 3, valores: [7, 7, 18], verificar: false },
+    { n: 3, valores: [7, 7, 24], verificar: false },
+    { n: 3, valores: [7, 7, 7], verificar: false },
+    { n: 3, valores: [7, 7, 9], verificar: false },
+    { n: 3, valores: [7, 9, 12], verificar: false },
+    { n: 3, valores: [7, 9, 18], verificar: false },
+    { n: 3, valores: [7, 9, 24], verificar: false },
+    { n: 3, valores: [7, 9, 9], verificar: false },
+    { n: 3, valores: [9, 12, 12], verificar: false },
+    { n: 3, valores: [9, 12, 18], verificar: false },
+    { n: 3, valores: [9, 12, 24], verificar: false },
+    { n: 3, valores: [9, 18, 18], verificar: false },
+    { n: 3, valores: [9, 9, 12], verificar: false },
+    { n: 3, valores: [9, 9, 18], verificar: false },
+    { n: 3, valores: [9, 9, 24], verificar: false },
+    { n: 3, valores: [9, 9, 9], verificar: false },
+    { n: 4, valores: [12, 12, 12, 12], verificar: false },
+    { n: 4, valores: [12, 12, 12, 18], verificar: false },
+    { n: 4, valores: [12, 12, 12, 24], verificar: false },
+    { n: 4, valores: [18, 18, 18, 18], verificar: true },
+    { n: 4, valores: [7, 12, 12, 12], verificar: false },
+    { n: 4, valores: [7, 12, 12, 18], verificar: false },
+    { n: 4, valores: [7, 12, 12, 24], verificar: false },
+    { n: 4, valores: [7, 12, 18, 18], verificar: false },
+    { n: 4, valores: [7, 18, 18, 18], verificar: true },
+    { n: 4, valores: [7, 7, 12, 12], verificar: false },
+    { n: 4, valores: [7, 7, 12, 18], verificar: false },
+    { n: 4, valores: [7, 7, 12, 24], verificar: false },
+    { n: 4, valores: [7, 7, 18, 18], verificar: false },
+    { n: 4, valores: [7, 7, 7, 12], verificar: false },
+    { n: 4, valores: [7, 7, 7, 18], verificar: false },
+    { n: 4, valores: [7, 7, 7, 24], verificar: false },
+    { n: 4, valores: [7, 7, 7, 7], verificar: false },
+    { n: 4, valores: [7, 7, 7, 9], verificar: false },
+    { n: 4, valores: [7, 7, 9, 12], verificar: false },
+    { n: 4, valores: [7, 7, 9, 18], verificar: false },
+    { n: 4, valores: [7, 7, 9, 24], verificar: false },
+    { n: 4, valores: [7, 7, 9, 9], verificar: false },
+    { n: 4, valores: [7, 9, 12, 12], verificar: false },
+    { n: 4, valores: [7, 9, 12, 18], verificar: false },
+    { n: 4, valores: [7, 9, 12, 24], verificar: false },
+    { n: 4, valores: [7, 9, 18, 18], verificar: false },
+    { n: 4, valores: [7, 9, 9, 12], verificar: false },
+    { n: 4, valores: [7, 9, 9, 18], verificar: false },
+    { n: 4, valores: [7, 9, 9, 24], verificar: false },
+    { n: 4, valores: [7, 9, 9, 9], verificar: false },
+    { n: 4, valores: [9, 12, 12, 12], verificar: false },
+    { n: 4, valores: [9, 12, 12, 18], verificar: false },
+    { n: 4, valores: [9, 12, 12, 24], verificar: false },
+    { n: 4, valores: [9, 9, 12, 12], verificar: false },
+    { n: 4, valores: [9, 9, 12, 18], verificar: false },
+    { n: 4, valores: [9, 9, 12, 24], verificar: false },
+    { n: 4, valores: [9, 9, 18, 18], verificar: false },
+    { n: 4, valores: [9, 9, 9, 12], verificar: false },
+    { n: 4, valores: [9, 9, 9, 18], verificar: false },
+    { n: 4, valores: [9, 9, 9, 24], verificar: false },
+    { n: 4, valores: [9, 9, 9, 9], verificar: false },
+    { n: 5, valores: [12, 12, 12, 12, 12], verificar: false },
+    { n: 5, valores: [12, 12, 12, 12, 18], verificar: false },
+    { n: 5, valores: [12, 12, 12, 18, 18], verificar: true },
+    { n: 5, valores: [7, 12, 12, 12, 12], verificar: false },
+    { n: 5, valores: [7, 12, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 12, 12, 18, 18], verificar: true },
+    { n: 5, valores: [7, 12, 18, 18, 18], verificar: true },
+    { n: 5, valores: [7, 18, 18, 18, 18], verificar: true },
+    { n: 5, valores: [7, 7, 12, 12, 12], verificar: false },
+    { n: 5, valores: [7, 7, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 7, 12, 12, 24], verificar: false },
+    { n: 5, valores: [7, 7, 12, 18, 18], verificar: false },
+    { n: 5, valores: [7, 7, 18, 18, 18], verificar: true },
+    { n: 5, valores: [7, 7, 7, 12, 12], verificar: false },
+    { n: 5, valores: [7, 7, 7, 12, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 12, 24], verificar: false },
+    { n: 5, valores: [7, 7, 7, 18, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 12], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 24], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 7], verificar: false },
+    { n: 5, valores: [7, 7, 7, 7, 9], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 12], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 18], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 24], verificar: false },
+    { n: 5, valores: [7, 7, 7, 9, 9], verificar: false },
+    { n: 5, valores: [7, 7, 9, 12, 12], verificar: false },
+    { n: 5, valores: [7, 7, 9, 12, 18], verificar: false },
+    { n: 5, valores: [7, 7, 9, 12, 24], verificar: false },
+    { n: 5, valores: [7, 7, 9, 18, 18], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 12], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 18], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 24], verificar: false },
+    { n: 5, valores: [7, 7, 9, 9, 9], verificar: false },
+    { n: 5, valores: [7, 9, 12, 12, 12], verificar: false },
+    { n: 5, valores: [7, 9, 12, 12, 18], verificar: false },
+    { n: 5, valores: [7, 9, 12, 12, 24], verificar: false },
+    { n: 5, valores: [7, 9, 12, 18, 18], verificar: false },
+    { n: 5, valores: [7, 9, 18, 18, 18], verificar: true },
+    { n: 5, valores: [7, 9, 9, 12, 12], verificar: false },
+    { n: 5, valores: [7, 9, 9, 12, 18], verificar: false },
+    { n: 5, valores: [7, 9, 9, 12, 24], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 12], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 18], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 24], verificar: false },
+    { n: 5, valores: [7, 9, 9, 9, 9], verificar: false },
+    { n: 5, valores: [9, 12, 12, 12, 12], verificar: false },
+    { n: 5, valores: [9, 12, 12, 12, 18], verificar: false },
+    { n: 5, valores: [9, 12, 12, 18, 18], verificar: true },
+    { n: 5, valores: [9, 9, 12, 12, 12], verificar: false },
+    { n: 5, valores: [9, 9, 12, 12, 18], verificar: false },
+    { n: 5, valores: [9, 9, 12, 12, 24], verificar: false },
+    { n: 5, valores: [9, 9, 12, 18, 18], verificar: true },
+    { n: 5, valores: [9, 9, 9, 12, 12], verificar: false },
+    { n: 5, valores: [9, 9, 9, 12, 18], verificar: false },
+    { n: 5, valores: [9, 9, 9, 12, 24], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 12], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 18], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 24], verificar: false },
+    { n: 5, valores: [9, 9, 9, 9, 9], verificar: false },
+  ],
+};
+
+// Cruza la tabla de Midea contra lo que HOY existe y está disponible para vender en el
+// catálogo (Multi Split Interior) — así una capacidad sin precio (ej. la de 7.000 BTU al
+// principio) no aparece como opción hasta que se le cargue precio y se saque "no disponible".
+function interiorMultiSplitPorBtu(productos, btuMiles) {
+  return (productos || []).find((p) =>
+    p.categoriaPrincipal === "Aire Acondicionado" && p.subcategoria === "Multi Split Interior" &&
+    Number(p.ordenNumerico) === btuMiles * 1000 && !p.noDisponible
+  );
+}
+
+function combosDisponiblesMultiSplit(productos, btuExterior, cantidad) {
+  const tabla = MULTI_SPLIT_COMBINACIONES[btuExterior] || [];
+  return tabla
+    .filter((c) => c.n === cantidad)
+    .filter((c) => c.valores.every((btu) => interiorMultiSplitPorBtu(productos, btu)));
+}
+
 // Rentabilidad de una cotización: por cada línea, cruza el precio YA NEGOCIADO contra el costo
 // cargado en el catálogo (puesto en PY si está, si no origen) — el descuento general, si tiene,
 // se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo).
@@ -6799,10 +7205,69 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorM
   );
 }
 
+// Vista de solo consulta de la tabla completa de Midea — misma fuente de datos que usa el
+// sugeridor de Cotizaciones, para poder mirarla sin estar armando una cotización.
+function TablaCombinacionesMultiSplit({ productos }) {
+  const exteriores = [18, 27, 36, 42, 48]
+    .map((btu) => ({
+      btu,
+      producto: (productos || []).find((p) =>
+        p.categoriaPrincipal === "Aire Acondicionado" && p.subcategoria === "Multi Split Exterior" && Number(p.ordenNumerico) === btu * 1000
+      ),
+    }))
+    .filter((e) => e.producto);
+
+  if (exteriores.length === 0) {
+    return <p className="text-sm" style={{ color: MUTED }}>No hay unidades Multi Split Exterior cargadas en el catálogo todavía.</p>;
+  }
+
+  return (
+    <div>
+      <p className="text-xs mb-4" style={{ color: MUTED }}>
+        Tabla de combinación de equipos Midea R32 para Latinoamérica (20260422-V2). En <span style={{ color: "#15803D", fontWeight: 600 }}>verde</span> las combinaciones armables hoy
+        con lo que tenés disponible en el catálogo; en gris las que necesitan una capacidad que todavía no tenés cargada o disponible.
+        {" "}<span style={{ color: "#B45309", fontWeight: 600 }}>⚠</span> = Midea la marca "a verificar/probar" con fábrica.
+      </p>
+      {exteriores.map(({ btu, producto }) => {
+        const cantidades = [...new Set((MULTI_SPLIT_COMBINACIONES[btu] || []).map((c) => c.n))].sort((a, b) => a - b);
+        return (
+          <div key={btu} className="mb-5">
+            <p className="text-sm font-bold mb-2" style={{ color: INK }}>{producto.nombre} — {btu.toLocaleString()} BTU exterior</p>
+            {cantidades.map((n) => {
+              const combosDeN = (MULTI_SPLIT_COMBINACIONES[btu] || []).filter((c) => c.n === n);
+              return (
+                <div key={n} className="mb-2.5">
+                  <p className="text-xs font-semibold mb-1" style={{ color: MUTED }}>{n} interior{n > 1 ? "es" : ""}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {combosDeN.map((c, i) => {
+                      const armable = c.valores.every((v) => interiorMultiSplitPorBtu(productos, v));
+                      const label = [...c.valores].sort((a, b) => b - a).map((v) => `${v}K`).join(" + ");
+                      return (
+                        <span
+                          key={i}
+                          className="text-[11px] px-2 py-1 rounded-full font-medium"
+                          style={armable ? { backgroundColor: "#E9F7EF", color: "#15803D" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+                        >
+                          {label}{c.verificar ? " ⚠" : ""}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
   const fileInputRef = useRef(null);
   const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
+  const [verTablaMulti, setVerTablaMulti] = useState(false);
 
   // Stock vendible por modelo, para mostrarlo directo en la tarjeta del producto — misma
   // cuenta que usa Depósito (todo menos Vendido/Dado de baja, que ya salieron del circuito).
@@ -6902,7 +7367,7 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
       )}
 
       {modo === "productos" && !buscando && tabs.length > 0 && (
-        <div className="flex gap-1.5 mb-4 flex-wrap">
+        <div className="flex gap-1.5 mb-4 flex-wrap items-center">
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -6915,6 +7380,11 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
               {t.label} ({t.count})
             </button>
           ))}
+          {catTab === "aires" && (
+            <button onClick={() => setVerTablaMulti(true)} className="text-xs px-3 py-1.5 rounded-full font-medium" style={{ color: ACCENT, border: `1px solid ${ACCENT}` }}>
+              Ver tabla de combinaciones Multi Split
+            </button>
+          )}
         </div>
       )}
 
@@ -6933,6 +7403,10 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
       ) : (
         <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} />
       )}
+
+      <Drawer open={verTablaMulti} onClose={() => setVerTablaMulti(false)} title="Tabla de combinaciones Multi Split">
+        <TablaCombinacionesMultiSplit productos={productos} />
+      </Drawer>
     </div>
   );
 }
@@ -7306,6 +7780,94 @@ function SugeridorServicioTecnico({ onAgregar }) {
   );
 }
 
+// Arma de una sola vez la exterior + todas las interiores de una combinación Multi Split válida
+// (tabla de Midea, cruzada contra lo que hoy está disponible en el catálogo) — evita tener que
+// calcular a mano cuáles interiores son compatibles y agregarlas una por una.
+function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
+  const btuExterior = Math.round((Number(exterior.ordenNumerico) || 0) / 1000);
+  const cantidadesDisponibles = useMemo(
+    () => [...new Set((MULTI_SPLIT_COMBINACIONES[btuExterior] || []).map((c) => c.n))].sort((a, b) => a - b),
+    [btuExterior]
+  );
+  const [cantidad, setCantidad] = useState(cantidadesDisponibles[0] || 2);
+  const [comboSel, setComboSel] = useState(null);
+
+  const combos = useMemo(
+    () => combosDisponiblesMultiSplit(productos, btuExterior, cantidad),
+    [productos, btuExterior, cantidad]
+  );
+
+  const agregar = (combo) => {
+    const agrupado = new Map();
+    for (const btu of combo.valores) agrupado.set(btu, (agrupado.get(btu) || 0) + 1);
+    const lineasNuevas = [{
+      codigo: exterior.nombre, descripcion: exterior.descripcion, foto: exterior.foto,
+      especLabel: exterior.especLabel, especValor: exterior.especValor, fichaTecnicaData: exterior.fichaTecnicaData || "",
+      cantidad: 1, precioUnit: Number(exterior.precioLista) || 0,
+    }];
+    for (const [btu, cant] of [...agrupado.entries()].sort((a, b) => b[0] - a[0])) {
+      const interior = interiorMultiSplitPorBtu(productos, btu);
+      if (!interior) continue;
+      lineasNuevas.push({
+        codigo: interior.nombre, descripcion: interior.descripcion, foto: interior.foto,
+        especLabel: interior.especLabel, especValor: interior.especValor, fichaTecnicaData: interior.fichaTecnicaData || "",
+        cantidad: cant, precioUnit: Number(interior.precioLista) || 0,
+      });
+    }
+    onAgregar(lineasNuevas);
+  };
+
+  if (cantidadesDisponibles.length === 0) return null;
+
+  return (
+    <div className="p-2.5 rounded mt-2 mb-2" style={{ backgroundColor: "#FFFFFF", border: `1px dashed ${BORDER}` }}>
+      <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>Armar combinación con interiores (tabla Midea)</p>
+      <div className="flex gap-1.5 mb-2 flex-wrap">
+        {cantidadesDisponibles.map((n) => (
+          <button
+            key={n} type="button" onClick={() => { setCantidad(n); setComboSel(null); }}
+            className="text-xs px-2.5 py-1 rounded-full"
+            style={cantidad === n ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+          >
+            {n} interiores
+          </button>
+        ))}
+      </div>
+      {combos.length === 0 ? (
+        <p className="text-xs" style={{ color: "#B45309" }}>
+          Ninguna combinación de {cantidad} interiores es armable hoy con lo que tenés disponible en el catálogo.
+        </p>
+      ) : (
+        <div className="rounded border overflow-y-auto" style={{ borderColor: BORDER, maxHeight: 220 }}>
+          {combos.map((c, i) => {
+            const valoresOrdenados = [...c.valores].sort((a, b) => b - a);
+            const label = valoresOrdenados.map((v) => `${v}K`).join(" + ");
+            return (
+              <button
+                key={i} type="button" onClick={() => setComboSel(c)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-gray-50 border-b last:border-0"
+                style={{ borderColor: BORDER, backgroundColor: comboSel === c ? ACCENT_LIGHT : "transparent" }}
+              >
+                <span className="text-sm" style={{ color: INK }}>{label}</span>
+                {c.verificar && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0" style={{ backgroundColor: "#FDF1E0", color: "#B45309" }}>
+                    ⚠ a verificar con fábrica
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {comboSel && (
+        <SecondaryButton onClick={() => agregar(comboSel)}>
+          <Plus size={14} /> Agregar exterior + {comboSel.valores.length} interiores
+        </SecondaryButton>
+      )}
+    </div>
+  );
+}
+
 // Celda editable de la tabla de admin — a diferencia de la fila de depósito, acá si se ve el
 // sistema al lado, así que no hay nada que ocultar; mismo guardado en blur/Enter.
 function ConteoCeldaAdmin({ item, onGuardar }) {
@@ -7669,6 +8231,16 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
     setError("");
   };
 
+  // Para el sugeridor de combinaciones Multi Split: agrega la exterior + todas las interiores
+  // de la combinación elegida de una sola vez, en vez de una por una.
+  const agregarLineasMultiples = (nuevas) => {
+    setLineas([...lineas, ...nuevas]);
+    setProductoId("");
+    setCantidadNueva(1);
+    setPrecioNuevo("");
+    setError("");
+  };
+
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
 
   // Editar cantidad/precio de una línea ya agregada, sin tener que sacarla y volver a
@@ -7784,6 +8356,9 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
               <Field label="Precio Unit. U$S"><TextInput type="number" value={precioNuevo} onChange={(e) => setPrecioNuevo(e.target.value)} /></Field>
             </div>
             <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar a la cotización</SecondaryButton>
+            {productoSel.subcategoria === "Multi Split Exterior" && (
+              <SugeridorMultiSplit exterior={productoSel} productos={productos} onAgregar={agregarLineasMultiples} />
+            )}
           </>
         )}
       </div>

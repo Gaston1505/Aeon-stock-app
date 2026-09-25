@@ -8988,15 +8988,13 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onEditar, 
         >
           <TrendingUp size={13} /> {verRentabilidad ? "Ocultar rentabilidad" : "Rentabilidad"}
         </button>
-        {esActiva && (
-          <button
-            onClick={() => onEditar(c)}
-            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-            style={{ borderColor: BORDER, color: INK }}
-          >
-            <Pencil size={13} /> Editar
-          </button>
-        )}
+        <button
+          onClick={() => onEditar(c)}
+          className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+          style={{ borderColor: BORDER, color: INK }}
+        >
+          <Pencil size={13} /> Editar
+        </button>
       </div>
       {verRentabilidad && <RentabilidadCotizacionView c={c} productos={productos} />}
     </div>
@@ -9023,7 +9021,7 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onEditar, onD
           {historial.map((v) => (
             <CotizacionCard
               key={v.id} c={v} esActiva={false} productos={productos}
-              onDelete={onDelete} onUpdate={onUpdate}
+              onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}

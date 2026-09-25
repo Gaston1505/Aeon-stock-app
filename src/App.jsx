@@ -9830,8 +9830,23 @@ function PrecioMayoristaForm({ onSave }) {
   const [validezOferta, setValidezOferta] = useState("");
   const [equivalenteSugerido, setEquivalenteSugerido] = useState("");
   const [notas, setNotas] = useState("");
+  const [foto, setFoto] = useState("");
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [error, setError] = useState("");
   const subcategoriasDisponibles = SUBCATEGORIAS_MERCADO_POR_CATEGORIA[categoriaPrincipal] || null;
+
+  const handleFoto = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setSubiendoFoto(true);
+    try {
+      const dataUrl = await compressImage(file, 480, 0.75);
+      setFoto(dataUrl);
+    } catch (err) {
+      setError("No se pudo procesar la foto, probá con otra imagen.");
+    }
+    setSubiendoFoto(false);
+  };
 
   const submit = () => {
     if (!empresa.trim() || !descripcion.trim()) {
@@ -9844,7 +9859,7 @@ function PrecioMayoristaForm({ onSave }) {
       marca: marca.trim(), modelo: modelo.trim(), descripcion: descripcion.trim(),
       cantidad: Number(cantidad) || 1, precioGs: Number(precioGs) || 0, precioUsd: Number(precioUsd) || 0,
       formaPago: formaPago.trim(), garantia: garantia.trim(), validezOferta: validezOferta.trim(),
-      equivalenteSugerido: equivalenteSugerido.trim(), notas: notas.trim(), productoEquivalenteId: "",
+      equivalenteSugerido: equivalenteSugerido.trim(), notas: notas.trim(), productoEquivalenteId: "", foto,
     });
   };
 
@@ -9887,8 +9902,62 @@ function PrecioMayoristaForm({ onSave }) {
         <TextInput value={equivalenteSugerido} onChange={(e) => setEquivalenteSugerido(e.target.value)} placeholder="Ej: podría ser AE-AC-4T-60-ON, a verificar" />
       </Field>
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+      <Field label="Foto del producto (de la cotización del competidor)">
+        <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />
+      </Field>
+      {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
+      {foto && (
+        <div className="mb-3 relative inline-block">
+          <img src={foto} alt="Producto competidor" className="rounded border" style={{ maxWidth: 140, borderColor: BORDER }} />
+          <button onClick={() => setFoto("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
+            <X size={12} color="#FFFFFF" />
+          </button>
+        </div>
+      )}
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar registro</PrimaryButton>
+    </div>
+  );
+}
+
+// Foto del producto del competidor — clic en la miniatura (o en "Agregar foto") para subir o
+// reemplazarla. Ayuda a diferenciar/equiparar visualmente contra nuestros propios productos
+// cuando el modelo o la descripción no alcanzan para estar seguro del equivalente.
+function FotoMayoristaInline({ r, onUpdateField }) {
+  const inputRef = useRef(null);
+  const [subiendo, setSubiendo] = useState(false);
+
+  const handleFoto = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setSubiendo(true);
+    try {
+      const dataUrl = await compressImage(file, 480, 0.75);
+      onUpdateField(r.id, "foto", dataUrl);
+    } catch (err) {
+      // si falla la compresión simplemente no se actualiza la foto — no hay más que hacer acá
+    }
+    setSubiendo(false);
+  };
+
+  return (
+    <div className="shrink-0">
+      <input ref={inputRef} type="file" accept="image/*" onChange={handleFoto} className="hidden" />
+      {r.foto ? (
+        <button onClick={() => inputRef.current?.click()} title="Cambiar foto">
+          <img src={r.foto} alt="" className="rounded border" style={{ width: 64, height: 64, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+        </button>
+      ) : (
+        <button
+          onClick={() => inputRef.current?.click()}
+          className="rounded border flex flex-col items-center justify-center gap-0.5 hover:bg-gray-50"
+          style={{ width: 64, height: 64, borderColor: BORDER, backgroundColor: "#FAFBFC" }}
+        >
+          <Camera size={16} style={{ color: MUTED }} />
+          <span className="text-[9px]" style={{ color: MUTED }}>{subiendo ? "..." : "Foto"}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -9905,7 +9974,8 @@ function PrecioMayoristaCard({ r, productos, productosPorGrupo, onDelete, onUpda
   return (
     <div className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        <FotoMayoristaInline r={r} onUpdateField={onUpdateField} />
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium" style={{ color: INK }}>{r.descripcion}</p>
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>
             {r.fecha} · {r.empresa}{r.clienteObra ? ` · ${r.clienteObra}` : ""}

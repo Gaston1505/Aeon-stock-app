@@ -7162,10 +7162,15 @@ function agruparProductosPorCategoria(productos) {
     const ordenes = tab?.ordenesPorNivel || {};
     const esRepuesto = p.categoriaPrincipal === "Repuestos";
     const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
+    // subcategoria3 suele ser una cantidad (ej. hornallas de un anafe) — si se puede leer como
+    // número, ordenar de menos a más (mismo criterio que el BTU de los aires); si no, alfabético.
+    const sub3 = (p.subcategoria3 || "").trim();
+    const sub3Numero = sub3 !== "" && !Number.isNaN(Number(sub3)) ? Number(sub3) : null;
     return [
       indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
       subOrden, (p.subcategoria || "").trim(),
       indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
+      sub3Numero !== null ? sub3Numero : indiceEnOrden(sub3, ordenes[3]), sub3,
     ];
   };
   const entries = [...grupos.entries()].map(([key, items]) => ({ key, items: ordenarProductos(items), clave: claveGrupo(items[0]) }));

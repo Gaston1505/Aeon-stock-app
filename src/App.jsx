@@ -198,12 +198,20 @@ async function compartirArchivo(bytes, filename, texto) {
   return false;
 }
 
-function calcularTotalCotizacion(c) {
+// Desglose completo del total: cuánto es de equipos puros, cuánto se le restó de descuento y
+// cuánto se le sumó de instalación — para poder mostrar ese recorrido en vez de solo el número
+// final (ver CotizacionCard), que por sí solo no explica cómo se llegó a ese monto.
+function desglosarTotalCotizacion(c) {
   const subtotal = (c.lineas || []).reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+  const descuentoPct = c.incluirDescuento && c.descuentoEsPorcentaje ? Number(c.descuento) || 0 : 0;
   const descuentoMonto = c.incluirDescuento
     ? (c.descuentoEsPorcentaje ? subtotal * (Number(c.descuento) || 0) / 100 : Number(c.descuento) || 0)
     : 0;
-  return subtotal - descuentoMonto + (c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0);
+  const instalacionMonto = c.incluirInstalacion ? Number(c.instalacionMonto) || 0 : 0;
+  return { subtotal, descuentoPct, descuentoMonto, instalacionMonto, total: subtotal - descuentoMonto + instalacionMonto };
+}
+function calcularTotalCotizacion(c) {
+  return desglosarTotalCotizacion(c).total;
 }
 
 // Comisión de Gastón como comercial: % fijo sobre el total vendido de cada cotización (no
@@ -8878,7 +8886,8 @@ function RentabilidadCotizacionView({ c, productos }) {
 }
 
 function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
-  const total = calcularTotalCotizacion(c);
+  const d = desglosarTotalCotizacion(c);
+  const total = d.total;
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
   const estadoSalida = estadoSalidaCotizacion(c);
@@ -8911,6 +8920,16 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onEditar, 
           </button>
         )}
       </div>
+      {(c.incluirDescuento || c.incluirInstalacion) && (d.descuentoMonto > 0 || d.instalacionMonto > 0) && (
+        <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+          Equipos U$S {d.subtotal.toLocaleString()}
+          {d.descuentoMonto > 0 && (
+            <> · Descuento {c.descuentoEsPorcentaje ? `${d.descuentoPct}%` : `U$S ${d.descuentoMonto.toLocaleString()}`} (-U$S {d.descuentoMonto.toLocaleString(undefined, { maximumFractionDigits: 2 })})</>
+          )}
+          {d.instalacionMonto > 0 && <> · Instalación +U$S {d.instalacionMonto.toLocaleString()}</>}
+          {" "}· Total U$S {d.total.toLocaleString()}
+        </p>
+      )}
 
       {esActiva && (
         <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#F7F8FA" }}>

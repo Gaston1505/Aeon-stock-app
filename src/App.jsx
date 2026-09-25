@@ -8146,6 +8146,93 @@ function buscarCotizacionMismaObra(cotizaciones, cliente, obra) {
   return candidatas[0] || null;
 }
 
+// Estado + lógica de descuento/instalación/servicios adicionales, compartido entre CotizacionForm
+// y el Panel de simulación — así el simulador puede armar un total tan real como una cotización
+// de verdad, sin duplicar esta parte (que ya se sabe pisar entre las dos si se edita a mano en
+// un solo lado, como pasó antes con el orden de los grupos de producto).
+function useDescuentoInstalacion(initial) {
+  const [incluirDescuento, setIncluirDescuento] = useState(initial?.incluirDescuento || false);
+  const [descuento, setDescuento] = useState(initial?.descuento ? String(initial.descuento) : "");
+  const [incluirInstalacion, setIncluirInstalacion] = useState(initial?.incluirInstalacion || false);
+  const [instalacionDescripcion, setInstalacionDescripcion] = useState(initial?.instalacionDescripcion || "Instalación de equipos");
+  const [instalacionMonto, setInstalacionMonto] = useState(initial?.instalacionMonto ? String(initial.instalacionMonto) : "");
+  const [serviciosAdicionales, setServiciosAdicionales] = useState(initial?.serviciosAdicionales || []);
+  const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
+
+  const agregarServicio = (s) => setServiciosAdicionales((prev) => [...prev, s]);
+  const quitarServicio = (id) => setServiciosAdicionales((prev) => prev.filter((s) => s.id !== id));
+  const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
+
+  return {
+    incluirDescuento, setIncluirDescuento, descuento, setDescuento,
+    incluirInstalacion, setIncluirInstalacion, instalacionDescripcion, setInstalacionDescripcion,
+    instalacionMonto, setInstalacionMonto, serviciosAdicionales, agregarServicio, quitarServicio,
+    totalServicios, mostrarSugeridor, setMostrarSugeridor,
+  };
+}
+
+// Total final = subtotal de productos, menos el descuento %, más instalación/servicios — misma
+// cuenta que usa Rentabilidad, para que lo que se ve acá sea lo que termina en el PDF real.
+function calcularTotalConDescuentoInstalacion(subtotal, dI) {
+  return subtotal - (dI.incluirDescuento ? subtotal * (Number(dI.descuento) || 0) / 100 : 0)
+    + (dI.incluirInstalacion ? Number(dI.instalacionMonto) || 0 : 0) + dI.totalServicios;
+}
+
+function DescuentoInstalacionCampos({ dI, subtotal }) {
+  return (
+    <>
+      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+        <input type="checkbox" checked={dI.incluirDescuento} onChange={(e) => dI.setIncluirDescuento(e.target.checked)} />
+        Incluir descuento
+      </label>
+      {dI.incluirDescuento && (
+        <Field label="Descuento %"><TextInput type="number" value={dI.descuento} onChange={(e) => dI.setDescuento(e.target.value)} placeholder="Ej: 10" /></Field>
+      )}
+
+      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
+        <input type="checkbox" checked={dI.incluirInstalacion} onChange={(e) => dI.setIncluirInstalacion(e.target.checked)} />
+        Incluir instalación
+      </label>
+      {dI.incluirInstalacion && (
+        <div className="flex gap-2">
+          <Field label="Instalación — descripción"><TextInput value={dI.instalacionDescripcion} onChange={(e) => dI.setInstalacionDescripcion(e.target.value)} placeholder="Ej: Instalación de equipos" /></Field>
+          <Field label="Instalación — monto U$S"><TextInput type="number" value={dI.instalacionMonto} onChange={(e) => dI.setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
+        </div>
+      )}
+
+      <p className="text-sm font-semibold mb-1" style={{ color: INK }}>Otros servicios (instalación, desinstalación, mantenimiento, asistencia técnica)</p>
+      {dI.serviciosAdicionales.length > 0 && (
+        <div className="mb-2 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {dI.serviciosAdicionales.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
+                <span style={{ color: MUTED }}> · {s.descripcion} · U$S {s.monto.toFixed(2)}</span>
+              </div>
+              <button onClick={() => dI.quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+          <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <span>Subtotal servicios</span><span>U$S {dI.totalServicios.toFixed(2)}</span>
+          </div>
+        </div>
+      )}
+      {dI.mostrarSugeridor ? (
+        <SugeridorServicioTecnico onAgregar={(s) => { dI.agregarServicio(s); dI.setMostrarSugeridor(false); }} />
+      ) : (
+        <SecondaryButton onClick={() => dI.setMostrarSugeridor(true)}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
+      )}
+
+      {subtotal > 0 && (
+        <div className="px-2.5 py-2 mb-3 mt-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+          <span>Total final</span>
+          <span>U$S {calcularTotalConDescuentoInstalacion(subtotal, dI).toLocaleString()}</span>
+        </div>
+      )}
+    </>
+  );
+}
+
 function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, onSave, initial }) {
   const [fecha, setFecha] = useState(todayISO());
   const [cliente, setCliente] = useState(initial?.cliente || "");
@@ -8155,11 +8242,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
   const [clienteReal, setClienteReal] = useState("");
   const [categoria, setCategoria] = useState(initial?.categoria || "");
   const [comentarios, setComentarios] = useState("");
-  const [incluirDescuento, setIncluirDescuento] = useState(false);
-  const [descuento, setDescuento] = useState("");
-  const [incluirInstalacion, setIncluirInstalacion] = useState(false);
-  const [instalacionDescripcion, setInstalacionDescripcion] = useState("Instalación de equipos");
-  const [instalacionMonto, setInstalacionMonto] = useState("");
+  const dI = useDescuentoInstalacion(initial);
   const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
   const [diasValidez, setDiasValidez] = useState("30");
   const [formaPago, setFormaPago] = useState("A conversar");
@@ -8171,12 +8254,6 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
   const [error, setError] = useState("");
   const [conflictoObra, setConflictoObra] = useState(null);
   const [conflictoResuelto, setConflictoResuelto] = useState(false);
-  const [serviciosAdicionales, setServiciosAdicionales] = useState([]);
-  const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
-
-  const agregarServicio = (s) => setServiciosAdicionales([...serviciosAdicionales, s]);
-  const quitarServicio = (id) => setServiciosAdicionales(serviciosAdicionales.filter((s) => s.id !== id));
-  const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
@@ -8276,18 +8353,18 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
     // el Excel, que ya saben mostrar "instalación", no necesitan ningún cambio. El detalle real
     // de cada servicio (con su costo de Luis) se guarda aparte para que Rentabilidad no tenga
     // que aproximar el margen cuando ya lo sabemos con precisión.
-    const montoManual = Number(instalacionMonto) || 0;
-    const montoFinal = montoManual + totalServicios;
+    const montoManual = Number(dI.instalacionMonto) || 0;
+    const montoFinal = montoManual + dI.totalServicios;
     const descripcionFinal = [
-      instalacionDescripcion.trim(),
-      ...serviciosAdicionales.map((s) => `${s.tipo}: ${s.descripcion}`),
+      dI.instalacionDescripcion.trim(),
+      ...dI.serviciosAdicionales.map((s) => `${s.tipo}: ${s.descripcion}`),
     ].filter(Boolean).join(" | ");
     onSave({
       fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
-      incluirDescuento, descuento: Number(descuento) || 0, descuentoEsPorcentaje: true,
-      incluirInstalacion: incluirInstalacion || serviciosAdicionales.length > 0,
+      incluirDescuento: dI.incluirDescuento, descuento: Number(dI.descuento) || 0, descuentoEsPorcentaje: true,
+      incluirInstalacion: dI.incluirInstalacion || dI.serviciosAdicionales.length > 0,
       instalacionDescripcion: descripcionFinal, instalacionMonto: montoFinal,
-      serviciosAdicionales,
+      serviciosAdicionales: dI.serviciosAdicionales,
       fechaEntregaEstimada, diasValidez: Number(diasValidez) || 30, formaPago, obs,
       clienteReal, estado: "Pendiente", hiloId,
     });
@@ -8423,59 +8500,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
         </div>
       )}
 
-      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
-        <input type="checkbox" checked={incluirDescuento} onChange={(e) => setIncluirDescuento(e.target.checked)} />
-        Incluir descuento
-      </label>
-      {incluirDescuento && (
-        <Field label="Descuento %"><TextInput type="number" value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder="Ej: 10" /></Field>
-      )}
-
-      <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
-        <input type="checkbox" checked={incluirInstalacion} onChange={(e) => setIncluirInstalacion(e.target.checked)} />
-        Incluir instalación
-      </label>
-      {incluirInstalacion && (
-        <div className="flex gap-2">
-          <Field label="Instalación — descripción"><TextInput value={instalacionDescripcion} onChange={(e) => setInstalacionDescripcion(e.target.value)} placeholder="Ej: Instalación de equipos" /></Field>
-          <Field label="Instalación — monto U$S"><TextInput type="number" value={instalacionMonto} onChange={(e) => setInstalacionMonto(e.target.value)} placeholder="0" /></Field>
-        </div>
-      )}
-
-      <p className="text-sm font-semibold mb-1" style={{ color: INK }}>Otros servicios (instalación, desinstalación, mantenimiento, asistencia técnica)</p>
-      {serviciosAdicionales.length > 0 && (
-        <div className="mb-2 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
-          {serviciosAdicionales.map((s) => (
-            <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <div className="min-w-0">
-                <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
-                <span style={{ color: MUTED }}> · {s.descripcion} · U$S {s.monto.toFixed(2)}</span>
-              </div>
-              <button onClick={() => quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
-            </div>
-          ))}
-          <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Subtotal servicios</span><span>U$S {totalServicios.toFixed(2)}</span>
-          </div>
-        </div>
-      )}
-      {mostrarSugeridor ? (
-        <SugeridorServicioTecnico onAgregar={(s) => { agregarServicio(s); setMostrarSugeridor(false); }} />
-      ) : (
-        <SecondaryButton onClick={() => setMostrarSugeridor(true)}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
-      )}
-
-      {lineas.length > 0 && (
-        <div className="px-2.5 py-2 mb-3 mt-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-          <span>Total final</span>
-          <span>
-            U$S {(
-              subtotal - (incluirDescuento ? subtotal * (Number(descuento) || 0) / 100 : 0)
-              + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0) + totalServicios
-            ).toLocaleString()}
-          </span>
-        </div>
-      )}
+      <DescuentoInstalacionCampos dI={dI} subtotal={subtotal} />
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
       <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>
@@ -8516,6 +8541,9 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
   const [cantidadNueva, setCantidadNueva] = useState(1);
   const [precioNuevo, setPrecioNuevo] = useState("");
   const [error, setError] = useState("");
+  // Mismo bloque de descuento/instalación/servicios que una cotización real, para que el total
+  // que se ve acá sea el mismo que terminaría en el PDF si esto se confirma (ver DescuentoInstalacionCampos).
+  const dI = useDescuentoInstalacion();
 
   const productoSel = productos.find((p) => p.id === productoId);
 
@@ -8550,7 +8578,19 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
     setError("");
   };
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
-  const actualizarCantidad = (idx, v) => setLineas(lineas.map((l, i) => (i === idx ? { ...l, cantidad: Number(v) || 0 } : l)));
+
+  // Editar cantidad/precio de una línea ya agregada — igual que en una cotización real, para
+  // no tener que sacarla y volver a cargarla si hay que ajustar algo.
+  const actualizarLinea = (idx, campo, valor) =>
+    setLineas(lineas.map((l, i) => (i === idx ? { ...l, [campo]: valor } : l)));
+
+  const moverLinea = (idx, dir) => {
+    const destino = idx + dir;
+    if (destino < 0 || destino >= lineas.length) return;
+    const nuevas = [...lineas];
+    [nuevas[idx], nuevas[destino]] = [nuevas[destino], nuevas[idx]];
+    setLineas(nuevas);
+  };
 
   // El corazón del ejercicio: para cada línea, primero se tira del stock físico disponible,
   // lo que sobra se tira del tránsito sin asignar, y lo que todavía sobra es lo que habría
@@ -8570,6 +8610,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
 
   const totalFaltante = filas.reduce((acc, f) => acc + f.faltanteProducir, 0);
   const todoCubierto = filas.length > 0 && totalFaltante === 0;
+  const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
 
   const confirmar = () => {
     if (!cliente.trim()) {
@@ -8580,7 +8621,19 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       setError("Agregá al menos un producto.");
       return;
     }
-    onConfirmar({ cliente: cliente.trim(), obra: obra.trim(), categoria: categoria.trim(), lineas });
+    const montoManual = Number(dI.instalacionMonto) || 0;
+    const montoFinal = montoManual + dI.totalServicios;
+    const descripcionFinal = [
+      dI.instalacionDescripcion.trim(),
+      ...dI.serviciosAdicionales.map((s) => `${s.tipo}: ${s.descripcion}`),
+    ].filter(Boolean).join(" | ");
+    onConfirmar({
+      cliente: cliente.trim(), obra: obra.trim(), categoria: categoria.trim(), lineas,
+      incluirDescuento: dI.incluirDescuento, descuento: Number(dI.descuento) || 0,
+      incluirInstalacion: dI.incluirInstalacion || dI.serviciosAdicionales.length > 0,
+      instalacionDescripcion: descripcionFinal, instalacionMonto: montoFinal,
+      serviciosAdicionales: dI.serviciosAdicionales,
+    });
   };
 
   return (
@@ -8621,7 +8674,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
       </div>
 
       {filas.length > 0 && (
-        <div className="mb-4 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
           {filas.map((f, i) => {
             const completoConTransito = f.faltanteProducir === 0 && f.cubiertoTransito > 0;
             const estado = f.faltanteProducir > 0
@@ -8631,22 +8684,44 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
                 : { label: "Cubierto con stock", bg: "#E9F7EF", color: "#15803D" };
             return (
               <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="min-w-0 flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col shrink-0">
+                    <button onClick={() => moverLinea(i, -1)} disabled={i === 0} className="disabled:opacity-25" title="Subir">
+                      <ChevronUp size={13} style={{ color: MUTED }} />
+                    </button>
+                    <button onClick={() => moverLinea(i, 1)} disabled={i === filas.length - 1} className="disabled:opacity-25" title="Bajar">
+                      <ChevronDown size={13} style={{ color: MUTED }} />
+                    </button>
+                  </div>
+                  {f.foto ? (
+                    <img src={f.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+                  ) : (
+                    <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+                      <Tag size={13} style={{ color: MUTED }} />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
                     <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
-                    <span style={{ color: MUTED }}>· pedido</span>
-                    <input
-                      type="number" min="1" value={f.cantidad}
-                      onChange={(e) => actualizarCantidad(i, e.target.value)}
-                      className="w-16 text-xs px-1.5 py-1 rounded border"
-                      style={{ borderColor: BORDER }}
-                    />
+                    {f.especValor && <span style={{ color: MUTED }}> · {f.especValor}</span>}
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      <input
+                        type="number" min="1" value={f.cantidad}
+                        onChange={(e) => actualizarLinea(i, "cantidad", Number(e.target.value) || 0)}
+                        className="border rounded px-1 py-0.5 text-xs" style={{ width: 44, borderColor: BORDER }}
+                      />
+                      <span style={{ color: MUTED }}>× U$S</span>
+                      <input
+                        type="number" value={f.precioUnit}
+                        onChange={(e) => actualizarLinea(i, "precioUnit", Number(e.target.value) || 0)}
+                        className="border rounded px-1 py-0.5 text-xs" style={{ width: 72, borderColor: BORDER }}
+                      />
+                      <span style={{ color: MUTED }}>= U$S {((Number(f.cantidad) || 0) * (Number(f.precioUnit) || 0)).toLocaleString()}</span>
+                      <span className="px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.label}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.label}</span>
-                    <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
-                  </div>
+                  <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
                 </div>
+                {f.descripcion && <p className="mt-1.5 line-clamp-2" style={{ color: MUTED }}>{f.descripcion}</p>}
                 <p className="mt-1">
                   <span style={{ color: "#15803D" }}>Depósito: {f.stockDisponible} disponible → cubre {f.cubiertoStock}</span>
                   {f.cubiertoTransito > 0 && (
@@ -8659,6 +8734,9 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
               </div>
             );
           })}
+          <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <span>Subtotal</span><span>U$S {subtotal.toLocaleString()}</span>
+          </div>
         </div>
       )}
 
@@ -8669,6 +8747,8 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
             : `Faltan ${totalFaltante} unidad(es) en total que ni el depósito ni lo que ya viene en camino cubren — eso es lo que habría que mandar a producir.`}
         </div>
       )}
+
+      <DescuentoInstalacionCampos dI={dI} subtotal={subtotal} />
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={confirmar} disabled={filas.length === 0}>Confirmar como cotización real</PrimaryButton>

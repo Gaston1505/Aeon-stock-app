@@ -8176,42 +8176,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
   // Los marcados "no disponible para la venta" (ver ProductoForm) no deben poder elegirse acá
   // — siguen visibles/editables en Catálogo para el admin, solo se ocultan del picker.
   const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
-  const productosPorGrupo = useMemo(() => {
-    const grupos = new Map();
-    for (const p of productosDisponibles) {
-      const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
-      const key = path || "Otros";
-      if (!grupos.has(key)) grupos.set(key, []);
-      grupos.get(key).push(p);
-    }
-    const indiceEnOrden = (valor, orden) => {
-      if (!orden) return 999;
-      const i = orden.indexOf((valor || "").trim());
-      return i === -1 ? orden.length : i;
-    };
-    const claveGrupo = (p) => {
-      const tab = CATALOGO_TABS.find((t) => t.filtro(p));
-      const ordenes = tab?.ordenesPorNivel || {};
-      // Repuestos no tienen su propio tab en CATALOGO_TABS (ordenes[1] queda vacío), así que
-      // en vez de eso ordenamos por la familia de equipo guardada en su subcategoria.
-      const esRepuesto = p.categoriaPrincipal === "Repuestos";
-      const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
-      return [
-        indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
-        subOrden, (p.subcategoria || "").trim(),
-        indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
-      ];
-    };
-    const entries = [...grupos.entries()].map(([key, items]) => ({ key, items: ordenarProductos(items), clave: claveGrupo(items[0]) }));
-    entries.sort((a, b) => {
-      for (let i = 0; i < a.clave.length; i++) {
-        if (a.clave[i] === b.clave[i]) continue;
-        return typeof a.clave[i] === "number" ? a.clave[i] - b.clave[i] : String(a.clave[i]).localeCompare(String(b.clave[i]));
-      }
-      return 0;
-    });
-    return entries;
-  }, [productosDisponibles]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
 
   const handleProducto = (id) => {
     setProductoId(id);
@@ -8521,42 +8486,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
   // Los marcados "no disponible para la venta" (ver ProductoForm) no deben poder elegirse acá
   // — siguen visibles/editables en Catálogo para el admin, solo se ocultan del picker.
   const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
-  const productosPorGrupo = useMemo(() => {
-    const grupos = new Map();
-    for (const p of productosDisponibles) {
-      const path = [p.categoriaPrincipal, p.subcategoria, p.subcategoria2, p.subcategoria3].filter((v) => (v || "").trim()).join(" — ");
-      const key = path || "Otros";
-      if (!grupos.has(key)) grupos.set(key, []);
-      grupos.get(key).push(p);
-    }
-    const indiceEnOrden = (valor, orden) => {
-      if (!orden) return 999;
-      const i = orden.indexOf((valor || "").trim());
-      return i === -1 ? orden.length : i;
-    };
-    const claveGrupo = (p) => {
-      const tab = CATALOGO_TABS.find((t) => t.filtro(p));
-      const ordenes = tab?.ordenesPorNivel || {};
-      // Repuestos no tienen su propio tab en CATALOGO_TABS (ordenes[1] queda vacío), así que
-      // en vez de eso ordenamos por la familia de equipo guardada en su subcategoria.
-      const esRepuesto = p.categoriaPrincipal === "Repuestos";
-      const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
-      return [
-        indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
-        subOrden, (p.subcategoria || "").trim(),
-        indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
-      ];
-    };
-    const entries = [...grupos.entries()].map(([key, items]) => ({ key, items: ordenarProductos(items), clave: claveGrupo(items[0]) }));
-    entries.sort((a, b) => {
-      for (let i = 0; i < a.clave.length; i++) {
-        if (a.clave[i] === b.clave[i]) continue;
-        return typeof a.clave[i] === "number" ? a.clave[i] - b.clave[i] : String(a.clave[i]).localeCompare(String(b.clave[i]));
-      }
-      return 0;
-    });
-    return entries;
-  }, [productosDisponibles]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
 
   const handleProducto = (id) => {
     setProductoId(id);

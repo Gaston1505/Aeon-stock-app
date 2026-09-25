@@ -801,7 +801,10 @@ function agruparCotizaciones(cotizaciones) {
     const obras = [];
     for (const [obra, porHilo] of porObra) {
       const hilos = [];
-      for (const [, versiones] of porHilo) hilos.push({ categoria: versiones[0].categoria, versiones, activa: versiones[0] });
+      // hiloId va aparte de categoria a propósito: dos hilos de la misma obra pueden compartir
+      // categoría (ver el caso de "cotizaciones separadas, misma obra" en la nota de arriba) y
+      // hacía falta algo único para usar de key en el render — la categoría sola colisionaba.
+      for (const [hiloKey, versiones] of porHilo) hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, versiones, activa: versiones[0] });
       hilos.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
       obras.push({ obra, hilos });
     }
@@ -9052,51 +9055,81 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onEditar, onD
   );
 }
 
-function ObraGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+// Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
+// todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
+// una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
+function ObraGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, forzarExpandido }) {
+  const [expandido, setExpandido] = useState(false);
+  const abierto = expandido || forzarExpandido;
+  const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
+  const nHilos = grupo.hilos.length;
   return (
-    <div>
-      <p className="text-base font-bold mb-1" style={{ color: INK }}>{grupo.obra}</p>
-      <div className="space-y-3">
-        {grupo.hilos.map((h) => (
-          <HiloCategoriaGrupo
-            key={h.categoria} hilo={h} productos={productos}
-            onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-            onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-            onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
-            descargandoId={descargandoId}
-          />
-        ))}
-      </div>
+    <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <button onClick={() => setExpandido(!expandido)} className="w-full flex items-center justify-between gap-2 p-3 text-left">
+        <div className="min-w-0">
+          <p className="text-base font-bold truncate" style={{ color: INK }}>{grupo.obra}</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>{nHilos} cotización{nHilos > 1 ? "es" : ""}</p>
+        </div>
+        <div className="flex items-center gap-2 text-xs shrink-0">
+          <span style={{ color: ACCENT }}>U$S {resumen.total.toLocaleString()}</span>
+          {abierto ? <ChevronUp size={15} style={{ color: MUTED }} /> : <ChevronDown size={15} style={{ color: MUTED }} />}
+        </div>
+      </button>
+      {abierto && (
+        <div className="px-3 pb-3 space-y-3">
+          {grupo.hilos.map((h) => (
+            <HiloCategoriaGrupo
+              key={h.hiloId} hilo={h} productos={productos}
+              onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
+              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+              onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
+              descargandoId={descargandoId}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+// Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
+// el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
+// minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
+function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, forzarExpandido }) {
+  const [expandido, setExpandido] = useState(false);
+  const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
+  const nObras = grupo.obras.length;
   return (
-    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-      <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
-        <p className="text-lg font-bold" style={{ color: INK }}>{grupo.cliente}</p>
-        <div className="flex items-center gap-3 text-xs flex-wrap">
+    <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <button onClick={() => setExpandido(!expandido)} className="w-full flex items-start justify-between gap-3 p-3.5 text-left flex-wrap">
+        <div className="min-w-0">
+          <p className="text-lg font-bold truncate" style={{ color: INK }}>{grupo.cliente}</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>{nObras} obra{nObras > 1 ? "s" : ""}</p>
+        </div>
+        <div className="flex items-center gap-3 text-xs flex-wrap shrink-0">
           <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString()}</span>
           {ESTADOS_COTIZACION.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
               {estado}: {resumen[estado].n}
             </span>
           ))}
+          {abierto ? <ChevronUp size={16} style={{ color: MUTED }} /> : <ChevronDown size={16} style={{ color: MUTED }} />}
         </div>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {grupo.obras.map((o) => (
-          <ObraGrupo
-            key={o.obra} grupo={o} productos={productos}
-            onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-            onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
-        descargandoId={descargandoId}
-          />
-        ))}
-      </div>
+      </button>
+      {abierto && (
+        <div className="px-3.5 pb-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {grupo.obras.map((o) => (
+            <ObraGrupo
+              key={o.obra} grupo={o} productos={productos}
+              onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
+              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+              onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
+              descargandoId={descargandoId} forzarExpandido={forzarExpandido}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -9104,6 +9137,9 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescar
 function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
+  // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
+  // forzar todo abierto evita que un cliente/obra que matchea quede escondido, minimizado.
+  const forzarExpandido = query.trim().length > 0;
 
   return (
     <div>
@@ -9134,7 +9170,7 @@ function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDe
                 onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
-        descargandoId={descargandoId}
+        descargandoId={descargandoId} forzarExpandido={forzarExpandido}
               />
             ))}
           </div>

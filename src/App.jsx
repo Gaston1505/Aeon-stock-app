@@ -4,7 +4,7 @@ import {
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
-  Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft,
+  Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -139,6 +139,7 @@ const COLLECTIONS = {
   solicitudes: "solicitudes",
   conteoStock: "conteoStock",
   preciosMercado: "preciosMercado",
+  preciosMayorista: "preciosMayorista",
 };
 
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas
@@ -1689,6 +1690,7 @@ export default function App() {
   const [solicitudes, setSolicitudes] = useState([]);
   const [conteoStock, setConteoStock] = useState([]);
   const [preciosMercado, setPreciosMercado] = useState([]);
+  const [preciosMayorista, setPreciosMayorista] = useState([]);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -1738,6 +1740,7 @@ export default function App() {
       [COLLECTIONS.solicitudes]: setSolicitudes,
       [COLLECTIONS.conteoStock]: setConteoStock,
       [COLLECTIONS.preciosMercado]: setPreciosMercado,
+      [COLLECTIONS.preciosMayorista]: setPreciosMayorista,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -2165,6 +2168,13 @@ export default function App() {
   const addPrecioMercado = (data) => addItem(COLLECTIONS.preciosMercado, data);
   const updatePrecioMercado = (id, data) => updateItem(COLLECTIONS.preciosMercado, id, data);
   const deletePrecioMercado = (id) => deleteItem(COLLECTIONS.preciosMercado, id);
+
+  // Precios al por mayor de la competencia directa (presupuestos reales que consiguieron para
+  // una obra, no precios de vidriera) — sección aparte de "Precios de mercado" (que es al por
+  // menor/web) porque acá además importan la forma de pago y la garantía ofrecida, no solo el precio.
+  const addPrecioMayorista = (data) => addItem(COLLECTIONS.preciosMayorista, data);
+  const updatePrecioMayorista = (id, data) => updateItem(COLLECTIONS.preciosMayorista, id, data);
+  const deletePrecioMayorista = (id) => deleteItem(COLLECTIONS.preciosMayorista, id);
 
   // Tránsito: mercadería fabricándose/en camino desde China, todavía no es stock físico real
   // — se traslada a Maestro de equipos recién cuando llega (manualmente, como una entrada más).
@@ -2784,6 +2794,7 @@ export default function App() {
     // Reportes
     { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
     { key: "precios-mercado", label: "Precios de mercado", icon: Search },
+    { key: "precios-mayorista", label: "Precios al por mayor", icon: Building2 },
     { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
     { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
   ];
@@ -3219,6 +3230,15 @@ export default function App() {
           />
         )}
 
+        {tab === "precios-mayorista" && (
+          <PreciosMayoristaView
+            preciosMayorista={preciosMayorista} productos={productos} query={query} onQuery={setQuery}
+            onNew={() => setDrawer("precio-mayorista")}
+            onDelete={deletePrecioMayorista}
+            onUpdateField={(id, field, value) => updatePrecioMayorista(id, { [field]: value })}
+          />
+        )}
+
         {tab === "transito" && (
           <TransitoView
             transito={filteredTransito} query={query} onQuery={setQuery}
@@ -3327,6 +3347,9 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "precio-mercado"} onClose={() => setDrawer(null)} title="Nuevo precio de mercado">
         <PrecioMercadoForm onSave={(d) => { addPrecioMercado(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "precio-mayorista"} onClose={() => setDrawer(null)} title="Nuevo precio al por mayor">
+        <PrecioMayoristaForm onSave={(d) => { addPrecioMayorista(d); setDrawer(null); }} />
       </Drawer>
       <Drawer
         open={drawer === "transito"} onClose={() => { setDrawer(null); setEnvioEditando(null); }}
@@ -9778,6 +9801,241 @@ function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, 
                   <div className="space-y-2.5">
                     {items.map((r) => (
                       <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} monedaVista={monedaVista} tipoCambio={Number(tipoCambio) || 0} />
+                    ))}
+                  </div>
+                </GrupoPrecioMercado>
+              ))}
+            </GrupoPrecioMercado>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function PrecioMayoristaForm({ onSave }) {
+  const [fecha, setFecha] = useState(todayISO());
+  const [empresa, setEmpresa] = useState("");
+  const [clienteObra, setClienteObra] = useState("");
+  const [categoriaPrincipal, setCategoriaPrincipal] = useState("Cocina");
+  const [subcategoria, setSubcategoria] = useState("");
+  const [marca, setMarca] = useState("");
+  const [modelo, setModelo] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [cantidad, setCantidad] = useState("1");
+  const [precioGs, setPrecioGs] = useState("");
+  const [precioUsd, setPrecioUsd] = useState("");
+  const [formaPago, setFormaPago] = useState("");
+  const [garantia, setGarantia] = useState("");
+  const [validezOferta, setValidezOferta] = useState("");
+  const [equivalenteSugerido, setEquivalenteSugerido] = useState("");
+  const [notas, setNotas] = useState("");
+  const [error, setError] = useState("");
+  const subcategoriasDisponibles = SUBCATEGORIAS_MERCADO_POR_CATEGORIA[categoriaPrincipal] || null;
+
+  const submit = () => {
+    if (!empresa.trim() || !descripcion.trim()) {
+      setError("Ingresá al menos la empresa y la descripción del producto.");
+      return;
+    }
+    onSave({
+      fecha, empresa: empresa.trim(), clienteObra: clienteObra.trim(),
+      categoriaPrincipal, subcategoria: subcategoriasDisponibles ? subcategoria : "",
+      marca: marca.trim(), modelo: modelo.trim(), descripcion: descripcion.trim(),
+      cantidad: Number(cantidad) || 1, precioGs: Number(precioGs) || 0, precioUsd: Number(precioUsd) || 0,
+      formaPago: formaPago.trim(), garantia: garantia.trim(), validezOferta: validezOferta.trim(),
+      equivalenteSugerido: equivalenteSugerido.trim(), notas: notas.trim(), productoEquivalenteId: "",
+    });
+  };
+
+  return (
+    <div>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Empresa (competidor)"><TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: Tecnocentro" /></Field>
+      <Field label="Cliente / obra de esa cotización (opcional, contexto)">
+        <TextInput value={clienteObra} onChange={(e) => setClienteObra(e.target.value)} placeholder="Ej: CCI - Obra Station del Sol" />
+      </Field>
+      <Field label="Categoría">
+        <select
+          value={categoriaPrincipal}
+          onChange={(e) => { setCategoriaPrincipal(e.target.value); setSubcategoria(""); }}
+          className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}
+        >
+          {ORDEN_CATEGORIA_PRINCIPAL.filter((c) => c !== "Repuestos").map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </Field>
+      {subcategoriasDisponibles && (
+        <Field label="Subcategoría">
+          <select value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+            <option value="">Elegir...</option>
+            {subcategoriasDisponibles.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+      )}
+      <Field label="Marca"><TextInput value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Ej: Livetech" /></Field>
+      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Código del modelo del competidor" /></Field>
+      <Field label="Descripción"><Textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Lo que identifica al producto" /></Field>
+      <Field label="Cantidad cotizada"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <Field label="Precio unitario Gs"><TextInput type="number" value={precioGs} onChange={(e) => setPrecioGs(e.target.value)} /></Field>
+        <Field label="Precio unitario U$S"><TextInput type="number" value={precioUsd} onChange={(e) => setPrecioUsd(e.target.value)} /></Field>
+      </div>
+      <Field label="Forma de pago"><TextInput value={formaPago} onChange={(e) => setFormaPago(e.target.value)} placeholder="Ej: 50% anticipo, saldo contra entrega" /></Field>
+      <Field label="Garantía"><TextInput value={garantia} onChange={(e) => setGarantia(e.target.value)} placeholder="Ej: 1 año contra defectos de fábrica" /></Field>
+      <Field label="Validez de la oferta"><TextInput value={validezOferta} onChange={(e) => setValidezOferta(e.target.value)} placeholder="Ej: 5 días" /></Field>
+      <Field label="Equivalente sugerido en nuestro catálogo (si no está claro cuál vincular)">
+        <TextInput value={equivalenteSugerido} onChange={(e) => setEquivalenteSugerido(e.target.value)} placeholder="Ej: podría ser AE-AC-4T-60-ON, a verificar" />
+      </Field>
+      <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar registro</PrimaryButton>
+    </div>
+  );
+}
+
+// Una ficha de precio al por mayor — a diferencia de "Precios de mercado" (al por menor/web),
+// acá importan también las condiciones (forma de pago, garantía) porque compramos comparando
+// el trato completo, no solo el número. Reutiliza el mismo conversor de moneda y agrupado por
+// categoría que "Precios de mercado".
+function PrecioMayoristaCard({ r, productos, productosPorGrupo, onDelete, onUpdateField, monedaVista, tipoCambio }) {
+  const producto = productos.find((p) => p.id === r.productoEquivalenteId);
+  const nuestro = producto ? Number(producto.precioLista) || 0 : 0;
+  const enMoneda = precioEnMoneda(r, monedaVista, tipoCambio);
+  const diferencia = producto && nuestro && enMoneda ? ((enMoneda.valor - nuestro) / nuestro) * 100 : null;
+  return (
+    <div className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium" style={{ color: INK }}>{r.descripcion}</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+            {r.fecha} · {r.empresa}{r.clienteObra ? ` · ${r.clienteObra}` : ""}
+          </p>
+          {enMoneda && (
+            <p className="text-sm font-semibold mt-1" style={{ color: ACCENT }}>
+              {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString()}`}
+              {" "}c/u
+              {enMoneda.convertido && <span className="font-normal" style={{ color: MUTED }}> (convertido)</span>}
+            </p>
+          )}
+        </div>
+        <button onClick={() => onDelete(r.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+          <Trash2 size={14} style={{ color: MUTED }} />
+        </button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
+          <ComentarioEditor value={r.empresa} onSave={(v) => onUpdateField(r.id, "empresa", v)} placeholder="Empresa" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Marca</p>
+          <ComentarioEditor value={r.marca} onSave={(v) => onUpdateField(r.id, "marca", v)} placeholder="Marca" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Modelo</p>
+          <ComentarioEditor value={r.modelo} onSave={(v) => onUpdateField(r.id, "modelo", v)} placeholder="Modelo" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Cantidad cotizada</p>
+          <ComentarioEditor value={String(r.cantidad || "")} onSave={(v) => onUpdateField(r.id, "cantidad", Number(v) || 1)} placeholder="1" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio Gs (unitario)</p>
+          <ComentarioEditor value={String(r.precioGs || "")} onSave={(v) => onUpdateField(r.id, "precioGs", Number(v) || 0)} placeholder="0" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio U$S (unitario)</p>
+          <ComentarioEditor value={String(r.precioUsd || "")} onSave={(v) => onUpdateField(r.id, "precioUsd", Number(v) || 0)} placeholder="0" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Forma de pago</p>
+          <ComentarioEditor value={r.formaPago} onSave={(v) => onUpdateField(r.id, "formaPago", v)} placeholder="Ej: 50% anticipo, saldo contra entrega" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Garantía</p>
+          <ComentarioEditor value={r.garantia} onSave={(v) => onUpdateField(r.id, "garantia", v)} placeholder="Ej: 1 año" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Validez de la oferta</p>
+          <ComentarioEditor value={r.validezOferta} onSave={(v) => onUpdateField(r.id, "validezOferta", v)} placeholder="Ej: 5 días" />
+        </div>
+      </div>
+      <div className="mt-2">
+        <p className="text-[11px] mb-1" style={{ color: MUTED }}>Producto equivalente en nuestro catálogo</p>
+        <SelectorProducto
+          productos={productos} productosPorGrupo={productosPorGrupo}
+          value={r.productoEquivalenteId} onChange={(id) => onUpdateField(r.id, "productoEquivalenteId", id)}
+          placeholder="Vincular a un producto nuestro..."
+        />
+      </div>
+      {!producto && (
+        <div className="mt-2">
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Equivalente sugerido (mientras no se vincule arriba)</p>
+          <ComentarioEditor value={r.equivalenteSugerido} onSave={(v) => onUpdateField(r.id, "equivalenteSugerido", v)} placeholder="Ej: podría ser AE-AC-4T-60-ON, a verificar" />
+        </div>
+      )}
+      {producto && (
+        <div
+          className="mt-2 px-2.5 py-2 rounded-md text-xs flex items-center justify-between flex-wrap gap-1"
+          style={{ backgroundColor: diferencia > 0 ? "#ECFDF5" : diferencia < 0 ? "#FEF2F2" : "#F7F8FA", color: INK }}
+        >
+          <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
+          {diferencia !== null && (
+            <span className="font-semibold">
+              {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
+            </span>
+          )}
+        </div>
+      )}
+      {r.notas && <p className="text-xs mt-1.5 italic" style={{ color: MUTED }}>{r.notas}</p>}
+    </div>
+  );
+}
+
+// Precios de la competencia directa al por mayor (presupuestos reales que consiguieron para una
+// obra) — distinto de "Precios de mercado" (relevamiento al por menor/web): acá lo que importa
+// no es solo el precio sino el trato completo (forma de pago, garantía). Mismo agrupado por
+// categoría/subcategoría y mismo conversor de moneda que "Precios de mercado".
+function PreciosMayoristaView({ preciosMayorista, productos, query, onQuery, onNew, onDelete, onUpdateField }) {
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productos), [productos]);
+  const [monedaVista, setMonedaVista] = useState("usd");
+  const [tipoCambio, setTipoCambio] = useState("");
+
+  const filtrados = useMemo(() => {
+    const q = query.toLowerCase();
+    return preciosMayorista.filter((r) => !q ||
+      [r.empresa, r.clienteObra, r.marca, r.modelo, r.descripcion, r.categoriaPrincipal, r.subcategoria].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [preciosMayorista, query]);
+
+  const ordenados = useMemo(() => [...filtrados].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "")), [filtrados]);
+  const grupos = useMemo(() => agruparPreciosMercado(ordenados), [ordenados]);
+
+  return (
+    <Section
+      title="Precios al por mayor"
+      subtitle="Presupuestos reales de la competencia directa (no precios de vidriera) — con forma de pago y garantía, para comparar el trato completo, no solo el número."
+      query={query} onQuery={onQuery}
+      onNew={onNew} newLabel="Nuevo registro"
+    >
+      {ordenados.length === 0 ? (
+        <EmptyState icon={Building2} title="Todavía no hay precios al por mayor cargados" subtitle="Cargá los presupuestos que consigas de la competencia directa para comparar el trato completo." />
+      ) : (
+        <div>
+          <ConversorMonedaMercado monedaVista={monedaVista} onMonedaVista={setMonedaVista} tipoCambio={tipoCambio} onTipoCambio={setTipoCambio} />
+          {grupos.map(({ categoria, total, sinSub, subgrupos }) => (
+            <GrupoPrecioMercado key={categoria} titulo={categoria} nivel={0} cantidad={total}>
+              {sinSub.length > 0 && (
+                <div className="space-y-2.5 mb-3">
+                  {sinSub.map((r) => (
+                    <PrecioMayoristaCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} monedaVista={monedaVista} tipoCambio={Number(tipoCambio) || 0} />
+                  ))}
+                </div>
+              )}
+              {subgrupos.map(([subcategoria, items]) => (
+                <GrupoPrecioMercado key={subcategoria} titulo={subcategoria} nivel={1} cantidad={items.length}>
+                  <div className="space-y-2.5">
+                    {items.map((r) => (
+                      <PrecioMayoristaCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} monedaVista={monedaVista} tipoCambio={Number(tipoCambio) || 0} />
                     ))}
                   </div>
                 </GrupoPrecioMercado>

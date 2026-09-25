@@ -1721,6 +1721,7 @@ export default function App() {
   const [llegadaTarget, setLlegadaTarget] = useState(null);
   const [repuestoTarget, setRepuestoTarget] = useState(null);
   const [cotizacionPrefill, setCotizacionPrefill] = useState(null);
+  const [cotizacionEditando, setCotizacionEditando] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
@@ -3195,9 +3196,10 @@ export default function App() {
         {tab === "cotizaciones" && (
           <CotizacionesView
             cotizaciones={filteredCotizaciones} productos={productos} query={query} onQuery={setQuery}
-            onNew={() => setDrawer("cotizacion")}
+            onNew={() => { setCotizacionEditando(null); setDrawer("cotizacion"); }}
             onDelete={deleteCotizacion}
             onUpdate={updateCotizacion}
+            onEditar={(c) => { setCotizacionEditando(c); setDrawer("cotizacion"); }}
             onDescargarPdf={handleDescargarPdf}
             onDescargarExcel={handleDescargarCotizacionExcel}
             onDescargarFichas={handleDescargarFichas}
@@ -3339,14 +3341,16 @@ export default function App() {
         />
       </Drawer>
       <Drawer
-        open={drawer === "cotizacion"} onClose={() => { setDrawer(null); setCotizacionPrefill(null); }}
-        title="Nueva cotización"
+        open={drawer === "cotizacion"} onClose={() => { setDrawer(null); setCotizacionPrefill(null); setCotizacionEditando(null); }}
+        title={cotizacionEditando ? "Editar cotización" : "Nueva cotización"}
       >
         <CotizacionForm
           productos={productos} clientes={clientes} cotizaciones={cotizaciones}
-          initial={cotizacionPrefill}
+          initial={cotizacionEditando || cotizacionPrefill}
+          editId={cotizacionEditando?.id}
           onGuardarCliente={upsertClienteTelefono}
           onSave={(d) => { addCotizacion(d); setDrawer(null); setCotizacionPrefill(null); }}
+          onGuardarEdicion={(id, d) => { updateCotizacion(id, d); setDrawer(null); setCotizacionEditando(null); }}
         />
       </Drawer>
       <Drawer open={drawer === "presupuesto-reparacion"} onClose={() => setDrawer(null)} title="Nuevo presupuesto de reparación">
@@ -8154,10 +8158,24 @@ function useDescuentoInstalacion(initial) {
   const [incluirDescuento, setIncluirDescuento] = useState(initial?.incluirDescuento || false);
   const [descuento, setDescuento] = useState(initial?.descuento ? String(initial.descuento) : "");
   const [incluirInstalacion, setIncluirInstalacion] = useState(initial?.incluirInstalacion || false);
-  const [instalacionDescripcion, setInstalacionDescripcion] = useState(initial?.instalacionDescripcion || "Instalación de equipos");
-  const [instalacionMonto, setInstalacionMonto] = useState(initial?.instalacionMonto ? String(initial.instalacionMonto) : "");
   const [serviciosAdicionales, setServiciosAdicionales] = useState(initial?.serviciosAdicionales || []);
   const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
+
+  // instalacionDescripcion/instalacionMonto guardados ya vienen combinados con los servicios
+  // sugeridos (ver datosComunes, más abajo) — al editar hay que separar de nuevo la parte
+  // manual de esa combinación, para no volver a sumarlos/pegarlos encima de los que ya estaban
+  // cada vez que se guarda de nuevo.
+  const totalServiciosInit = (initial?.serviciosAdicionales || []).reduce((acc, s) => acc + (Number(s.monto) || 0), 0);
+  const sufijoServiciosInit = (initial?.serviciosAdicionales || []).map((s) => `${s.tipo}: ${s.descripcion}`).join(" | ");
+  const descripcionGuardada = initial?.instalacionDescripcion || "Instalación de equipos";
+  const descripcionManualInit = (sufijoServiciosInit && descripcionGuardada.endsWith(sufijoServiciosInit))
+    ? (descripcionGuardada.slice(0, descripcionGuardada.length - sufijoServiciosInit.length).replace(/\s*\|\s*$/, "") || "Instalación de equipos")
+    : descripcionGuardada;
+
+  const [instalacionDescripcion, setInstalacionDescripcion] = useState(descripcionManualInit);
+  const [instalacionMonto, setInstalacionMonto] = useState(
+    initial?.instalacionMonto ? String(Math.max(0, Number(initial.instalacionMonto) - totalServiciosInit)) : ""
+  );
 
   const agregarServicio = (s) => setServiciosAdicionales((prev) => [...prev, s]);
   const quitarServicio = (id) => setServiciosAdicionales((prev) => prev.filter((s) => s.id !== id));
@@ -8233,20 +8251,20 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
   );
 }
 
-function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, onSave, initial }) {
-  const [fecha, setFecha] = useState(todayISO());
+function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, onSave, onGuardarEdicion, initial, editId }) {
+  const [fecha, setFecha] = useState(initial?.fecha || todayISO());
   const [cliente, setCliente] = useState(initial?.cliente || "");
-  const [telefono, setTelefono] = useState("");
+  const [telefono, setTelefono] = useState(initial?.clienteTelefono || "");
   const telefonoAutoRef = useRef(null);
   const [obra, setObra] = useState(initial?.obra || "");
-  const [clienteReal, setClienteReal] = useState("");
+  const [clienteReal, setClienteReal] = useState(initial?.clienteReal || "");
   const [categoria, setCategoria] = useState(initial?.categoria || "");
-  const [comentarios, setComentarios] = useState("");
+  const [comentarios, setComentarios] = useState(initial?.comentarios || "");
   const dI = useDescuentoInstalacion(initial);
-  const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(FECHA_ENTREGA_DEFAULT);
-  const [diasValidez, setDiasValidez] = useState("30");
-  const [formaPago, setFormaPago] = useState("A conversar");
-  const [obs, setObs] = useState(OBS_DEFAULT);
+  const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(initial?.fechaEntregaEstimada || FECHA_ENTREGA_DEFAULT);
+  const [diasValidez, setDiasValidez] = useState(initial?.diasValidez ? String(initial.diasValidez) : "30");
+  const [formaPago, setFormaPago] = useState(initial?.formaPago || "A conversar");
+  const [obs, setObs] = useState(initial?.obs || OBS_DEFAULT);
   const [lineas, setLineas] = useState(initial?.lineas || []);
   const [productoId, setProductoId] = useState("");
   const [cantidadNueva, setCantidadNueva] = useState(1);
@@ -8346,28 +8364,40 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
     setLineas(nuevas);
   };
 
-  const guardarFinal = (hiloId) => {
-    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
-    // Los servicios sugeridos (instalación/desinstalación/mantenimiento/asistencia técnica) se
-    // combinan con el bloque manual de instalación en un solo monto/descripción — así el PDF y
-    // el Excel, que ya saben mostrar "instalación", no necesitan ningún cambio. El detalle real
-    // de cada servicio (con su costo de Luis) se guarda aparte para que Rentabilidad no tenga
-    // que aproximar el margen cuando ya lo sabemos con precisión.
+  // Los servicios sugeridos (instalación/desinstalación/mantenimiento/asistencia técnica) se
+  // combinan con el bloque manual de instalación en un solo monto/descripción — así el PDF y
+  // el Excel, que ya saben mostrar "instalación", no necesitan ningún cambio. El detalle real
+  // de cada servicio (con su costo de Luis) se guarda aparte para que Rentabilidad no tenga
+  // que aproximar el margen cuando ya lo sabemos con precisión.
+  const datosComunes = () => {
     const montoManual = Number(dI.instalacionMonto) || 0;
     const montoFinal = montoManual + dI.totalServicios;
     const descripcionFinal = [
       dI.instalacionDescripcion.trim(),
       ...dI.serviciosAdicionales.map((s) => `${s.tipo}: ${s.descripcion}`),
     ].filter(Boolean).join(" | ");
-    onSave({
+    return {
       fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
       incluirDescuento: dI.incluirDescuento, descuento: Number(dI.descuento) || 0, descuentoEsPorcentaje: true,
       incluirInstalacion: dI.incluirInstalacion || dI.serviciosAdicionales.length > 0,
       instalacionDescripcion: descripcionFinal, instalacionMonto: montoFinal,
       serviciosAdicionales: dI.serviciosAdicionales,
       fechaEntregaEstimada, diasValidez: Number(diasValidez) || 30, formaPago, obs,
-      clienteReal, estado: "Pendiente", hiloId,
-    });
+      clienteReal,
+    };
+  };
+
+  const guardarFinal = (hiloId) => {
+    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
+    onSave({ ...datosComunes(), estado: "Pendiente", hiloId });
+  };
+
+  // A diferencia de crear (guardarFinal), acá no se toca estado/hiloId/fecha de creación —
+  // updateItem sólo pisa los campos que le pasamos, así que el resto del documento (incluida
+  // la versión anterior en el historial) queda intacto.
+  const guardarEdicion = () => {
+    if (onGuardarCliente) onGuardarCliente(cliente, telefono);
+    onGuardarEdicion(editId, datosComunes());
   };
 
   const submit = () => {
@@ -8380,6 +8410,10 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
       return;
     }
     setError("");
+    if (editId) {
+      guardarEdicion();
+      return;
+    }
     if (!conflictoResuelto) {
       const existente = buscarCotizacionMismaObra(cotizaciones, cliente, obra);
       if (existente) {
@@ -8405,7 +8439,12 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
 
   return (
     <div>
-      {initial && (
+      {editId && (
+        <p className="text-xs mb-3 px-2.5 py-2 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+          Editando cotización de {initial?.cliente}{initial?.obra ? ` — ${initial.obra}` : ""}. Se actualiza esta misma cotización, sin crear una versión nueva.
+        </p>
+      )}
+      {initial && !editId && (
         <p className="text-xs mb-3 px-2.5 py-2 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
           Precargado desde el Panel de simulación — revisá los datos antes de guardar.
         </p>
@@ -8524,7 +8563,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
           </div>
         </div>
       )}
-      {!conflictoObra && <PrimaryButton onClick={submit}>Guardar cotización</PrimaryButton>}
+      {!conflictoObra && <PrimaryButton onClick={submit}>{editId ? "Guardar cambios" : "Guardar cotización"}</PrimaryButton>}
     </div>
   );
 }
@@ -8838,7 +8877,7 @@ function RentabilidadCotizacionView({ c, productos }) {
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
+function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
   const total = calcularTotalCotizacion(c);
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
@@ -8949,6 +8988,15 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
         >
           <TrendingUp size={13} /> {verRentabilidad ? "Ocultar rentabilidad" : "Rentabilidad"}
         </button>
+        {esActiva && (
+          <button
+            onClick={() => onEditar(c)}
+            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+            style={{ borderColor: BORDER, color: INK }}
+          >
+            <Pencil size={13} /> Editar
+          </button>
+        )}
       </div>
       {verRentabilidad && <RentabilidadCotizacionView c={c} productos={productos} />}
     </div>
@@ -8957,7 +9005,7 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onDescarga
 
 // Una obra puede tener varias categorías en paralelo (aires, cocina, termo) — cada una es su
 // propio hilo con su propia versión activa e historial, no una revisión de las otras.
-function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   return (
@@ -8965,7 +9013,7 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onDescargarPd
       <CotizacionCard
         c={hilo.activa} esActiva productos={productos}
         historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
-        onDelete={onDelete} onUpdate={onUpdate}
+        onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
@@ -8987,7 +9035,7 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onDescargarPd
   );
 }
 
-function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function ObraGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   return (
     <div>
       <p className="text-base font-bold mb-1" style={{ color: INK }}>{grupo.obra}</p>
@@ -8995,7 +9043,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
         {grupo.hilos.map((h) => (
           <HiloCategoriaGrupo
             key={h.categoria} hilo={h} productos={productos}
-            onDelete={onDelete} onUpdate={onUpdate}
+            onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
             onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
             onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
             descargandoId={descargandoId}
@@ -9006,7 +9054,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDes
   );
 }
 
-function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -9025,7 +9073,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, on
         {grupo.obras.map((o) => (
           <ObraGrupo
             key={o.obra} grupo={o} productos={productos}
-            onDelete={onDelete} onUpdate={onUpdate}
+            onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
             onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}
@@ -9036,7 +9084,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onDescargarPdf, on
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
 
@@ -9066,7 +9114,7 @@ function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDe
             {grupos.map((g) => (
               <ClienteGrupo
                 key={g.cliente} grupo={g} productos={productos}
-                onDelete={onDelete} onUpdate={onUpdate}
+                onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
         descargandoId={descargandoId}

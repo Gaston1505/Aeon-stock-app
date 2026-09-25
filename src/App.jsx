@@ -9561,11 +9561,16 @@ function ClienteForm({ onSave }) {
 
 const FUENTE_TIPOS_MERCADO = ["Planilla propia", "Búsqueda web", "Instagram / Facebook", "Manual"];
 const SUBCATEGORIAS_COCINA = ["Anafe", "Campana", "Horno"];
+// Mismos subgrupos que usa el Catálogo de productos para Aire Acondicionado — así los precios
+// de mercado se pueden agrupar y comparar con la misma vara.
+const SUBCATEGORIAS_AIRE_MERCADO = ["Split Pared", "Piso-Techo", "Cassette", "Ducto", "Multi Split Interior", "Multi Split Exterior"];
+const SUBCATEGORIAS_MERCADO_POR_CATEGORIA = { "Aire Acondicionado": SUBCATEGORIAS_AIRE_MERCADO, "Cocina": SUBCATEGORIAS_COCINA };
 
 function PrecioMercadoForm({ onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [categoriaPrincipal, setCategoriaPrincipal] = useState("Aire Acondicionado");
   const [subcategoria, setSubcategoria] = useState("");
+  const subcategoriasDisponibles = SUBCATEGORIAS_MERCADO_POR_CATEGORIA[categoriaPrincipal] || null;
   const [especificacion, setEspecificacion] = useState("");
   const [marca, setMarca] = useState("");
   const [empresa, setEmpresa] = useState("");
@@ -9581,7 +9586,7 @@ function PrecioMercadoForm({ onSave }) {
       return;
     }
     onSave({
-      fecha, categoriaPrincipal, subcategoria: categoriaPrincipal === "Cocina" ? subcategoria : "",
+      fecha, categoriaPrincipal, subcategoria: subcategoriasDisponibles ? subcategoria : "",
       especificacion: especificacion.trim(), marca: marca.trim(), empresa: empresa.trim(),
       precioGs: Number(precioGs) || 0, precioUsd: Number(precioUsd) || 0,
       fuenteTipo, notas: notas.trim(), productoEquivalenteId: "",
@@ -9592,15 +9597,19 @@ function PrecioMercadoForm({ onSave }) {
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Categoría">
-        <select value={categoriaPrincipal} onChange={(e) => setCategoriaPrincipal(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+        <select
+          value={categoriaPrincipal}
+          onChange={(e) => { setCategoriaPrincipal(e.target.value); setSubcategoria(""); }}
+          className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}
+        >
           {ORDEN_CATEGORIA_PRINCIPAL.filter((c) => c !== "Repuestos").map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </Field>
-      {categoriaPrincipal === "Cocina" && (
+      {subcategoriasDisponibles && (
         <Field label="Subcategoría">
           <select value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
             <option value="">Elegir...</option>
-            {SUBCATEGORIAS_COCINA.map((s) => <option key={s} value={s}>{s}</option>)}
+            {subcategoriasDisponibles.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
       )}
@@ -9625,9 +9634,121 @@ function PrecioMercadoForm({ onSave }) {
   );
 }
 
+// Una ficha de precio de mercado — editable inline, con el link al producto propio y el
+// semáforo de diferencia contra nuestro precio de lista.
+function PrecioMercadoCard({ r, productos, productosPorGrupo, onDelete, onUpdateField }) {
+  const producto = productos.find((p) => p.id === r.productoEquivalenteId);
+  const nuestro = producto ? Number(producto.precioLista) || 0 : 0;
+  const diferencia = producto && nuestro && r.precioUsd ? ((r.precioUsd - nuestro) / nuestro) * 100 : null;
+  return (
+    <div className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium" style={{ color: INK }}>{r.especificacion}</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>{r.fecha} · {r.fuenteTipo}</p>
+        </div>
+        <button onClick={() => onDelete(r.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+          <Trash2 size={14} style={{ color: MUTED }} />
+        </button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
+          <ComentarioEditor value={r.empresa} onSave={(v) => onUpdateField(r.id, "empresa", v)} placeholder="Empresa" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Marca</p>
+          <ComentarioEditor value={r.marca} onSave={(v) => onUpdateField(r.id, "marca", v)} placeholder="Marca" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio Gs</p>
+          <ComentarioEditor value={String(r.precioGs || "")} onSave={(v) => onUpdateField(r.id, "precioGs", Number(v) || 0)} placeholder="0" />
+        </div>
+        <div>
+          <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio U$S</p>
+          <ComentarioEditor value={String(r.precioUsd || "")} onSave={(v) => onUpdateField(r.id, "precioUsd", Number(v) || 0)} placeholder="0" />
+        </div>
+      </div>
+      <div className="mt-2">
+        <p className="text-[11px] mb-1" style={{ color: MUTED }}>Producto equivalente en nuestro catálogo</p>
+        <SelectorProducto
+          productos={productos} productosPorGrupo={productosPorGrupo}
+          value={r.productoEquivalenteId} onChange={(id) => onUpdateField(r.id, "productoEquivalenteId", id)}
+          placeholder="Vincular a un producto nuestro..."
+        />
+      </div>
+      {producto && (
+        <div
+          className="mt-2 px-2.5 py-2 rounded-md text-xs flex items-center justify-between flex-wrap gap-1"
+          style={{ backgroundColor: diferencia > 0 ? "#ECFDF5" : diferencia < 0 ? "#FEF2F2" : "#F7F8FA", color: INK }}
+        >
+          <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
+          {diferencia !== null && (
+            <span className="font-semibold">
+              {/* diferencia = (precio del competidor - nuestro) / nuestro — positiva significa que el
+                  competidor cobra más que nosotros, o sea que nosotros estamos más baratos. */}
+              {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
+            </span>
+          )}
+        </div>
+      )}
+      {r.notas && <p className="text-xs mt-1.5 italic" style={{ color: MUTED }}>{r.notas}</p>}
+    </div>
+  );
+}
+
+// Un grupo colapsable (categoría principal, o subcategoría adentro de ella) — abierto por
+// default para no esconder nada, con la cantidad de registros al lado del título.
+function GrupoPrecioMercado({ titulo, nivel, cantidad, children }) {
+  const [abierto, setAbierto] = useState(true);
+  return (
+    <div className={nivel === 0 ? "mb-4" : "mb-3 pl-3 border-l-2"} style={nivel === 0 ? {} : { borderColor: BORDER }}>
+      <button onClick={() => setAbierto((a) => !a)} className="w-full flex items-center gap-1.5 text-left py-1">
+        <ChevronRight size={nivel === 0 ? 15 : 12} style={{ transform: abierto ? "rotate(90deg)" : "none", transition: "transform .15s", color: MUTED, flexShrink: 0 }} />
+        <span className={nivel === 0 ? "text-base font-bold" : "text-sm font-semibold"} style={{ color: nivel === 0 ? INK : MUTED }}>{titulo}</span>
+        <span className="text-xs" style={{ color: MUTED }}>({cantidad})</span>
+      </button>
+      {abierto && <div className="mt-2">{children}</div>}
+    </div>
+  );
+}
+
+// Agrupa por categoriaPrincipal (mismo orden que el Catálogo) y, adentro, por subcategoría —
+// los registros sin subcategoría quedan sueltos arriba de los subgrupos, no se pierden.
+function agruparPreciosMercado(registros) {
+  const porCategoria = new Map();
+  for (const r of registros) {
+    const cat = r.categoriaPrincipal || "Otros";
+    if (!porCategoria.has(cat)) porCategoria.set(cat, []);
+    porCategoria.get(cat).push(r);
+  }
+  const ordenCat = (c) => {
+    const i = ORDEN_CATEGORIA_PRINCIPAL.indexOf(c);
+    return i === -1 ? ORDEN_CATEGORIA_PRINCIPAL.length : i;
+  };
+  const categorias = [...porCategoria.entries()].sort((a, b) => ordenCat(a[0]) - ordenCat(b[0]));
+  return categorias.map(([categoria, items]) => {
+    const sinSub = items.filter((r) => !(r.subcategoria || "").trim());
+    const conSub = items.filter((r) => (r.subcategoria || "").trim());
+    const subcategoriasOrden = SUBCATEGORIAS_MERCADO_POR_CATEGORIA[categoria] || [];
+    const porSub = new Map();
+    for (const r of conSub) {
+      const sub = r.subcategoria.trim();
+      if (!porSub.has(sub)) porSub.set(sub, []);
+      porSub.get(sub).push(r);
+    }
+    const subgrupos = [...porSub.entries()].sort((a, b) => {
+      const ia = subcategoriasOrden.indexOf(a[0]); const ib = subcategoriasOrden.indexOf(b[0]);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+    return { categoria, total: items.length, sinSub, subgrupos };
+  });
+}
+
 // Compara precios de la competencia (relevados a mano, por planilla o por la futura
 // investigación mensual) contra nuestro precioLista, producto por producto — para saber cómo
-// estamos parados en precio sin tener que armar la comparación a ojo cada vez.
+// estamos parados en precio sin tener que armar la comparación a ojo cada vez. Agrupado en
+// grandes grupos y subgrupos, igual que el Catálogo de productos, para navegar cómodo.
 function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, onDelete, onUpdateField }) {
   const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productos), [productos]);
 
@@ -9638,80 +9759,39 @@ function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, 
   }, [preciosMercado, query]);
 
   const ordenados = useMemo(() => [...filtrados].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "")), [filtrados]);
+  const grupos = useMemo(() => agruparPreciosMercado(ordenados), [ordenados]);
 
   return (
     <Section
       title="Precios de mercado"
-      subtitle="Precios de la competencia relevados a mano o por la investigación mensual — vinculá cada uno a un producto nuestro para comparar contra nuestro precio de lista."
+      subtitle="Precios de la competencia relevados a mano o por la investigación mensual — agrupados igual que el catálogo, para comparar rápido contra nuestro precio de lista."
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo registro"
     >
       {ordenados.length === 0 ? (
         <EmptyState icon={TrendingUp} title="Todavía no hay precios de mercado cargados" subtitle="Cargalos a mano, importalos de una planilla, o esperá la próxima investigación mensual." />
       ) : (
-        <div className="space-y-2.5">
-          {ordenados.map((r) => {
-            const producto = productos.find((p) => p.id === r.productoEquivalenteId);
-            const nuestro = producto ? Number(producto.precioLista) || 0 : 0;
-            const diferencia = producto && nuestro && r.precioUsd ? ((r.precioUsd - nuestro) / nuestro) * 100 : null;
-            return (
-              <div key={r.id} className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium" style={{ color: INK }}>{r.especificacion}</p>
-                    <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-                      {[r.categoriaPrincipal, r.subcategoria].filter(Boolean).join(" — ")} · {r.fecha} · {r.fuenteTipo}
-                    </p>
-                  </div>
-                  <button onClick={() => onDelete(r.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
-                    <Trash2 size={14} style={{ color: MUTED }} />
-                  </button>
+        <div>
+          {grupos.map(({ categoria, total, sinSub, subgrupos }) => (
+            <GrupoPrecioMercado key={categoria} titulo={categoria} nivel={0} cantidad={total}>
+              {sinSub.length > 0 && (
+                <div className="space-y-2.5 mb-3">
+                  {sinSub.map((r) => (
+                    <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} />
+                  ))}
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
-                  <div>
-                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
-                    <ComentarioEditor value={r.empresa} onSave={(v) => onUpdateField(r.id, "empresa", v)} placeholder="Empresa" />
+              )}
+              {subgrupos.map(([subcategoria, items]) => (
+                <GrupoPrecioMercado key={subcategoria} titulo={subcategoria} nivel={1} cantidad={items.length}>
+                  <div className="space-y-2.5">
+                    {items.map((r) => (
+                      <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} />
+                    ))}
                   </div>
-                  <div>
-                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Marca</p>
-                    <ComentarioEditor value={r.marca} onSave={(v) => onUpdateField(r.id, "marca", v)} placeholder="Marca" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio Gs</p>
-                    <ComentarioEditor value={String(r.precioGs || "")} onSave={(v) => onUpdateField(r.id, "precioGs", Number(v) || 0)} placeholder="0" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Precio U$S</p>
-                    <ComentarioEditor value={String(r.precioUsd || "")} onSave={(v) => onUpdateField(r.id, "precioUsd", Number(v) || 0)} placeholder="0" />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <p className="text-[11px] mb-1" style={{ color: MUTED }}>Producto equivalente en nuestro catálogo</p>
-                  <SelectorProducto
-                    productos={productos} productosPorGrupo={productosPorGrupo}
-                    value={r.productoEquivalenteId} onChange={(id) => onUpdateField(r.id, "productoEquivalenteId", id)}
-                    placeholder="Vincular a un producto nuestro..."
-                  />
-                </div>
-                {producto && (
-                  <div
-                    className="mt-2 px-2.5 py-2 rounded-md text-xs flex items-center justify-between flex-wrap gap-1"
-                    style={{ backgroundColor: diferencia > 0 ? "#ECFDF5" : diferencia < 0 ? "#FEF2F2" : "#F7F8FA", color: INK }}
-                  >
-                    <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
-                    {diferencia !== null && (
-                      <span className="font-semibold">
-                        {/* diferencia = (precio del competidor - nuestro) / nuestro — positiva significa que el
-                            competidor cobra más que nosotros, o sea que nosotros estamos más baratos. */}
-                        {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
-                      </span>
-                    )}
-                  </div>
-                )}
-                {r.notas && <p className="text-xs mt-1.5 italic" style={{ color: MUTED }}>{r.notas}</p>}
-              </div>
-            );
-          })}
+                </GrupoPrecioMercado>
+              ))}
+            </GrupoPrecioMercado>
+          ))}
         </div>
       )}
     </Section>

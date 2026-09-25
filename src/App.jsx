@@ -9634,18 +9634,72 @@ function PrecioMercadoForm({ onSave }) {
   );
 }
 
+// Da el precio de un registro en la moneda que se está mirando — si ya lo tiene cargado en esa
+// moneda lo usa tal cual; si no, lo convierte con el tipo de cambio fijado arriba (y lo marca
+// como "convertido" para que quede claro que no es el dato original).
+function precioEnMoneda(r, monedaVista, tc) {
+  const gs = Number(r.precioGs) || 0;
+  const usd = Number(r.precioUsd) || 0;
+  if (monedaVista === "usd") {
+    if (usd > 0) return { valor: usd, convertido: false };
+    if (gs > 0 && tc > 0) return { valor: gs / tc, convertido: true };
+    return null;
+  }
+  if (gs > 0) return { valor: gs, convertido: false };
+  if (usd > 0 && tc > 0) return { valor: usd * tc, convertido: true };
+  return null;
+}
+
+// Barra fija arriba de la lista: elegís en qué moneda mirar todo, y el tipo de cambio que se usa
+// para convertir los registros que solo tengan cargada la otra moneda.
+function ConversorMonedaMercado({ monedaVista, onMonedaVista, tipoCambio, onTipoCambio }) {
+  return (
+    <div className="flex items-center gap-2.5 flex-wrap p-2.5 rounded-lg border mb-3" style={{ borderColor: BORDER, backgroundColor: "#F7F8FA" }}>
+      <span className="text-xs font-medium" style={{ color: MUTED }}>Ver precios en</span>
+      <div className="flex rounded-md border overflow-hidden shrink-0" style={{ borderColor: BORDER }}>
+        <button
+          onClick={() => onMonedaVista("gs")}
+          className="text-xs px-3 py-1.5 font-medium"
+          style={{ backgroundColor: monedaVista === "gs" ? ACCENT : "#FFFFFF", color: monedaVista === "gs" ? "#FFFFFF" : MUTED }}
+        >
+          Guaraníes
+        </button>
+        <button
+          onClick={() => onMonedaVista("usd")}
+          className="text-xs px-3 py-1.5 font-medium"
+          style={{ backgroundColor: monedaVista === "usd" ? ACCENT : "#FFFFFF", color: monedaVista === "usd" ? "#FFFFFF" : MUTED }}
+        >
+          Dólares
+        </button>
+      </div>
+      <span className="text-xs shrink-0" style={{ color: MUTED }}>Tipo de cambio (Gs por U$S)</span>
+      <div style={{ width: 110 }}>
+        <TextInput type="number" value={tipoCambio} onChange={(e) => onTipoCambio(e.target.value)} placeholder="Ej: 7300" />
+      </div>
+      <span className="text-[11px]" style={{ color: MUTED }}>Solo se usa para convertir los registros que no tengan cargada esa moneda.</span>
+    </div>
+  );
+}
+
 // Una ficha de precio de mercado — editable inline, con el link al producto propio y el
 // semáforo de diferencia contra nuestro precio de lista.
-function PrecioMercadoCard({ r, productos, productosPorGrupo, onDelete, onUpdateField }) {
+function PrecioMercadoCard({ r, productos, productosPorGrupo, onDelete, onUpdateField, monedaVista, tipoCambio }) {
   const producto = productos.find((p) => p.id === r.productoEquivalenteId);
   const nuestro = producto ? Number(producto.precioLista) || 0 : 0;
   const diferencia = producto && nuestro && r.precioUsd ? ((r.precioUsd - nuestro) / nuestro) * 100 : null;
+  const enMoneda = precioEnMoneda(r, monedaVista, tipoCambio);
   return (
     <div className="p-3 rounded-lg border" style={{ borderColor: BORDER }}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-medium" style={{ color: INK }}>{r.especificacion}</p>
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>{r.fecha} · {r.fuenteTipo}</p>
+          {enMoneda && (
+            <p className="text-sm font-semibold mt-1" style={{ color: ACCENT }}>
+              {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString()}`}
+              {enMoneda.convertido && <span className="font-normal" style={{ color: MUTED }}> (convertido)</span>}
+            </p>
+          )}
         </div>
         <button onClick={() => onDelete(r.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
           <Trash2 size={14} style={{ color: MUTED }} />
@@ -9751,6 +9805,8 @@ function agruparPreciosMercado(registros) {
 // grandes grupos y subgrupos, igual que el Catálogo de productos, para navegar cómodo.
 function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, onDelete, onUpdateField }) {
   const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productos), [productos]);
+  const [monedaVista, setMonedaVista] = useState("usd");
+  const [tipoCambio, setTipoCambio] = useState("");
 
   const filtrados = useMemo(() => {
     const q = query.toLowerCase();
@@ -9772,12 +9828,13 @@ function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, 
         <EmptyState icon={TrendingUp} title="Todavía no hay precios de mercado cargados" subtitle="Cargalos a mano, importalos de una planilla, o esperá la próxima investigación mensual." />
       ) : (
         <div>
+          <ConversorMonedaMercado monedaVista={monedaVista} onMonedaVista={setMonedaVista} tipoCambio={tipoCambio} onTipoCambio={setTipoCambio} />
           {grupos.map(({ categoria, total, sinSub, subgrupos }) => (
             <GrupoPrecioMercado key={categoria} titulo={categoria} nivel={0} cantidad={total}>
               {sinSub.length > 0 && (
                 <div className="space-y-2.5 mb-3">
                   {sinSub.map((r) => (
-                    <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} />
+                    <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} monedaVista={monedaVista} tipoCambio={Number(tipoCambio) || 0} />
                   ))}
                 </div>
               )}
@@ -9785,7 +9842,7 @@ function PreciosMercadoView({ preciosMercado, productos, query, onQuery, onNew, 
                 <GrupoPrecioMercado key={subcategoria} titulo={subcategoria} nivel={1} cantidad={items.length}>
                   <div className="space-y-2.5">
                     {items.map((r) => (
-                      <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} />
+                      <PrecioMercadoCard key={r.id} r={r} productos={productos} productosPorGrupo={productosPorGrupo} onDelete={onDelete} onUpdateField={onUpdateField} monedaVista={monedaVista} tipoCambio={Number(tipoCambio) || 0} />
                     ))}
                   </div>
                 </GrupoPrecioMercado>

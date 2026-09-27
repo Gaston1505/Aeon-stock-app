@@ -2312,7 +2312,8 @@ export default function App() {
   const deletePrecioMayorista = (id) => deleteItem(COLLECTIONS.preciosMayorista, id);
 
   // Matriz de costos: un solo doc que se pisa con setDoc/merge — no hay historial de versiones.
-  const updateMatrizCostos = (patch) => setDoc(doc(db, COLLECTIONS.configuracion, MATRIZ_COSTOS_DOC_ID), patch, { merge: true });
+  const updateMatrizCostos = (patch) => setDoc(doc(db, COLLECTIONS.configuracion, MATRIZ_COSTOS_DOC_ID), patch, { merge: true })
+    .catch((e) => console.error("Firestore set error (matrizCostos)", e));
 
   const addOrdenCompra = (data) => addItem(COLLECTIONS.ordenesCompra, data);
   const updateOrdenCompra = (id, data) => updateItem(COLLECTIONS.ordenesCompra, id, data);

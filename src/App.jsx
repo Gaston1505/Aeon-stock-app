@@ -155,10 +155,13 @@ const COLLECTIONS = {
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 
-// Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas
-// y Conteo de stock. La restricción real está en firestore.rules — esto solo evita que la UI
-// ofrezca algo que después las reglas van a rechazar.
-const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos", "conteo"];
+// Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas,
+// Conteo de stock, Maestro de equipos y Banco de recuperables (los cards del Resumen de
+// depósito ya linkeaban a estos dos últimos — sin esto quedaban como links muertos). No incluye
+// Catálogo/Muestras porque esas pantallas muestran precio de lista y costos, que quedan fuera
+// del alcance de este rol. La restricción real está en firestore.rules — esto solo evita que la
+// UI ofrezca algo que después las reglas van a rechazar.
+const TABS_DEPOSITO = ["deposito", "playa", "entradas", "movimientos", "conteo", "equipos", "recuperables"];
 
 // Manual de uso: dos páginas HTML estáticas servidas junto con la app en GitHub Pages
 // (public/manual.html y public/manual-deposito.html) — así no depende de compartir un

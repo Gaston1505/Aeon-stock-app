@@ -184,6 +184,12 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
+// Punto para miles, coma para decimales (es-PY) con cantidad fija de decimales — reemplaza
+// Number.prototype.toFixed en todo el código, que siempre usa punto decimal sin separador de
+// miles (formato de EE.UU.) sin importar el idioma del navegador.
+function fmtN(n, decimales = 2) {
+  return (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
+}
 // Pone mayúscula la primera letra de cada palabra (nombre de cliente/constructora) sin tocar
 // el resto de cada palabra — así una sigla ya escrita en mayúsculas (CCI, SA) no se rompe.
 function capitalizarPalabras(s) {
@@ -4517,12 +4523,12 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
         <IndicadorCard
           label="Ventas del mes"
           value={`U$S ${ventasMes.toLocaleString()}`}
-          sub={variacion === null ? "Sin datos del mes anterior" : `${variacion >= 0 ? "▲" : "▼"} ${Math.abs(variacion).toFixed(0)}% vs. mes anterior`}
+          sub={variacion === null ? "Sin datos del mes anterior" : `${variacion >= 0 ? "▲" : "▼"} ${fmtN(Math.abs(variacion), 0)}% vs. mes anterior`}
           subColor={variacion === null ? MUTED : variacion >= 0 ? "#15803D" : "#B91C1C"}
         />
         <IndicadorCard
           label="Conversión de cotizaciones"
-          value={tasaConversion === null ? "—" : `${tasaConversion.toFixed(0)}%`}
+          value={tasaConversion === null ? "—" : `${fmtN(tasaConversion, 0)}%`}
           sub={`${resumenCot.Ganada.n} ganada(s) · ${resumenCot.Perdida.n} perdida(s)`}
         />
         <IndicadorCard
@@ -6992,7 +6998,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     if (file.size > MAX_FICHA_BYTES) {
-      setError(`Ese PDF pesa ${(file.size / 1024).toFixed(0)}KB — el máximo es ${(MAX_FICHA_BYTES / 1024).toFixed(0)}KB. Probá comprimirlo o recortar imágenes pesadas.`);
+      setError(`Ese PDF pesa ${fmtN(file.size / 1024, 0)}KB — el máximo es ${fmtN(MAX_FICHA_BYTES / 1024, 0)}KB. Probá comprimirlo o recortar imágenes pesadas.`);
       e.target.value = "";
       return;
     }
@@ -7129,10 +7135,10 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         </div>
       )}
 
-      <Field label={`Ficha técnica (PDF, máx. ${(MAX_FICHA_BYTES / 1024).toFixed(0)}KB)`}>
+      <Field label={`Ficha técnica (PDF, máx. ${fmtN(MAX_FICHA_BYTES / 1024, 0)}KB)`}>
         <input type="file" accept="application/pdf" onChange={handleFicha} className="text-xs" />
       </Field>
-      {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name} ({(fichaFile.size / 1024).toFixed(0)}KB)</p>}
+      {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name} ({fmtN(fichaFile.size / 1024, 0)}KB)</p>}
 
       {producto?.fichaTecnicaNombre && !fichaFile && (
         <p className="text-xs mb-2" style={{ color: MUTED }}>Ficha técnica actual: {producto.fichaTecnicaNombre} (se conserva si no subís una nueva)</p>
@@ -7987,7 +7993,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
             className="text-xs px-2.5 py-1 rounded-full"
             style={multiplicador === m ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
           >
-            ×{m.toFixed(2)}
+            ×{fmtN(m, 2)}
           </button>
         ))}
       </div>
@@ -8004,7 +8010,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
           </Field>
           {montoAeonUsd != null && (
             <p className="text-xs mb-2" style={{ color: ACCENT }}>
-              ≈ U$S {montoAeonUsd.toFixed(2)} al cliente · costo real U$S {costoLuisUsd.toFixed(2)}
+              ≈ U$S {fmtN(montoAeonUsd)} al cliente · costo real U$S {fmtN(costoLuisUsd)}
             </p>
           )}
           <Field label="Descripción (opcional)"><TextInput value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder={descripcionFinal} /></Field>
@@ -8415,13 +8421,13 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
             <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
               <div className="min-w-0">
                 <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
-                <span style={{ color: MUTED }}> · {s.descripcion} · U$S {s.monto.toFixed(2)}</span>
+                <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
               </div>
               <button onClick={() => dI.quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
             </div>
           ))}
           <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Subtotal servicios</span><span>U$S {dI.totalServicios.toFixed(2)}</span>
+            <span>Subtotal servicios</span><span>U$S {fmtN(dI.totalServicios)}</span>
           </div>
         </div>
       )}
@@ -8463,9 +8469,9 @@ function IndicadorDescuentoLinea({ producto, precioUnit, matrizCostos }) {
     <span
       className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
       style={{ backgroundColor: banda.bg, color: banda.color }}
-      title={`Margen actual: ${margenPct.toFixed(1)}% (piso ${catCfg.margenMinimoPct}%, ideal ${catCfg.margenIdealMinPct}-${catCfg.margenIdealMaxPct}%)`}
+      title={`Margen actual: ${fmtN(margenPct, 1)}% (piso ${catCfg.margenMinimoPct}%, ideal ${catCfg.margenIdealMinPct}-${catCfg.margenIdealMaxPct}%)`}
     >
-      {banda.label} ({margenPct.toFixed(0)}%){maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${maxDesc.toFixed(0)}%` : ""}
+      {banda.label} ({fmtN(margenPct, 0)}%){maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${fmtN(maxDesc, 0)}%` : ""}
     </span>
   );
 }
@@ -9054,7 +9060,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
         <div><p style={{ color: MUTED }}>Venta</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.ventaTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Costo</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.costoTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Margen bruto</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>U$S {fmt(r.margenTotal)}</p></div>
-        <div><p style={{ color: MUTED }}>Margen bruto %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{r.margenTotalPct.toFixed(1)}%</p></div>
+        <div><p style={{ color: MUTED }}>Margen bruto %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{fmtN(r.margenTotalPct, 1)}%</p></div>
       </div>
       <div className="grid grid-cols-3 gap-2 text-xs mb-2 p-2 rounded" style={{ backgroundColor: ACCENT_LIGHT }}>
         <div>
@@ -9067,7 +9073,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
         </div>
         <div>
           <p style={{ color: MUTED }}>Margen empresa %</p>
-          <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>{r.margenEmpresaPct.toFixed(1)}%</p>
+          <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>{fmtN(r.margenEmpresaPct, 1)}%</p>
         </div>
       </div>
       {r.descuentoPct > 0 && (
@@ -9076,7 +9082,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
       {r.instalacionMonto > 0 && (
         <p className="text-xs mb-1.5" style={{ color: MUTED }}>
           Instalación/servicios U$S {fmt(r.instalacionMonto)} sumado a la venta — costo del técnico U$S {fmt(r.costoInstalacion)}
-          {" "}({r.instalacionMonto > 0 ? ((r.costoInstalacion / r.instalacionMonto) * 100).toFixed(0) : 0}%
+          {" "}({r.instalacionMonto > 0 ? fmtN((r.costoInstalacion / r.instalacionMonto) * 100, 0) : 0}%
           {r.serviciosAdicionales?.length > 0 ? ", con costo real de Luis donde se cargó con el sugeridor" : ", estimado"}).
         </p>
       )}
@@ -9086,7 +9092,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
               <span style={{ color: f.sinCosto ? "#B45309" : colorMargen(f.margen) }}>
-                {f.sinCosto ? "Sin costo cargado" : `${f.margenPct.toFixed(1)}%`}
+                {f.sinCosto ? "Sin costo cargado" : `${fmtN(f.margenPct, 1)}%`}
               </span>
             </div>
             <p style={{ color: MUTED }}>
@@ -9735,13 +9741,13 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
                 <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
                   <div className="min-w-0">
                     <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
-                    <span style={{ color: MUTED }}> · {s.descripcion} · U$S {s.monto.toFixed(2)}</span>
+                    <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
                   </div>
                   <button onClick={() => quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
                 </div>
               ))}
               <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-                <span>Subtotal servicios</span><span>U$S {totalServicios.toFixed(2)}</span>
+                <span>Subtotal servicios</span><span>U$S {fmtN(totalServicios)}</span>
               </div>
             </div>
           )}
@@ -10112,7 +10118,7 @@ function PrecioMercadoCard({ r, productos, productosPorGrupo, onDelete, onUpdate
             <span className="font-semibold">
               {/* diferencia = (precio del competidor - nuestro) / nuestro — positiva significa que el
                   competidor cobra más que nosotros, o sea que nosotros estamos más baratos. */}
-              {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
+              {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{fmtN(diferencia, 1)}%)
             </span>
           )}
         </div>
@@ -10568,7 +10574,7 @@ function PrecioMayoristaCard({ r, productos, productosPorGrupo, onDelete, onUpda
           <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
           {diferencia !== null && (
             <span className="font-semibold">
-              {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{diferencia.toFixed(1)}%)
+              {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{fmtN(diferencia, 1)}%)
             </span>
           )}
         </div>
@@ -10972,14 +10978,14 @@ function OrdenCompraForm({ orden, productos, matrizCostos, cotizaciones, comprom
                     onChange={(e) => actualizarCantidad(i, e.target.value)}
                     className="border rounded px-1 py-0.5 text-xs" style={{ width: 44, borderColor: BORDER }}
                   />
-                  <span style={{ color: MUTED }}>× {l.m3Unit.toFixed(3)} m3 = {l.m3Total.toFixed(2)} m3</span>
+                  <span style={{ color: MUTED }}>× {fmtN(l.m3Unit, 3)} m3 = {fmtN(l.m3Total)} m3</span>
                 </div>
               </div>
               <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
             </div>
           ))}
           <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Total</span><span>{m3TotalPedido.toFixed(2)} m3</span>
+            <span>Total</span><span>{fmtN(m3TotalPedido)} m3</span>
           </div>
         </div>
       )}
@@ -11021,7 +11027,7 @@ function OrdenCompraCard({ orden, onEdit, onDelete, onUpdate }) {
       </div>
       <p className="text-sm font-semibold" style={{ color: INK }}>{orden.nombre || "Pedido sin nombre"}</p>
       <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-        <span className="text-xs" style={{ color: MUTED }}>{(orden.lineas || []).length} producto(s) · {(orden.m3TotalPedido || 0).toFixed(2)} m3</span>
+        <span className="text-xs" style={{ color: MUTED }}>{(orden.lineas || []).length} producto(s) · {fmtN(orden.m3TotalPedido || 0)} m3</span>
         <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: badge.bg, color: badge.color }}>{orden.estado}</span>
       </div>
       {(orden.contenedoresSugeridos || []).length > 0 && (

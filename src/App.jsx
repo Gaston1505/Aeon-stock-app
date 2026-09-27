@@ -3444,10 +3444,10 @@ export default function App() {
 
       {/* Drawers */}
       <Drawer open={drawer === "equipo"} onClose={() => setDrawer(null)} title="Nuevo equipo">
-        <EquipoForm equipos={equipos} onSave={(d) => { addEquipo(d); setDrawer(null); }} />
+        <EquipoForm equipos={equipos} productos={productos} onSave={(d) => { addEquipo(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "escaneo"} onClose={() => setDrawer(null)} title="Cargar por escaneo">
-        <EscaneoUnidadesForm onSave={(d) => { addEquiposPorEscaneo(d); setDrawer(null); }} />
+        <EscaneoUnidadesForm productos={productos} onSave={(d) => { addEquiposPorEscaneo(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "escanear-equipo"} onClose={() => setDrawer(null)} title="Buscar equipo por escaneo">
         <EscanearEquipoForm
@@ -3462,7 +3462,7 @@ export default function App() {
         <MovimientoForm equipos={equipos} playa={playa} productos={productos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addMovimiento(d) : crearSolicitud("salida", d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "entrada"} onClose={() => setDrawer(null)} title="Nueva entrada">
-        <EntradaForm equipos={equipos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addEntrada(d) : crearSolicitud("entrada", d); setDrawer(null); }} />
+        <EntradaForm equipos={equipos} productos={productos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addEntrada(d) : crearSolicitud("entrada", d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "venta"} onClose={() => setDrawer(null)} title="Nueva venta">
         <VentaForm productos={productos} onSave={(d) => { addVenta(d); setDrawer(null); }} />
@@ -4576,6 +4576,7 @@ function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onD
   const [extrayendo, setExtrayendo] = useState(false);
   const [repuestoId, setRepuestoId] = useState("");
   const [cantidadExtraida, setCantidadExtraida] = useState(1);
+  const productosRepuestosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosRepuestos), [productosRepuestos]);
 
   // Al pasar a Stock vendible se crea una ficha de equipo nueva — si este ítem ya tenía
   // comentario/trazabilidad cargado, preguntamos si lo pasamos o si arranca en blanco.
@@ -4656,12 +4657,10 @@ function PlayaCard({ item, productosRepuestos, onDerivar, onExtraerRepuesto, onD
       ) : (
         <div className="mt-2.5 pt-3 border-t space-y-2" style={{ borderColor: BORDER }}>
           <p className="text-xs" style={{ color: MUTED }}>Suma stock a un repuesto del catálogo sin sacar este equipo de playa — para desarmaderos de los que se van rescatando piezas de a poco.</p>
-          <Select value={repuestoId} onChange={(e) => setRepuestoId(e.target.value)} style={{ ...inputStyle, padding: "4px 8px", fontSize: 12 }}>
-            <option value="">Repuesto del catálogo...</option>
-            {productosRepuestos.map((p) => (
-              <option key={p.id} value={p.id}>{p.nombre}{p.descripcion ? " — " + p.descripcion : ""}</option>
-            ))}
-          </Select>
+          <SelectorProducto
+            productos={productosRepuestos} productosPorGrupo={productosRepuestosPorGrupo}
+            value={repuestoId} onChange={setRepuestoId} placeholder="Repuesto del catálogo..."
+          />
           <div className="flex items-center gap-2">
             <TextInput type="number" min="1" value={cantidadExtraida} onChange={(e) => setCantidadExtraida(e.target.value)} placeholder="Cantidad" />
             <button onClick={confirmarExtraccion} className="text-xs px-3 py-2 rounded shrink-0" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
@@ -5224,7 +5223,7 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField, onUp
 }
 
 // ---------- Forms ----------
-function EquipoForm({ equipos, onSave }) {
+function EquipoForm({ equipos, productos, onSave }) {
   const [codigo, setCodigo] = useState("");
   const [codigoAuto, setCodigoAuto] = useState(true);
   const [serie, setSerie] = useState("");
@@ -5258,7 +5257,7 @@ function EquipoForm({ equipos, onSave }) {
 
   return (
     <div>
-      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => handleModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={modelo} onChange={handleModelo} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
       <Field label="Código interno"><TextInput value={codigo} onChange={(e) => handleCodigo(e.target.value)} placeholder="Se arma solo a partir del modelo" /></Field>
       <Field label="N° de serie"><TextInput value={serie} onChange={(e) => setSerie(e.target.value)} placeholder="N° de serie de fábrica" /></Field>
       <Field label="Cantidad"><TextInput type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
@@ -5303,7 +5302,7 @@ function InfoTip({ children }) {
 
 const FORMATOS_BARCODE = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code", "itf", "codabar"];
 
-function EscaneoUnidadesForm({ onSave }) {
+function EscaneoUnidadesForm({ productos, onSave }) {
   const [modelo, setModelo] = useState("");
   const [estado, setEstado] = useState("En depósito");
   const [ubicacion, setUbicacion] = useState("Depósito principal");
@@ -5418,7 +5417,7 @@ function EscaneoUnidadesForm({ onSave }) {
         Cada código escaneado carga una unidad individual (cantidad 1) con ese número de serie —
         para cuando lleguen productos con serie propia por caja.
       </p>
-      <Field label="Modelo"><TextInput value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={modelo} onChange={setModelo} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
       <Field label="Estado inicial">
         <Select value={estado} onChange={(e) => setEstado(e.target.value)}>
           {ESTADOS.filter((s) => s !== "Dado de baja").map((s) => <option key={s}>{s}</option>)}
@@ -5520,6 +5519,9 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
     if (cat.type === "producto-repuesto") return productos.filter((p) => p.categoriaPrincipal === "Repuestos");
     return [];
   }, [cat, equipos, playa, productos]);
+  // Se calcula siempre (no solo cuando cat.type === "producto-repuesto") porque los hooks no
+  // pueden llamarse condicionalmente — es barato de calcular igual aunque no se use.
+  const opcionesPorGrupo = useMemo(() => agruparProductosPorCategoria(opciones), [opciones]);
 
   const source = opciones.find((o) => o.id === sourceId);
   const comprometido = source && cat.type === "equipo" ? (Number(source.comprometido) || 0) : 0;
@@ -5600,19 +5602,25 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
       </Field>
       {cat && (
         <Field label="Producto">
-          <Select value={sourceId} onChange={(e) => { setSourceId(e.target.value); setCantidad(1); }}>
-            <option value="">Seleccionar...</option>
-            {opciones.map((o) => {
-              const label = cat.type === "equipo" ? `${o.codigo} — ${o.modelo}`
-                : cat.type === "playa" ? o.descripcion
-                : cat.type === "producto-repuesto" ? `${o.nombre}${o.descripcion ? " — " + o.descripcion : ""}`
-                : o.nombre;
-              const libres = cat.type === "equipo" ? Math.max(0, (Number(o.cantidad) || 1) - (Number(o.comprometido) || 0))
-                : cat.type === "producto-repuesto" ? (Number(o.stockDisponible) || 0)
-                : (o.cantidad || 1);
-              return <option key={o.id} value={o.id}>{label} (disponible: {libres})</option>;
-            })}
-          </Select>
+          {cat.type === "equipo" ? (
+            <SelectorEquipo
+              equiposDisponibles={opciones} productos={productos}
+              value={sourceId} onChange={(id) => { setSourceId(id); setCantidad(1); }}
+            />
+          ) : cat.type === "producto-repuesto" ? (
+            <SelectorProducto
+              productos={opciones} productosPorGrupo={opcionesPorGrupo}
+              value={sourceId} onChange={(id) => { setSourceId(id); setCantidad(1); }}
+              placeholder="Repuesto..."
+            />
+          ) : (
+            <Select value={sourceId} onChange={(e) => { setSourceId(e.target.value); setCantidad(1); }}>
+              <option value="">Seleccionar...</option>
+              {opciones.map((o) => (
+                <option key={o.id} value={o.id}>{o.descripcion} (disponible: {o.cantidad || 1})</option>
+              ))}
+            </Select>
+          )}
           {opciones.length === 0 && (
             <p className="text-xs mt-1" style={{ color: "#B45309" }}>No hay stock disponible en esta categoría.</p>
           )}
@@ -6373,7 +6381,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
   );
 }
 
-function EntradaForm({ equipos, onSave, esAdmin = true }) {
+function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
   const [fecha, setFecha] = useState(todayISO());
   const [codigo, setCodigo] = useState("");
   const [tipo, setTipo] = useState(TIPOS_ENTRADA[0]);
@@ -6395,10 +6403,12 @@ function EntradaForm({ equipos, onSave, esAdmin = true }) {
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Equipo">
-        <Select value={codigo} onChange={(e) => setCodigo(e.target.value)}>
-          <option value="">Seleccionar equipo...</option>
-          {equipos.map((eq) => <option key={eq.id} value={eq.codigo}>{eq.codigo} — {eq.modelo}</option>)}
-        </Select>
+        <SelectorEquipo
+          equiposDisponibles={equipos} productos={productos}
+          value={equipos.find((e) => e.codigo === codigo)?.id || ""}
+          onChange={(id) => setCodigo(equipos.find((e) => e.id === id)?.codigo || "")}
+          placeholder="Elegí el modelo que está ingresando..."
+        />
       </Field>
       <Field label="Tipo de entrada"><Select value={tipo} onChange={(e) => setTipo(e.target.value)}>{TIPOS_ENTRADA.map((t) => <option key={t}>{t}</option>)}</Select></Field>
       <Field label="Origen"><TextInput value={origen} onChange={(e) => setOrigen(e.target.value)} placeholder="Ej: Cliente, Fábrica, Técnico" /></Field>
@@ -6424,8 +6434,6 @@ function VentaForm({ productos, onSave }) {
   const [cantidadNueva, setCantidadNueva] = useState(1);
   const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
-
-  const modelosCatalogo = useMemo(() => [...new Set((productos || []).map((p) => p.nombre))].sort(), [productos]);
 
   const agregarLinea = () => {
     if (!modeloNuevo.trim()) {
@@ -6465,15 +6473,10 @@ function VentaForm({ productos, onSave }) {
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Modelos vendidos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
-        <div className="flex gap-2">
-          <Field label="Modelo">
-            <TextInput value={modeloNuevo} list="modelos-venta-datalist" onChange={(e) => setModeloNuevo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" />
-          </Field>
-          <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
-        </div>
-        <datalist id="modelos-venta-datalist">
-          {modelosCatalogo.map((m) => <option key={m} value={m} />)}
-        </datalist>
+        <Field label="Modelo">
+          <SelectorModeloOTexto productos={productos} value={modeloNuevo} onChange={setModeloNuevo} placeholder="Ej: AE-AK630-9M-3G-CS-ON" />
+        </Field>
+        <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
         <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar modelo</SecondaryButton>
       </div>
       {lineas.length > 0 && (
@@ -6731,13 +6734,7 @@ function ComprometidaForm({ equipos, productos, onSave }) {
       <Field label="Razón social"><TextInput value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label="Producto">
-        <Select value={equipoId} onChange={(e) => handleEquipo(e.target.value)}>
-          <option value="">Seleccionar equipo...</option>
-          {vendibles.map((eq) => {
-            const libres = Math.max(0, (Number(eq.cantidad) || 1) - (Number(eq.comprometido) || 0));
-            return <option key={eq.id} value={eq.id}>{eq.codigo} — {eq.modelo} (disponible: {libres})</option>;
-          })}
-        </Select>
+        <SelectorEquipo equiposDisponibles={vendibles} productos={productos} value={equipoId} onChange={handleEquipo} />
       </Field>
       {equipo && productoCatalogo && (
         <p className="text-xs mb-3" style={{ color: MUTED }}>
@@ -7847,6 +7844,145 @@ function SelectorProducto({ productos, productosPorGrupo, value, onChange, place
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Elegir un EQUIPO puntual (una unidad serializada) en 2 pasos: primero el modelo, agrupado por
+// categoría igual que el Catálogo (reusa SelectorProducto tal cual), y recién ahí una lista corta
+// de las unidades disponibles de ESE modelo — nunca una lista plana de todas las unidades juntas.
+// `equiposDisponibles` ya viene filtrado por quien llama (mismo filtro de estado que usaba antes
+// de este componente) — acá solo se agrupa y se presenta.
+function SelectorEquipo({ equiposDisponibles, productos, value, onChange, placeholder }) {
+  const lista = equiposDisponibles || [];
+  const equipoSel = lista.find((e) => e.id === value);
+  const [modeloElegido, setModeloElegido] = useState(equipoSel?.modelo || "");
+
+  // Si ya viene un value seteado desde afuera (ej. reabrir un formulario), arrancar directo en el
+  // paso 2 con su modelo, en vez de forzar a elegirlo de nuevo.
+  useEffect(() => {
+    if (equipoSel && !modeloElegido) setModeloElegido(equipoSel.modelo);
+  }, [equipoSel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const modelosConStock = useMemo(() => [...new Set(lista.map((e) => e.modelo))], [lista]);
+  const productosConStock = useMemo(
+    () => (productos || []).filter((p) => modelosConStock.includes(p.nombre)),
+    [productos, modelosConStock]
+  );
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosConStock), [productosConStock]);
+  // Unidades cuyo modelo no matchea ningún producto real del catálogo (datos sueltos/viejos) —
+  // igual tienen que poder elegirse, quedan aparte en vez de escondidas.
+  const modelosSueltos = useMemo(() => {
+    const nombresCatalogo = new Set(productosConStock.map((p) => p.nombre));
+    return modelosConStock.filter((m) => !nombresCatalogo.has(m));
+  }, [modelosConStock, productosConStock]);
+
+  const elegirModelo = (id) => {
+    const p = (productos || []).find((pp) => pp.id === id);
+    if (p) setModeloElegido(p.nombre);
+  };
+
+  if (!modeloElegido) {
+    return (
+      <div>
+        <SelectorProducto
+          productos={productosConStock} productosPorGrupo={productosPorGrupo}
+          value="" onChange={elegirModelo} placeholder={placeholder || "Elegí el modelo..."}
+        />
+        {modelosSueltos.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {modelosSueltos.map((m) => (
+              <button
+                key={m} onClick={() => setModeloElegido(m)}
+                className="text-xs px-2 py-1 rounded-full border"
+                style={{ borderColor: BORDER, color: MUTED }}
+              >
+                {m} <span style={{ color: "#B45309" }}>(sin categoría)</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const unidades = lista.filter((e) => e.modelo === modeloElegido);
+  const productoDelModelo = (productos || []).find((p) => p.nombre === modeloElegido);
+  return (
+    <div>
+      <button
+        onClick={() => { setModeloElegido(""); onChange(""); }}
+        className="text-xs mb-1.5 flex items-center gap-1"
+        style={{ color: ACCENT }}
+      >
+        <ArrowLeft size={12} /> Cambiar modelo
+      </button>
+      <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+        {productoDelModelo ? <MiniFotoProducto p={productoDelModelo} size={32} /> : (
+          <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 32, height: 32, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+            <Tag size={14} style={{ color: MUTED }} />
+          </div>
+        )}
+        <CodeTag>{modeloElegido}</CodeTag>
+      </div>
+      {unidades.length === 0 ? (
+        <p className="text-xs px-1 py-2" style={{ color: "#B45309" }}>No hay unidades disponibles de este modelo.</p>
+      ) : (
+        <div className="rounded-lg border overflow-hidden" style={{ borderColor: BORDER }}>
+          {unidades.map((e) => {
+            const disponible = Math.max(0, (Number(e.cantidad) || 1) - (Number(e.comprometido) || 0));
+            const elegida = e.id === value;
+            return (
+              <button
+                key={e.id}
+                onClick={() => onChange(e.id)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 border-b last:border-0"
+                style={{ backgroundColor: elegida ? ACCENT_LIGHT : "#FFFFFF", borderColor: BORDER }}
+              >
+                <span style={{ color: INK }}>{e.codigo}</span>
+                <span className="text-xs" style={{ color: MUTED }}>disponible: {disponible}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Elegir un modelo del catálogo con el mismo selector agrupado (por categoría/subcategoría) que
+// se usa en Cotizaciones, pero para los pocos formularios donde el valor guardado es el NOMBRE
+// del modelo como texto suelto (no un productoId) — Ventas y garantías, Tránsito. Mantiene la
+// carga manual como alternativa (un modelo que todavía no está cargado en el Catálogo), con un
+// link para pasar de un modo al otro.
+function SelectorModeloOTexto({ productos, value, onChange, placeholder }) {
+  const [modoManual, setModoManual] = useState(false);
+  const datalistId = useRef(`selector-modelo-${Math.random().toString(36).slice(2)}`).current;
+  const productosDisponibles = useMemo(() => (productos || []).filter((p) => !p.noDisponible), [productos]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
+  const productoSel = productosDisponibles.find((p) => p.nombre === value);
+  const modelosCatalogo = useMemo(() => [...new Set((productos || []).map((p) => p.nombre))].sort(), [productos]);
+
+  if (modoManual) {
+    return (
+      <div>
+        <TextInput value={value} list={datalistId} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+        <datalist id={datalistId}>
+          {modelosCatalogo.map((m) => <option key={m} value={m} />)}
+        </datalist>
+        <button onClick={() => setModoManual(false)} className="text-xs mt-1" style={{ color: ACCENT }}>Elegir del catálogo</button>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <SelectorProducto
+        productos={productosDisponibles} productosPorGrupo={productosPorGrupo}
+        value={productoSel?.id || ""}
+        onChange={(id) => onChange((productos || []).find((p) => p.id === id)?.nombre || "")}
+        placeholder={placeholder}
+      />
+      <button onClick={() => setModoManual(true)} className="text-xs mt-1" style={{ color: ACCENT }}>¿No está en el catálogo? Cargarlo a mano</button>
     </div>
   );
 }
@@ -9470,15 +9606,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   const subtotalMtto = lineasMantenimiento.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0), 0);
   const mttoInfo = MANTENIMIENTO_PRECIOS[categoriaActiva];
 
-  const productosPorGrupo = useMemo(() => {
-    const grupos = new Map();
-    for (const p of productos) {
-      const key = p.subcategoria || "Otros";
-      if (!grupos.has(key)) grupos.set(key, []);
-      grupos.get(key).push(p);
-    }
-    return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [productos]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productos), [productos]);
 
   // Autocompleta el teléfono si lo tipeado coincide con la empresa (o, si no tiene empresa
   // cargada, con el nombre) de un cliente ya guardado — solo mientras el teléfono siga siendo
@@ -9687,14 +9815,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Repuestos{tipo === "mantenimiento" ? " (opcional)" : ""}</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Repuesto del catálogo">
-          <Select value={productoId} onChange={(e) => handleProducto(e.target.value)}>
-            <option value="">Seleccionar...</option>
-            {productosPorGrupo.map(([grupo, items]) => (
-              <optgroup key={grupo} label={grupo}>
-                {items.map((p) => <option key={p.id} value={p.id}>{p.descripcion || p.nombre} — {p.subcategoria2}</option>)}
-              </optgroup>
-            ))}
-          </Select>
+          <SelectorProducto productos={productos} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
         </Field>
         {productoSel && (
           <>
@@ -10806,11 +10927,6 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
   const [precioVenta, setPrecioVenta] = useState("");
   const [error, setError] = useState("");
 
-  const modelosCatalogo = useMemo(
-    () => [...new Set((productos || []).map((p) => p.nombre))].sort(),
-    [productos]
-  );
-
   const submit = () => {
     if (!modeloAsociado.trim()) {
       setError("Ingresá el modelo del producto al que corresponde este repuesto.");
@@ -10833,11 +10949,8 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
         Puede ser un repuesto de un modelo que no viaja en este mismo envío — solo sirve como referencia.
       </p>
       <Field label="Modelo del producto (referencia)">
-        <TextInput value={modeloAsociado} list="modelos-repuesto-datalist" onChange={(e) => setModeloAsociado(e.target.value)} placeholder="Ej: AE-AC-2T-30-ON" />
+        <SelectorModeloOTexto productos={productos} value={modeloAsociado} onChange={setModeloAsociado} placeholder="Ej: AE-AC-2T-30-ON" />
       </Field>
-      <datalist id="modelos-repuesto-datalist">
-        {modelosCatalogo.map((m) => <option key={m} value={m} />)}
-      </datalist>
       <Field label="Código de pieza (fábrica)"><TextInput value={codigoPieza} onChange={(e) => setCodigoPieza(e.target.value)} placeholder="Opcional" /></Field>
       <Field label="Descripción"><TextInput value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ej: placa inferior" /></Field>
       <div className="flex gap-2">
@@ -11242,8 +11355,6 @@ function TransitoForm({ envio, productos, onSave }) {
   const [lineas, setLineas] = useState(envio?.lineas || []);
   const [error, setError] = useState("");
 
-  const modelosCatalogo = useMemo(() => [...new Set((productos || []).map((p) => p.nombre))].sort(), [productos]);
-
   // La comisión se sugiere sola (4,71% del flete) pero se puede pisar a mano — solo se
   // recalcula mientras siga siendo la que se auto-completó, para no tapar un valor tipeado.
   const handleFlete = (v) => {
@@ -11300,15 +11411,10 @@ function TransitoForm({ envio, productos, onSave }) {
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Modelos en este envío</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
-        <div className="flex gap-2">
-          <Field label="Modelo">
-            <TextInput value={modeloNuevo} list="modelos-catalogo-datalist" onChange={(e) => setModeloNuevo(e.target.value)} placeholder="Ej: AE-AK630-9M-3G-CS-ON" />
-          </Field>
-          <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
-        </div>
-        <datalist id="modelos-catalogo-datalist">
-          {modelosCatalogo.map((m) => <option key={m} value={m} />)}
-        </datalist>
+        <Field label="Modelo">
+          <SelectorModeloOTexto productos={productos} value={modeloNuevo} onChange={setModeloNuevo} placeholder="Ej: AE-AK630-9M-3G-CS-ON" />
+        </Field>
+        <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
         <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar modelo</SecondaryButton>
       </div>
       {lineas.length > 0 && (

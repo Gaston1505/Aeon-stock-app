@@ -84,5 +84,7 @@ service cloud.firestore {
     match /transito/{docId} { allow read, write: if esAdmin(); }
     match /preciosMercado/{docId} { allow read, write: if esAdmin(); }
     match /preciosMayorista/{docId} { allow read, write: if esAdmin(); }
+    match /configuracion/{docId} { allow read, write: if esAdmin(); }
+    match /ordenesCompra/{docId} { allow read, write: if esAdmin(); }
   }
 }

@@ -5,6 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
+  Calculator, ShoppingCart,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -56,15 +57,24 @@ const TIPOS_ENTRADA = [
 ];
 const ESTADOS_RESULTANTES = ["Apto para venta", "Apto para venta con descuento", "Pendiente de reparación", "Muestra", "Reservado - unidad de rescate", "Dado de baja"];
 
-// Patrón de armado de precios de las planillas de fábrica (Cocina, Termocalefones, Aire
-// Acondicionado): Costo puesto en PY = Costo origen + comisión del agente (% del origen) +
-// flete (total del contenedor ÷ cantidad que entra) + despacho (% del origen). Precio de venta
-// = Costo puesto en PY × (1 + markup %). Los valores acá son los que trae cada planilla — quedan
-// editables en el formulario porque son decisiones de negocio, no una regla fija.
-const ARMADO_PRECIOS_DEFAULTS = {
-  "Cocina": { comisionPct: 5, despachoPct: 31, fletePorContenedor: 7500, markupPct: 65 },
-  "Termocalefones": { comisionPct: 5, despachoPct: 31, fletePorContenedor: 7500, markupPct: 55 },
-  "Aire Acondicionado": { comisionPct: 5, despachoPct: 35, fletePorContenedor: 7500, markupPct: 30 },
+// Matriz de costos global (colección "configuracion", doc "matrizCostos") — de acá sale el Costo
+// Real de cada producto (ver calcularCostosProducto). "aires" = Aire Acondicionado, "otros" = todo
+// el resto del catálogo (Electrodomésticos). El flete y el m3 siempre se cotejan contra el
+// contenedor 40HQ — los demás tamaños (40/20HQ/20) solo se usan para combinar en Armado de pedido.
+const MATRIZ_COSTOS_DEFAULT = {
+  comisionAgentePct: 5,
+  costoFinancieroPct: 12,
+  despachoPct: 31,
+  contenedores: {
+    "40HQ": { m3: 76.40, fleteUsd: 7500 },
+    "40": { m3: 67.70 },
+    "20HQ": { m3: 37.40 },
+    "20": { m3: 32.60 },
+  },
+  categorias: {
+    aires: { comisionVentaPct: 1.88, margenMinimoPct: 10, margenIdealMinPct: 25, margenIdealMaxPct: 30 },
+    otros: { comisionVentaPct: 2.5, margenMinimoPct: 25, margenIdealMinPct: 50, margenIdealMaxPct: 60 },
+  },
 };
 
 const ORIGENES_PLAYA = ["Técnico", "Gastón", "Cliente", "Otro"];
@@ -140,7 +150,10 @@ const COLLECTIONS = {
   conteoStock: "conteoStock",
   preciosMercado: "preciosMercado",
   preciosMayorista: "preciosMayorista",
+  ordenesCompra: "ordenesCompra",
+  configuracion: "configuracion",
 };
+const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas
 // y Conteo de stock. La restricción real está en firestore.rules — esto solo evita que la UI
@@ -702,13 +715,88 @@ function combosDisponiblesMultiSplit(productos, btuExterior, cantidad) {
     .filter((c) => c.valores.every((btu) => interiorMultiSplitPorBtu(productos, btu)));
 }
 
+// Motor de costo: a partir de lo único que se carga a mano por producto (costoOrigen,
+// contenedorCantidad) y la Matriz de costos global, arma toda la cadena hasta el Costo Real.
+// Devuelve null si falta algún dato de entrada — quien llama debe caer a producto.costoPy /
+// costoOrigen en ese caso, para no romper productos viejos o incompletos.
+function calcularCostosProducto(producto, matriz) {
+  const origen = Number(producto?.costoOrigen) || 0;
+  const cantidad = Number(producto?.contenedorCantidad) || 0;
+  if (!matriz || origen <= 0 || cantidad <= 0) return null;
+  const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
+  const catCfg = matriz.categorias?.[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
+  const fleteUsd40HQ = Number(matriz.contenedores?.["40HQ"]?.fleteUsd) || 0;
+
+  const comisionAgente = origen * (Number(matriz.comisionAgentePct) || 0) / 100;
+  const flete = fleteUsd40HQ / cantidad;
+  const despacho = (origen + flete) * (Number(matriz.despachoPct) || 0) / 100;
+  const costoPy = origen + comisionAgente + flete + despacho;
+  const comisionVenta = costoPy * (Number(catCfg.comisionVentaPct) || 0) / 100;
+  const costoFinanciero = costoPy * (Number(matriz.costoFinancieroPct) || 0) / 100;
+  const costoReal = costoPy + comisionVenta + costoFinanciero;
+
+  return {
+    categoria, origen, comisionAgente, flete, despacho, costoPy, comisionVenta, costoFinanciero, costoReal,
+    margenMinimoPct: Number(catCfg.margenMinimoPct) || 0,
+    margenIdealMinPct: Number(catCfg.margenIdealMinPct) || 0,
+    margenIdealMaxPct: Number(catCfg.margenIdealMaxPct) || 0,
+  };
+}
+
+// Clasifica un margen % (sobre precio de venta) contra el piso/ideal de su categoría — 5 estados:
+// error (bajo costo real), alerta (bajo el mínimo admisible pero todavía con ganancia), rojo (cerca
+// del piso, o sea cerca del descuento máximo), amarillo (entre el punto medio y el ideal) y verde
+// (en o por arriba del ideal). Para Electrodomésticos hoy piso=25% e ideal=50-60%, así que la banda
+// roja va de 25% a 37,5% — para Aires (piso 10%, ideal 25-30%) va de 10% a 17,5%.
+function bandaDescuento(margenPct, cfg) {
+  if (margenPct < 0) return { estado: "error", color: "#7F1D1D", bg: "#FCA5A5", label: "Bajo costo real" };
+  if (margenPct < cfg.margenMinimoPct) return { estado: "alerta", color: "#9A3412", bg: "#FFEDD5", label: "Bajo el mínimo" };
+  const puntoMedio = (cfg.margenMinimoPct + cfg.margenIdealMinPct) / 2;
+  if (margenPct < puntoMedio) return { estado: "rojo", color: "#B91C1C", bg: "#FBEAEA", label: "Cerca del máximo descuento" };
+  if (margenPct < cfg.margenIdealMinPct) return { estado: "amarillo", color: "#B45309", bg: "#FDF1E0", label: "Por debajo de lo ideal" };
+  return { estado: "verde", color: "#15803D", bg: "#E9F7EF", label: "Ideal" };
+}
+
+// Cuánto se puede descontar del precio de lista sin perforar el margen mínimo admisible.
+function descuentoMaximoPct(precioLista, costoReal, margenMinimoPct) {
+  const lista = Number(precioLista) || 0;
+  if (lista <= 0) return null;
+  const precioPiso = costoReal / (1 - margenMinimoPct / 100);
+  return (lista - precioPiso) / lista * 100;
+}
+
+// Heurística de sugerencia de contenedores para Armado de pedido: NO es una optimización real de
+// bin-packing, es una sugerencia golosa (el contenedor más grande que todavía entre en lo que
+// falta, repetido hasta completar) para que Gastón la revise — nunca una asignación definitiva.
+function sugerirContenedores(m3Total, contenedores) {
+  const tipos = Object.entries(contenedores || {})
+    .map(([tipo, v]) => ({ tipo, m3: Number(v?.m3) || 0 }))
+    .filter((t) => t.m3 > 0)
+    .sort((a, b) => b.m3 - a.m3);
+  if (tipos.length === 0 || m3Total <= 0) return [];
+  const masChico = tipos[tipos.length - 1];
+  let restante = m3Total;
+  const resultado = [];
+  const agregar = (tipo) => {
+    const fila = resultado.find((r) => r.tipo === tipo);
+    if (fila) fila.cantidad += 1; else resultado.push({ tipo, cantidad: 1 });
+  };
+  while (restante > 0) {
+    const elegido = tipos.find((t) => t.m3 <= restante) || masChico;
+    agregar(elegido.tipo);
+    restante -= elegido.m3;
+  }
+  return resultado;
+}
+
 // Rentabilidad de una cotización: por cada línea, cruza el precio YA NEGOCIADO contra el costo
 // cargado en el catálogo (puesto en PY si está, si no origen) — el descuento general, si tiene,
 // se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo).
-function calcularRentabilidadCotizacion(c, productos) {
+function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   const lineas = c.lineas || [];
   const descuentoPct = c.incluirDescuento ? (Number(c.descuento) || 0) : 0;
   const factorDescuento = 1 - descuentoPct / 100;
+  const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
 
   const filas = lineas.map((l) => {
     const cantidad = Number(l.cantidad) || 0;
@@ -720,7 +808,18 @@ function calcularRentabilidadCotizacion(c, productos) {
     const costoTotal = cantidad * costoUnit;
     const margen = ventaNeta - costoTotal;
     const margenPct = ventaNeta > 0 ? (margen / ventaNeta) * 100 : 0;
-    return { codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct, sinCosto };
+    // Banda de descuento contra Costo Real (con comisión de venta + costo financiero) — piso más
+    // exigente que el costoUnit de arriba (Costo PY), que es la base de la rentabilidad "empresa".
+    let bandaCostoReal = null;
+    const precioNeto = precioUnit * factorDescuento;
+    if (producto && precioNeto > 0) {
+      const costos = calcularCostosProducto(producto, matriz);
+      const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
+      const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
+      const costoReal = costos ? costos.costoReal : costoUnit;
+      if (costoReal > 0) bandaCostoReal = bandaDescuento(((precioNeto - costoReal) / precioNeto) * 100, catCfg);
+    }
+    return { codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct, sinCosto, bandaCostoReal };
   });
 
   const ventaProductos = filas.reduce((acc, f) => acc + f.ventaNeta, 0);
@@ -1708,6 +1807,8 @@ export default function App() {
   const [conteoStock, setConteoStock] = useState([]);
   const [preciosMercado, setPreciosMercado] = useState([]);
   const [preciosMayorista, setPreciosMayorista] = useState([]);
+  const [ordenesCompra, setOrdenesCompra] = useState([]);
+  const [matrizCostos, setMatrizCostos] = useState(null);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
   const [gestion, setGestion] = useState(null);
@@ -1733,6 +1834,7 @@ export default function App() {
   const [repuestoTarget, setRepuestoTarget] = useState(null);
   const [cotizacionPrefill, setCotizacionPrefill] = useState(null);
   const [cotizacionEditando, setCotizacionEditando] = useState(null);
+  const [ordenCompraEditando, setOrdenCompraEditando] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
   const [catalogoModoInicial, setCatalogoModoInicial] = useState(null);
@@ -1759,6 +1861,7 @@ export default function App() {
       [COLLECTIONS.conteoStock]: setConteoStock,
       [COLLECTIONS.preciosMercado]: setPreciosMercado,
       [COLLECTIONS.preciosMayorista]: setPreciosMayorista,
+      [COLLECTIONS.ordenesCompra]: setOrdenesCompra,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -1771,6 +1874,20 @@ export default function App() {
     );
     return () => unsubscribers.forEach((unsub) => unsub());
   }, [user]);
+
+  // Matriz de costos: un solo documento global (no una lista), por eso va aparte de
+  // subscribeCollection — mientras no exista todavía (primera vez) o el usuario no sea admin,
+  // se sigue usando MATRIZ_COSTOS_DEFAULT (ver calcularCostosProducto y sus usos).
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(
+      doc(db, COLLECTIONS.configuracion, MATRIZ_COSTOS_DOC_ID),
+      (snap) => setMatrizCostos(snap.exists() ? snap.data() : null),
+      (err) => { console.error("Firestore subscribe error (matrizCostos)", err); setMatrizCostos(null); }
+    );
+    return () => unsub();
+  }, [user]);
+  const matrizCostosEfectiva = matrizCostos || MATRIZ_COSTOS_DEFAULT;
 
   const addEquipo = (data) => addItem(COLLECTIONS.equipos, data);
   const updateEquipoEstado = (id, estado) => updateItem(COLLECTIONS.equipos, id, { estado });
@@ -2193,6 +2310,13 @@ export default function App() {
   const addPrecioMayorista = (data) => addItem(COLLECTIONS.preciosMayorista, data);
   const updatePrecioMayorista = (id, data) => updateItem(COLLECTIONS.preciosMayorista, id, data);
   const deletePrecioMayorista = (id) => deleteItem(COLLECTIONS.preciosMayorista, id);
+
+  // Matriz de costos: un solo doc que se pisa con setDoc/merge — no hay historial de versiones.
+  const updateMatrizCostos = (patch) => setDoc(doc(db, COLLECTIONS.configuracion, MATRIZ_COSTOS_DOC_ID), patch, { merge: true });
+
+  const addOrdenCompra = (data) => addItem(COLLECTIONS.ordenesCompra, data);
+  const updateOrdenCompra = (id, data) => updateItem(COLLECTIONS.ordenesCompra, id, data);
+  const deleteOrdenCompra = (id) => deleteItem(COLLECTIONS.ordenesCompra, id);
 
   // Tránsito: mercadería fabricándose/en camino desde China, todavía no es stock físico real
   // — se traslada a Maestro de equipos recién cuando llega (manualmente, como una entrada más).
@@ -2790,11 +2914,13 @@ export default function App() {
     // Stock / inventario
     { key: "deposito", label: "Depósito", icon: Warehouse },
     { key: "transito", label: "Tránsito", icon: Ship },
+    { key: "armado-pedido", label: "Armado de pedido", icon: ShoppingCart },
     { key: "playa", label: "Zona de playa", icon: Inbox },
     { key: "equipos", label: "Maestro de equipos", icon: Package },
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
     { key: "muestras", label: "Muestras", icon: Star },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag },
+    { key: "matriz-costos", label: "Matriz de costos", icon: Calculator },
     { key: "conteo", label: "Conteo de stock", icon: Boxes },
     // Movimientos
     { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine },
@@ -3196,6 +3322,10 @@ export default function App() {
           />
         )}
 
+        {tab === "matriz-costos" && (
+          <MatrizCostosView matrizCostos={matrizCostosEfectiva} onUpdate={updateMatrizCostos} />
+        )}
+
         {tab === "conteo" && (
           <ConteoStockView
             productos={productos} equipos={equipos} conteoStock={conteoStock}
@@ -3206,7 +3336,7 @@ export default function App() {
 
         {tab === "cotizaciones" && (
           <CotizacionesView
-            cotizaciones={filteredCotizaciones} productos={productos} query={query} onQuery={setQuery}
+            cotizaciones={filteredCotizaciones} productos={productos} matrizCostos={matrizCostosEfectiva} query={query} onQuery={setQuery}
             onNew={() => { setCotizacionEditando(null); setDrawer("cotizacion"); }}
             onDelete={deleteCotizacion}
             onUpdate={updateCotizacion}
@@ -3223,7 +3353,7 @@ export default function App() {
 
         {tab === "simulador" && (
           <SimuladorView
-            productos={productos} equipos={equipos} transito={transito}
+            productos={productos} equipos={equipos} transito={transito} matrizCostos={matrizCostosEfectiva}
             onConfirmar={(datos) => { setCotizacionPrefill(datos); setDrawer("cotizacion"); }}
           />
         )}
@@ -3278,6 +3408,17 @@ export default function App() {
             onDarLlegada={(t) => { setLlegadaTarget(t); setDrawer("llegada-transito"); }}
             onAgregarRepuesto={(t) => { setRepuestoTarget(t); setDrawer("repuesto-transito"); }}
             onQuitarRepuesto={(t, repuestoId) => quitarRepuestoTransito(t, repuestoId)}
+          />
+        )}
+
+        {tab === "armado-pedido" && (
+          <ArmadoPedidoView
+            ordenesCompra={ordenesCompra} productos={productos} cotizaciones={cotizaciones} comprometidas={comprometidas}
+            query={query} onQuery={setQuery}
+            onNew={() => { setOrdenCompraEditando(null); setDrawer("orden-compra"); }}
+            onEdit={(o) => { setOrdenCompraEditando(o); setDrawer("orden-compra"); }}
+            onDelete={deleteOrdenCompra}
+            onUpdate={updateOrdenCompra}
           />
         )}
 
@@ -3342,6 +3483,7 @@ export default function App() {
         <ProductoForm
           producto={productoEditando}
           defaults={nuevoProductoDefaults}
+          matrizCostos={matrizCostosEfectiva}
           onSave={(d) => {
             if (productoEditando) updateProducto(productoEditando.id, d);
             else addProducto(d);
@@ -3356,7 +3498,7 @@ export default function App() {
         title={cotizacionEditando ? "Editar cotización" : "Nueva cotización"}
       >
         <CotizacionForm
-          productos={productos} clientes={clientes} cotizaciones={cotizaciones}
+          productos={productos} clientes={clientes} cotizaciones={cotizaciones} matrizCostos={matrizCostosEfectiva}
           initial={cotizacionEditando || cotizacionPrefill}
           editId={cotizacionEditando?.id}
           onGuardarCliente={upsertClienteTelefono}
@@ -3380,6 +3522,21 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "precio-mayorista"} onClose={() => setDrawer(null)} title="Nuevo precio al por mayor">
         <PrecioMayoristaForm onSave={(d) => { addPrecioMayorista(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer
+        open={drawer === "orden-compra"} onClose={() => { setDrawer(null); setOrdenCompraEditando(null); }}
+        title={ordenCompraEditando ? "Editar orden de compra" : "Nueva orden de compra"}
+      >
+        <OrdenCompraForm
+          orden={ordenCompraEditando} productos={productos} matrizCostos={matrizCostosEfectiva}
+          cotizaciones={cotizaciones} comprometidas={comprometidas}
+          onSave={(d) => {
+            if (ordenCompraEditando) updateOrdenCompra(ordenCompraEditando.id, d);
+            else addOrdenCompra(d);
+            setDrawer(null);
+            setOrdenCompraEditando(null);
+          }}
+        />
       </Drawer>
       <Drawer
         open={drawer === "transito"} onClose={() => { setDrawer(null); setEnvioEditando(null); }}
@@ -6783,7 +6940,7 @@ function PlayaForm({ onSave }) {
 }
 
 // ---------- Catálogo de productos ----------
-function ProductoForm({ producto, defaults, onSave }) {
+function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
   const [nombre, setNombre] = useState(producto?.nombre || "");
   const [categoria, setCategoria] = useState(producto?.categoria || "");
   const [categoriaPrincipal, setCategoriaPrincipal] = useState(producto?.categoriaPrincipal || defaults?.categoriaPrincipal || "");
@@ -6796,15 +6953,10 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [especValor, setEspecValor] = useState(producto?.especValor || "");
   const [precioLista, setPrecioLista] = useState(producto ? String(producto.precioLista ?? "") : "");
   const [costoOrigen, setCostoOrigen] = useState(producto ? String(producto.costoOrigen ?? "") : "");
-  const [costoPy, setCostoPy] = useState(producto ? String(producto.costoPy ?? "") : "");
+  const costoPyGuardado = producto ? Number(producto.costoPy) || 0 : 0;
   const [codigoFabrica, setCodigoFabrica] = useState(producto?.codigoFabrica || "");
-  const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "");
+  const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "40HQ");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
-  const armadoDefaults = ARMADO_PRECIOS_DEFAULTS[producto?.categoriaPrincipal || defaults?.categoriaPrincipal] || ARMADO_PRECIOS_DEFAULTS["Cocina"];
-  const [comisionPct, setComisionPct] = useState(String(armadoDefaults.comisionPct));
-  const [despachoPct, setDespachoPct] = useState(String(armadoDefaults.despachoPct));
-  const [fletePorContenedor, setFletePorContenedor] = useState(String(armadoDefaults.fletePorContenedor));
-  const [markupPct, setMarkupPct] = useState(String(armadoDefaults.markupPct));
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
   const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stockMinimo ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
@@ -6814,20 +6966,13 @@ function ProductoForm({ producto, defaults, onSave }) {
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
 
-  // Replica el armado de precios de las planillas de fábrica: ver ARMADO_PRECIOS_DEFAULTS.
-  const puedeCalcular = (Number(costoOrigen) || 0) > 0 && (Number(contenedorCantidad) || 0) > 0;
-  const calcularPrecios = () => {
-    const origen = Number(costoOrigen) || 0;
-    const cantidad = Number(contenedorCantidad) || 0;
-    if (!origen || !cantidad) return;
-    const comision = origen * (Number(comisionPct) || 0) / 100;
-    const flete = (Number(fletePorContenedor) || 0) / cantidad;
-    const despacho = origen * (Number(despachoPct) || 0) / 100;
-    const py = origen + comision + flete + despacho;
-    const venta = py * (1 + (Number(markupPct) || 0) / 100);
-    setCostoPy(py.toFixed(2));
-    setPrecioLista(String(Math.round(venta)));
-  };
+  // Motor de costo (ver calcularCostosProducto): con costo origen + unidades por contenedor +
+  // la Matriz de costos, se deriva todo el resto — nada de esto se edita a mano acá.
+  const costosCalc = useMemo(
+    () => calcularCostosProducto({ categoriaPrincipal, costoOrigen, contenedorCantidad }, matrizCostos),
+    [categoriaPrincipal, costoOrigen, contenedorCantidad, matrizCostos]
+  );
+  const costoPyEfectivo = costosCalc ? costosCalc.costoPy : costoPyGuardado;
 
   const handleFoto = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -6875,7 +7020,7 @@ function ProductoForm({ producto, defaults, onSave }) {
         categoriaPrincipal, subcategoria, subcategoria2, subcategoria3,
         ordenNumerico: ordenNumerico === "" ? null : Number(ordenNumerico) || 0,
         precioLista: Number(precioLista) || 0,
-        costoOrigen: Number(costoOrigen) || 0, costoPy: Number(costoPy) || 0,
+        costoOrigen: Number(costoOrigen) || 0, costoPy: costoPyEfectivo,
         codigoFabrica: codigoFabrica.trim(),
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
@@ -6932,32 +7077,31 @@ function ProductoForm({ producto, defaults, onSave }) {
       )}
       <div className="flex gap-2">
         <Field label="Costo de origen U$S"><TextInput type="number" value={costoOrigen} onChange={(e) => setCostoOrigen(e.target.value)} /></Field>
-        <Field label="Costo puesto en PY U$S"><TextInput type="number" value={costoPy} onChange={(e) => setCostoPy(e.target.value)} /></Field>
+        <Field label="Cantidad por contenedor">
+          <TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} />
+        </Field>
       </div>
-      <div className="flex gap-2">
-        <Field label="Contenedor (tipo)"><TextInput value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)} placeholder="Ej: 40HQ" /></Field>
-        <Field label="Cantidad por contenedor"><TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} /></Field>
-      </div>
+      <Field label="Contenedor de referencia (para Flete y Armado de pedido)">
+        <Select value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)}>
+          {Object.keys((matrizCostos || MATRIZ_COSTOS_DEFAULT).contenedores).map((tipo) => (
+            <option key={tipo} value={tipo}>{tipo}</option>
+          ))}
+        </Select>
+      </Field>
 
       {!esRepuesto && (
         <div className="mb-3 p-3 rounded-lg" style={{ backgroundColor: "#F7F8FA", border: `0.5px solid ${BORDER}` }}>
           <p className="text-xs font-medium mb-2" style={{ color: INK }}>
-            Calculadora — mismo armado de precios que la planilla de fábrica
+            Desglose de costo — sale de la Matriz de costos, no aparece en la cotización
           </p>
-          <div className="flex gap-2">
-            <Field label="Comisión agente %"><TextInput type="number" value={comisionPct} onChange={(e) => setComisionPct(e.target.value)} /></Field>
-            <Field label="Despacho %"><TextInput type="number" value={despachoPct} onChange={(e) => setDespachoPct(e.target.value)} /></Field>
-          </div>
-          <div className="flex gap-2">
-            <Field label="Flete total del contenedor U$S"><TextInput type="number" value={fletePorContenedor} onChange={(e) => setFletePorContenedor(e.target.value)} /></Field>
-            <Field label="Markup %"><TextInput type="number" value={markupPct} onChange={(e) => setMarkupPct(e.target.value)} /></Field>
-          </div>
-          <SecondaryButton onClick={calcularPrecios} disabled={!puedeCalcular}>
-            Calcular costo puesto en PY y precio de venta
-          </SecondaryButton>
-          <p className="text-xs mt-1.5" style={{ color: MUTED }}>
-            Costo puesto en PY = origen + comisión + flete (total ÷ cantidad por contenedor) + despacho. Precio de venta = costo puesto en PY × (1 + markup). Completá "Costo de origen" y "Cantidad por contenedor" arriba para poder calcular.
-          </p>
+          {costosCalc ? (
+            <DesgloseCostoProducto costos={costosCalc} matriz={matrizCostos || MATRIZ_COSTOS_DEFAULT} contenedorCantidad={contenedorCantidad} />
+          ) : (
+            <p className="text-xs" style={{ color: MUTED }}>
+              Cargá "Costo de origen" y "Cantidad por contenedor" arriba para ver el desglose (Comisión agente, Flete,
+              Despacho, Costo PY, Comisión venta, Costo financiero y Costo Real).
+            </p>
+          )}
         </div>
       )}
 
@@ -6997,6 +7141,40 @@ function ProductoForm({ producto, defaults, onSave }) {
       <PrimaryButton onClick={submit} disabled={guardando}>
         {guardando ? "Guardando..." : producto ? "Guardar cambios" : "Guardar producto"}
       </PrimaryButton>
+    </div>
+  );
+}
+
+// Fila fórmula + monto — así queda claro de dónde sale cada número sin tener que adivinar.
+function FilaCosto({ label, formula, valor, destacado }) {
+  return (
+    <div className={`flex items-center justify-between gap-2 ${destacado ? "pt-1.5 mt-1 border-t" : ""}`} style={destacado ? { borderColor: BORDER } : undefined}>
+      <div className="min-w-0">
+        <p className={destacado ? "text-xs font-semibold" : "text-xs"} style={{ color: destacado ? ACCENT : INK }}>{label}</p>
+        <p className="text-[10px]" style={{ color: MUTED }}>{formula}</p>
+      </div>
+      <span className={destacado ? "text-sm font-semibold shrink-0" : "text-xs shrink-0"} style={{ color: destacado ? ACCENT : INK }}>
+        U$S {valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+      </span>
+    </div>
+  );
+}
+
+function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
+  const catCfg = matriz.categorias[costos.categoria] || MATRIZ_COSTOS_DEFAULT.categorias[costos.categoria];
+  const fleteUsd40HQ = Number(matriz.contenedores?.["40HQ"]?.fleteUsd) || 0;
+  return (
+    <div className="space-y-1.5">
+      <FilaCosto label="Comisión agente" formula={`Costo origen × ${matriz.comisionAgentePct}%`} valor={costos.comisionAgente} />
+      <FilaCosto label="Flete" formula={`U$S ${fleteUsd40HQ.toLocaleString()} (40HQ) ÷ ${contenedorCantidad} unidades`} valor={costos.flete} />
+      <FilaCosto label="Despacho" formula={`(Costo origen + Flete) × ${matriz.despachoPct}%`} valor={costos.despacho} />
+      <FilaCosto label="Costo puesto en PY" formula="Costo origen + Comisión agente + Flete + Despacho" valor={costos.costoPy} destacado />
+      <FilaCosto label="Comisión venta" formula={`Costo PY × ${catCfg.comisionVentaPct}% (${costos.categoria === "aires" ? "Aire Acondicionado" : "Electrodomésticos"})`} valor={costos.comisionVenta} />
+      <FilaCosto label="Costo financiero" formula={`Costo PY × ${matriz.costoFinancieroPct}%`} valor={costos.costoFinanciero} />
+      <FilaCosto label="Costo Real" formula="Costo PY + Comisión venta + Costo financiero" valor={costos.costoReal} destacado />
+      <p className="text-[10px] pt-1" style={{ color: MUTED }}>
+        Margen mínimo admisible: {costos.margenMinimoPct}% · Ideal: {costos.margenIdealMinPct}%-{costos.margenIdealMaxPct}%
+      </p>
     </div>
   );
 }
@@ -8262,7 +8440,36 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
   );
 }
 
-function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, onSave, onGuardarEdicion, initial, editId }) {
+// Badge de color por línea — mismo criterio que bandaDescuento, para que Gastón vea de entrada
+// (sin abrir Rentabilidad) si el precio que está cargando en esta línea todavía deja el margen
+// mínimo admisible, y hasta cuánto podría bajarlo desde el precio de lista.
+function IndicadorDescuentoLinea({ producto, precioUnit, matrizCostos }) {
+  if (!producto) return null;
+  const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
+  const costos = calcularCostosProducto(producto, matriz);
+  const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
+  const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
+  const costoReal = costos ? costos.costoReal : (Number(producto.costoPy) || Number(producto.costoOrigen) || 0);
+  if (!costoReal) {
+    return <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#F2F3F4", color: MUTED }}>Sin costo cargado</span>;
+  }
+  const precio = Number(precioUnit) || 0;
+  if (precio <= 0) return null;
+  const margenPct = ((precio - costoReal) / precio) * 100;
+  const banda = bandaDescuento(margenPct, catCfg);
+  const maxDesc = descuentoMaximoPct(producto.precioLista, costoReal, catCfg.margenMinimoPct);
+  return (
+    <span
+      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+      style={{ backgroundColor: banda.bg, color: banda.color }}
+      title={`Margen actual: ${margenPct.toFixed(1)}% (piso ${catCfg.margenMinimoPct}%, ideal ${catCfg.margenIdealMinPct}-${catCfg.margenIdealMaxPct}%)`}
+    >
+      {banda.label} ({margenPct.toFixed(0)}%){maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${maxDesc.toFixed(0)}%` : ""}
+    </span>
+  );
+}
+
+function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGuardarCliente, onSave, onGuardarEdicion, initial, editId }) {
   const [fecha, setFecha] = useState(initial?.fecha || todayISO());
   const [cliente, setCliente] = useState(initial?.cliente || "");
   const [telefono, setTelefono] = useState(initial?.clienteTelefono || "");
@@ -8540,6 +8747,9 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
                   />
                   <span style={{ color: MUTED }}>= U$S {((Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0)).toLocaleString()}</span>
                 </div>
+                <div className="mt-1">
+                  <IndicadorDescuentoLinea producto={productos.find((p) => p.nombre === l.codigo)} precioUnit={l.precioUnit} matrizCostos={matrizCostos} />
+                </div>
               </div>
               <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
             </div>
@@ -8582,7 +8792,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, onGuardarCliente, o
 // Panel de simulación: un ejercicio de "si me piden esto, con qué lo cubro" contra el stock y
 // el tránsito reales — pero 100% ficticio y client-side, nada se guarda en Firestore hasta que
 // se confirma como cotización real (ver onConfirmar, que abre CotizacionForm precargado).
-function SimuladorView({ productos, equipos, transito, onConfirmar }) {
+function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar }) {
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -8767,6 +8977,7 @@ function SimuladorView({ productos, equipos, transito, onConfirmar }) {
                       />
                       <span style={{ color: MUTED }}>= U$S {((Number(f.cantidad) || 0) * (Number(f.precioUnit) || 0)).toLocaleString()}</span>
                       <span className="px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.label}</span>
+                      <IndicadorDescuentoLinea producto={productos.find((p) => p.nombre === f.codigo)} precioUnit={f.precioUnit} matrizCostos={matrizCostos} />
                     </div>
                   </div>
                   <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
@@ -8832,8 +9043,8 @@ const SALIDA_COTIZACION_BADGE = {
   pendiente: { label: "Sin salida", bg: "#F2F3F4", color: "#686D73" },
 };
 
-function RentabilidadCotizacionView({ c, productos }) {
-  const r = useMemo(() => calcularRentabilidadCotizacion(c, productos), [c, productos]);
+function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
+  const r = useMemo(() => calcularRentabilidadCotizacion(c, productos, matrizCostos), [c, productos, matrizCostos]);
   const colorMargen = (m) => (m >= 0 ? "#15803D" : "#B91C1C");
   const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return (
@@ -8881,6 +9092,11 @@ function RentabilidadCotizacionView({ c, productos }) {
               {f.cantidad} × U$S {f.precioUnit.toLocaleString()} = U$S {fmt(f.ventaNeta)}
               {!f.sinCosto && ` · costo U$S ${fmt(f.costoTotal)} · margen U$S ${fmt(f.margen)}`}
             </p>
+            {f.bandaCostoReal && (
+              <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: f.bandaCostoReal.bg, color: f.bandaCostoReal.color }}>
+                Vs. Costo Real: {f.bandaCostoReal.label}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -8888,7 +9104,7 @@ function RentabilidadCotizacionView({ c, productos }) {
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
+function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
   const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
@@ -9018,20 +9234,20 @@ function CotizacionCard({ c, esActiva, productos, onDelete, onUpdate, onEditar, 
           <Pencil size={13} /> Editar
         </button>
       </div>
-      {verRentabilidad && <RentabilidadCotizacionView c={c} productos={productos} />}
+      {verRentabilidad && <RentabilidadCotizacionView c={c} productos={productos} matrizCostos={matrizCostos} />}
     </div>
   );
 }
 
 // Una obra puede tener varias categorías en paralelo (aires, cocina, termo) — cada una es su
 // propio hilo con su propia versión activa e historial, no una revisión de las otras.
-function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
+function HiloCategoriaGrupo({ hilo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   return (
     <div>
       <CotizacionCard
-        c={hilo.activa} esActiva productos={productos}
+        c={hilo.activa} esActiva productos={productos} matrizCostos={matrizCostos}
         historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
         onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
@@ -9042,7 +9258,7 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onEditar, onD
         <div className="mt-2 pl-3 border-l-2 space-y-2" style={{ borderColor: BORDER }}>
           {historial.map((v) => (
             <CotizacionCard
-              key={v.id} c={v} esActiva={false} productos={productos}
+              key={v.id} c={v} esActiva={false} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -9058,7 +9274,7 @@ function HiloCategoriaGrupo({ hilo, productos, onDelete, onUpdate, onEditar, onD
 // Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
 // todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
 // una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
-function ObraGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, forzarExpandido }) {
+function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, forzarExpandido }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
@@ -9079,7 +9295,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargar
         <div className="px-3 pb-3 space-y-3">
           {grupo.hilos.map((h) => (
             <HiloCategoriaGrupo
-              key={h.hiloId} hilo={h} productos={productos}
+              key={h.hiloId} hilo={h} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -9095,7 +9311,7 @@ function ObraGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargar
 // Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
 // el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
 // minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
-function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, forzarExpandido }) {
+function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, forzarExpandido }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
@@ -9121,7 +9337,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescar
         <div className="px-3.5 pb-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {grupo.obras.map((o) => (
             <ObraGrupo
-              key={o.obra} grupo={o} productos={productos}
+              key={o.obra} grupo={o} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -9134,7 +9350,7 @@ function ClienteGrupo({ grupo, productos, onDelete, onUpdate, onEditar, onDescar
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
@@ -9166,7 +9382,7 @@ function CotizacionesView({ cotizaciones, productos, query, onQuery, onNew, onDe
           <div className="space-y-3">
             {grupos.map((g) => (
               <ClienteGrupo
-                key={g.cliente} grupo={g} productos={productos}
+                key={g.cliente} grupo={g} productos={productos} matrizCostos={matrizCostos}
                 onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas}
@@ -9953,6 +10169,109 @@ function agruparPreciosMercado(registros) {
   });
 }
 
+// Matriz de costos: único lugar donde se editan las variables globales del motor de costo (ver
+// calcularCostosProducto) — todo lo demás (Costo PY, Costo Real, etc.) sale calculado de acá +
+// costo origen/cantidad por contenedor de cada producto, nunca se carga a mano en otro lado.
+function MatrizCostosView({ matrizCostos, onUpdate }) {
+  const [form, setForm] = useState(matrizCostos);
+  const [guardado, setGuardado] = useState(false);
+
+  // El doc real puede llegar después del primer render (onSnapshot es async) — sin esto, el
+  // formulario se quedaría pegado en MATRIZ_COSTOS_DEFAULT aunque ya exista un doc guardado.
+  useEffect(() => { setForm(matrizCostos); setGuardado(false); }, [matrizCostos]);
+
+  const set = (path, value) => {
+    setGuardado(false);
+    setForm((prev) => {
+      const next = structuredClone(prev);
+      let obj = next;
+      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      obj[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+  const num = (path) => path.reduce((o, k) => o?.[k], form);
+
+  const guardar = () => {
+    onUpdate({
+      comisionAgentePct: Number(form.comisionAgentePct) || 0,
+      costoFinancieroPct: Number(form.costoFinancieroPct) || 0,
+      despachoPct: Number(form.despachoPct) || 0,
+      contenedores: Object.fromEntries(Object.entries(form.contenedores).map(([tipo, v]) => [
+        tipo, { m3: Number(v.m3) || 0, ...(v.fleteUsd != null ? { fleteUsd: Number(v.fleteUsd) || 0 } : {}) },
+      ])),
+      categorias: Object.fromEntries(Object.entries(form.categorias).map(([cat, v]) => [
+        cat, {
+          comisionVentaPct: Number(v.comisionVentaPct) || 0, margenMinimoPct: Number(v.margenMinimoPct) || 0,
+          margenIdealMinPct: Number(v.margenIdealMinPct) || 0, margenIdealMaxPct: Number(v.margenIdealMaxPct) || 0,
+        },
+      ])),
+    });
+    setGuardado(true);
+  };
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-xl font-bold" style={{ color: INK }}>Matriz de costos</h2>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+          Estas son las únicas variables que se editan a mano — el Costo Real de cada producto (Catálogo → Datos internos de costo) sale de acá + su costo origen y unidades por contenedor.
+        </p>
+      </div>
+
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Variables generales</p>
+      <div className="flex gap-2">
+        <Field label="Comisión agente % (sobre costo origen)">
+          <TextInput type="number" value={num(["comisionAgentePct"])} onChange={(e) => set(["comisionAgentePct"], e.target.value)} />
+        </Field>
+        <Field label="Despacho % (sobre origen + flete)">
+          <TextInput type="number" value={num(["despachoPct"])} onChange={(e) => set(["despachoPct"], e.target.value)} />
+        </Field>
+        <Field label="Costo financiero % (sobre costo PY)">
+          <TextInput type="number" value={num(["costoFinancieroPct"])} onChange={(e) => set(["costoFinancieroPct"], e.target.value)} />
+        </Field>
+      </div>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Contenedores (m3 y flete)</p>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>El Flete y el Costo Real siempre se calculan contra el 40HQ. Los demás tamaños son solo para combinar en Armado de pedido.</p>
+      {Object.keys(form.contenedores).map((tipo) => (
+        <div key={tipo} className="flex gap-2 items-end">
+          <div className="text-sm font-medium pb-2.5" style={{ color: INK, width: 56 }}>{tipo}</div>
+          <Field label="m3"><TextInput type="number" value={num(["contenedores", tipo, "m3"])} onChange={(e) => set(["contenedores", tipo, "m3"], e.target.value)} /></Field>
+          {tipo === "40HQ" && (
+            <Field label="Flete U$S"><TextInput type="number" value={num(["contenedores", tipo, "fleteUsd"])} onChange={(e) => set(["contenedores", tipo, "fleteUsd"], e.target.value)} /></Field>
+          )}
+        </div>
+      ))}
+
+      {[["aires", "Aire Acondicionado"], ["otros", "Electrodomésticos (todo lo demás)"]].map(([cat, label]) => (
+        <div key={cat}>
+          <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>{label}</p>
+          <div className="flex gap-2">
+            <Field label="Comisión venta % (sobre costo PY)">
+              <TextInput type="number" value={num(["categorias", cat, "comisionVentaPct"])} onChange={(e) => set(["categorias", cat, "comisionVentaPct"], e.target.value)} />
+            </Field>
+            <Field label="Margen mínimo admisible %">
+              <TextInput type="number" value={num(["categorias", cat, "margenMinimoPct"])} onChange={(e) => set(["categorias", cat, "margenMinimoPct"], e.target.value)} />
+            </Field>
+          </div>
+          <div className="flex gap-2">
+            <Field label="Margen ideal — mínimo %">
+              <TextInput type="number" value={num(["categorias", cat, "margenIdealMinPct"])} onChange={(e) => set(["categorias", cat, "margenIdealMinPct"], e.target.value)} />
+            </Field>
+            <Field label="Margen ideal — máximo %">
+              <TextInput type="number" value={num(["categorias", cat, "margenIdealMaxPct"])} onChange={(e) => set(["categorias", cat, "margenIdealMaxPct"], e.target.value)} />
+            </Field>
+          </div>
+        </div>
+      ))}
+
+      {guardado && <p className="text-xs mb-2" style={{ color: "#15803D" }}>Guardado — ya se está usando en todo el catálogo.</p>}
+      <PrimaryButton onClick={guardar}>Guardar matriz</PrimaryButton>
+    </div>
+  );
+}
+
 // Compara precios de la competencia (relevados a mano, por planilla o por la futura
 // investigación mensual) contra nuestro precioLista, producto por producto — para saber cómo
 // estamos parados en precio sin tener que armar la comparación a ojo cada vez. Agrupado en
@@ -10523,6 +10842,231 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
       </Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Agregar repuesto</PrimaryButton>
+    </div>
+  );
+}
+
+// Cuánto hace falta reponer por producto, mirando lo que ya está comprometido con clientes —
+// solo lectura, para que Gastón decida cantidades del pedido con esto a la vista, sin que la
+// app intente adivinar solo cuánto pedir (eso queda a su criterio).
+function resumenPendientePorProducto(cotizaciones, comprometidas) {
+  const grupos = agruparCotizaciones(cotizaciones || []);
+  const activas = grupos.flatMap((g) => g.obras.flatMap((o) => o.hilos.map((h) => h.activa)));
+  const map = new Map();
+  const agregar = (codigo, cantidad) => {
+    if (!codigo) return;
+    map.set(codigo, (map.get(codigo) || 0) + (Number(cantidad) || 0));
+  };
+  activas
+    .filter((c) => (c.estado || "Pendiente") === "Pendiente")
+    .forEach((c) => (c.lineas || []).forEach((l) => agregar(l.codigo, l.cantidad)));
+  (comprometidas || [])
+    .filter((c) => c.estado === "Comprometida")
+    .forEach((c) => agregar(c.modelo, c.cantidad));
+  return Array.from(map.entries())
+    .map(([codigo, cantidad]) => ({ codigo, cantidad }))
+    .sort((a, b) => b.cantidad - a.cantidad);
+}
+
+function OrdenCompraForm({ orden, productos, matrizCostos, cotizaciones, comprometidas, onSave }) {
+  const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
+  const [nombre, setNombre] = useState(orden?.nombre || "");
+  const [fecha, setFecha] = useState(orden?.fecha || todayISO());
+  const [notas, setNotas] = useState(orden?.notas || "");
+  const [estado, setEstado] = useState(orden?.estado || "Borrador");
+  const [lineas, setLineas] = useState(orden?.lineas || []);
+  const [productoId, setProductoId] = useState("");
+  const [cantidadNueva, setCantidadNueva] = useState(1);
+  const [error, setError] = useState("");
+
+  const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
+  const productoSel = productos.find((p) => p.id === productoId);
+  const pendientes = useMemo(() => resumenPendientePorProducto(cotizaciones, comprometidas), [cotizaciones, comprometidas]);
+
+  const m3PorUnidad = (producto) => {
+    const cantidadContenedor = Number(producto?.contenedorCantidad) || 0;
+    const m3_40HQ = Number(matriz.contenedores?.["40HQ"]?.m3) || 0;
+    return cantidadContenedor > 0 ? m3_40HQ / cantidadContenedor : 0;
+  };
+
+  const agregarLinea = () => {
+    if (!productoSel) {
+      setError("Elegí un producto del catálogo.");
+      return;
+    }
+    const cantidad = Number(cantidadNueva) || 1;
+    const m3Unit = m3PorUnidad(productoSel);
+    setLineas([...lineas, {
+      productoId: productoSel.id, codigo: productoSel.nombre, descripcion: productoSel.descripcion,
+      cantidad, m3Unit, m3Total: m3Unit * cantidad,
+    }]);
+    setProductoId("");
+    setCantidadNueva(1);
+    setError("");
+  };
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+  const actualizarCantidad = (idx, v) => setLineas(lineas.map((l, i) => {
+    if (i !== idx) return l;
+    const cantidad = Number(v) || 0;
+    return { ...l, cantidad, m3Total: l.m3Unit * cantidad };
+  }));
+
+  const m3TotalPedido = lineas.reduce((acc, l) => acc + (Number(l.m3Total) || 0), 0);
+  const contenedoresSugeridos = useMemo(() => sugerirContenedores(m3TotalPedido, matriz.contenedores), [m3TotalPedido, matriz]);
+
+  const submit = () => {
+    if (lineas.length === 0) {
+      setError("Agregá al menos un producto.");
+      return;
+    }
+    setError("");
+    onSave({ nombre: nombre.trim(), fecha, lineas, m3TotalPedido, contenedoresSugeridos, notas, estado });
+  };
+
+  return (
+    <div>
+      <Field label="Nombre del pedido"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Pedido Octubre 2026" /></Field>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+
+      {pendientes.length > 0 && (
+        <div className="mb-3 p-2.5 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+          <p className="text-xs font-semibold mb-1.5" style={{ color: INK }}>Pendiente de reponer (cotizaciones pendientes + ventas comprometidas)</p>
+          <div className="max-h-32 overflow-y-auto space-y-0.5">
+            {pendientes.map((p) => (
+              <div key={p.codigo} className="flex justify-between text-xs">
+                <span style={{ color: MUTED }}>{p.codigo}</span>
+                <span style={{ color: INK }}>{p.cantidad}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos del pedido</p>
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <Field label="Producto del catálogo">
+          <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={setProductoId} />
+        </Field>
+        {productoSel && (
+          <>
+            <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
+            {m3PorUnidad(productoSel) === 0 && (
+              <p className="text-xs mb-2" style={{ color: "#B45309" }}>Este producto no tiene "Cantidad por contenedor" cargada — no se puede calcular su m3.</p>
+            )}
+            <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar al pedido</SecondaryButton>
+          </>
+        )}
+      </div>
+
+      {lineas.length > 0 && (
+        <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
+          {lineas.map((l, i) => (
+            <div key={i} className="flex items-center gap-2 px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+              <div className="min-w-0 flex-1">
+                <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="number" min="1" value={l.cantidad}
+                    onChange={(e) => actualizarCantidad(i, e.target.value)}
+                    className="border rounded px-1 py-0.5 text-xs" style={{ width: 44, borderColor: BORDER }}
+                  />
+                  <span style={{ color: MUTED }}>× {l.m3Unit.toFixed(3)} m3 = {l.m3Total.toFixed(2)} m3</span>
+                </div>
+              </div>
+              <button onClick={() => quitarLinea(i)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+          <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            <span>Total</span><span>{m3TotalPedido.toFixed(2)} m3</span>
+          </div>
+        </div>
+      )}
+
+      {contenedoresSugeridos.length > 0 && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
+          Sugerencia de contenedores (revisar, no es definitivo): {contenedoresSugeridos.map((c) => `${c.cantidad}× ${c.tipo}`).join(" + ")}
+        </div>
+      )}
+
+      <Field label="Estado">
+        <Select value={estado} onChange={(e) => setEstado(e.target.value)}>
+          {["Borrador", "Enviada", "Recibida"].map((op) => <option key={op} value={op}>{op}</option>)}
+        </Select>
+      </Field>
+      <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
+
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>{orden ? "Guardar cambios" : "Guardar pedido"}</PrimaryButton>
+    </div>
+  );
+}
+
+const ESTADO_ORDEN_COMPRA_BADGE = {
+  Borrador: { color: "#686D73", bg: "#F2F3F4" },
+  Enviada: { color: "#B45309", bg: "#FDF1E0" },
+  Recibida: { color: "#15803D", bg: "#E9F7EF" },
+};
+
+function OrdenCompraCard({ orden, onEdit, onDelete, onUpdate }) {
+  const badge = ESTADO_ORDEN_COMPRA_BADGE[orden.estado] || ESTADO_ORDEN_COMPRA_BADGE.Borrador;
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between mb-1">
+        <p className="text-xs" style={{ color: MUTED }}>{fmtDate(orden.fecha)}</p>
+        <button onClick={() => onDelete(orden.id)} className="p-1 rounded hover:bg-gray-100">
+          <Trash2 size={13} style={{ color: MUTED }} />
+        </button>
+      </div>
+      <p className="text-sm font-semibold" style={{ color: INK }}>{orden.nombre || "Pedido sin nombre"}</p>
+      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+        <span className="text-xs" style={{ color: MUTED }}>{(orden.lineas || []).length} producto(s) · {(orden.m3TotalPedido || 0).toFixed(2)} m3</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: badge.bg, color: badge.color }}>{orden.estado}</span>
+      </div>
+      {(orden.contenedoresSugeridos || []).length > 0 && (
+        <p className="text-xs mt-1.5" style={{ color: MUTED }}>
+          Contenedores: {orden.contenedoresSugeridos.map((c) => `${c.cantidad}× ${c.tipo}`).join(" + ")}
+        </p>
+      )}
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <div style={{ width: 130 }}>
+          <Select value={orden.estado} onChange={(e) => onUpdate(orden.id, { estado: e.target.value })}>
+            {["Borrador", "Enviada", "Recibida"].map((op) => <option key={op} value={op}>{op}</option>)}
+          </Select>
+        </div>
+        <button onClick={() => onEdit(orden)} className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1" style={{ borderColor: BORDER, color: INK }}>
+          <Pencil size={13} /> Editar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ArmadoPedidoView({ ordenesCompra, productos, cotizaciones, comprometidas, query, onQuery, onNew, onEdit, onDelete, onUpdate }) {
+  const q = query.toLowerCase();
+  const filtradas = ordenesCompra.filter((o) => !q || (o.nombre || "").toLowerCase().includes(q));
+  const ordenadas = [...filtradas].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Armado de pedido</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>Combiná productos por volumen (m3) para planificar una orden de compra a origen — la compra de la empresa a China, no una venta.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <SearchBox value={query} onChange={onQuery} />
+          <PrimaryButton onClick={onNew}><Plus size={15} /> Nuevo pedido</PrimaryButton>
+        </div>
+      </div>
+      {ordenadas.length === 0 ? (
+        <EmptyState icon={ShoppingCart} title="Todavía no hay pedidos armados" subtitle="Usá el botón de arriba para armar el primero." />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {ordenadas.map((o) => (
+            <OrdenCompraCard key={o.id} orden={o} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

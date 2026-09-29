@@ -1930,7 +1930,7 @@ export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTran
 }
 
 export function nombreArchivoReporteJoel(fecha) {
-  return `Reporte_Joel_${fecha || ""}.pdf`;
+  return `Reporte_Financiero_${fecha || ""}.pdf`;
 }
 
 export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha) {

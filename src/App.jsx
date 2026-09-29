@@ -2950,7 +2950,7 @@ export default function App() {
     { key: "precios-mercado", label: "Precios de mercado", icon: Search },
     { key: "precios-mayorista", label: "Precios al por mayor", icon: Building2 },
     { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
-    { key: "reporte-joel", label: "Reporte para Joel", icon: Send },
+    { key: "reporte-joel", label: "Reporte Financiero", icon: Send },
   ];
   const NAV = esAdmin ? NAV_TODO : NAV_TODO.filter((n) => TABS_DEPOSITO.includes(n.key));
 
@@ -9055,7 +9055,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
 
       <div className="mb-4 px-3 py-2 rounded-lg text-sm flex items-start gap-2" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
         <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-        <span>Esto es ficticio: mientras no lo confirmes como cotización, no cuenta para Reporte Seguro, Reporte Joel ni ningún otro cálculo real de la app.</span>
+        <span>Esto es ficticio: mientras no lo confirmes como cotización, no cuenta para Reporte Seguro, Reporte Financiero ni ningún otro cálculo real de la app.</span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -11669,7 +11669,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         "Categoría": CATEGORIAS_PLATA_COBRAR.find((cat) => cat.key === c.categoria)?.label || "Cerrado",
         "Cliente": c.razonSocial, "Obra": c.obra, "Saldo por cobrar U$S": c.saldoPago,
       }))), "Plata por cobrar");
-    XLSX.writeFile(wb, `Reporte_Joel_${todayISO()}.xlsx`);
+    XLSX.writeFile(wb, `Reporte_Financiero_${todayISO()}.xlsx`);
   };
 
   const handlePdf = async () => {
@@ -11689,7 +11689,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     setError("");
     try {
       const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
-      const ok = await compartirArchivo(bytes, nombreArchivoReporteJoel(todayISO()), "Reporte para Joel");
+      const ok = await compartirArchivo(bytes, nombreArchivoReporteJoel(todayISO()), "Reporte Financiero");
       if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
     } catch (e) {
       console.error("Error compartiendo reporte para Joel", e);
@@ -11703,7 +11703,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-1">
-            <h2 className="text-xl font-bold" style={{ color: INK }}>Reporte para Joel</h2>
+            <h2 className="text-xl font-bold" style={{ color: INK }}>Reporte Financiero</h2>
             <InfoTip>
               <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa), agrupado solo por categoría — sin modelos ni cantidades.</p>
               <p><strong>Tránsito:</strong> el desglose de todos los costos de los envíos en camino (fábrica, representante, flete, comisión, despacho, seguro), más el costo en origen, el costo puesto en PY y el valor a precio de lista de todo lo que viene (productos y repuestos juntos) — sin el detalle de modelos.</p>

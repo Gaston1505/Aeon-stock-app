@@ -3127,7 +3127,7 @@ export default function App() {
           <DepositoView
             equipos={equipos} recuperables={recuperables} playa={playa} muestras={muestras}
             productos={productos} ventasCerradas={ventasCerradas} stockBajo={stockBajo}
-            onNavigate={navigateTo}
+            onNavigate={navigateTo} esAdmin={esAdmin}
           />
         )}
 
@@ -4173,7 +4173,7 @@ function MuestrasGrupo({ titulo, items }) {
   );
 }
 
-function DepositoView({ equipos, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate }) {
+function DepositoView({ equipos, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate, esAdmin = true }) {
   const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
   const bajas = equipos.filter((e) => e.estado === "Dado de baja");
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
@@ -4185,8 +4185,10 @@ function DepositoView({ equipos, recuperables, playa, muestras, productos, venta
   const totalPlaya = sumCantidad(playa);
   const totalVendido = ventasCerradas.reduce((acc, v) => acc + (Number(v.cantidad) || 0), 0);
 
+  // El total agregado de todas las categorías juntas no le sirve a depósito para el día a día
+  // (no es accionable, mezcla aires con termos con cocinas) y confunde — queda solo para admin.
   const cardsActivos = [
-    { label: "Equipos totales activos", value: totalUnidades, icon: Package, tab: "equipos" },
+    ...(esAdmin ? [{ label: "Equipos totales activos", value: totalUnidades, icon: Package, tab: "equipos" }] : []),
     { label: "Zona de playa (sin clasificar)", value: totalPlaya, icon: Inbox, tab: "playa" },
     { label: "Stock vendible", value: sumCantidad(vendible), icon: ArrowDownToLine, tab: "equipos" },
     { label: "Banco de recuperables", value: sumCantidad(recuperables), icon: Wrench, tab: "recuperables" },

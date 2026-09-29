@@ -98,6 +98,9 @@
     <a href="#dep-playa">↳ Zona de playa</a>
     <a href="#dep-entradas">↳ Entradas</a>
     <a href="#dep-salidas">↳ Salidas</a>
+    <a href="#dep-conteo">↳ Conteo de stock</a>
+    <a href="#dep-equipos">↳ Maestro de equipos</a>
+    <a href="#dep-recuperables">↳ Banco de recuperables</a>
 
     <div class="grp">Manual completo</div>
     <a href="#stock">Stock e inventario</a>
@@ -121,18 +124,19 @@
       <span class="part-title">Guía rápida · Depósito</span>
       <span class="badge dep">rol depósito</span>
     </div>
-    <p class="part-sub">Para quien entra con una cuenta de depósito (ej. <code>nombre@deposito.aeon</code>). Con ese usuario la app solo muestra estas cuatro pantallas — el resto (ventas, clientes, cotizaciones) no aparece ni es accesible, ni siquiera escribiendo la dirección a mano.</p>
+    <p class="part-sub">Para quien entra con una cuenta de depósito (ej. <code>nombre@deposito.aeon</code>). Con ese usuario la app solo muestra estas pantallas — el resto (ventas, clientes, cotizaciones) no aparece ni es accesible, ni siquiera escribiendo la dirección a mano.</p>
 
     <section class="card" id="dep-deposito">
       <h3>Depósito</h3>
-      <p class="desc">La foto del stock. Al entrar es lo primero que ves: cuánto hay de cada cosa y dónde está.</p>
+      <p class="desc">La foto del stock. Al entrar es lo primero que ves: cuánto hay de cada cosa y dónde está. (La cuenta admin ve además "Equipos totales activos", un agregado de todas las categorías juntas que a depósito se le oculta a propósito, para no mezclar todo en un solo número.)</p>
       <div class="fields">
-        <div class="field"><div class="k">Equipos totales activos</div><div class="v">Todo lo que todavía cuenta como inventario (no incluye lo vendido ni lo dado de baja).</div></div>
         <div class="field"><div class="k">Stock vendible</div><div class="v">Lo que se puede ofrecer hoy a un cliente.</div></div>
         <div class="field"><div class="k">Zona de playa</div><div class="v">Lo que llegó y todavía no se clasificó.</div></div>
+        <div class="field"><div class="k">Banco de recuperables</div><div class="v">Unidades en reparación o reservadas como equipo de socorro.</div></div>
         <div class="field"><div class="k">Muestras</div><div class="v">Piezas de exhibición, en depósito o prestadas.</div></div>
         <div class="field"><div class="k">Repuestos</div><div class="v">Unidades sueltas de piezas, por modelo.</div></div>
       </div>
+      <p class="desc" style="margin-top:16px">Cada tarjeta es un atajo: lleva directo a esa pantalla (Maestro de equipos, Banco de recuperables, etc.).</p>
       <div class="tip"><b>Tip.</b> El color del stock es la señal: verde es &gt; 0, rojo es 0. Si buscás un modelo puntual, usá la lupa de arriba — busca por código y por nombre a la vez.</div>
     </section>
 
@@ -158,7 +162,7 @@
       <h3>Entradas</h3>
       <p class="desc">Todo lo que vuelve o ingresa al depósito después del alta inicial: una devolución, un equipo que vuelve de una muestra prestada, algo que vuelve de reparación.</p>
       <div class="fields">
-        <div class="field"><div class="k">Equipo</div><div class="v">Elegís de la lista por código (ej. AEO-0007) o modelo.</div></div>
+        <div class="field"><div class="k">Equipo</div><div class="v">Elegís en 2 pasos: primero el modelo (ordenado por categoría, igual que el Catálogo), después la unidad puntual de la lista corta que aparece.</div></div>
         <div class="field"><div class="k">Tipo de entrada</div><div class="v">Devolución por error de fábrica · Retorno de muestra · Retorno de equipo de sustitución · Retorno de reparación propia.</div></div>
         <div class="field"><div class="k">Estado resultante</div><div class="v">Cómo queda después: Apto para venta, Muestra, Pendiente de reparación, etc.</div></div>
         <div class="field"><div class="k">Responsable</div><div class="v">Quién hizo el movimiento — además, la app ya guarda sola qué usuario lo cargó.</div></div>
@@ -170,10 +174,36 @@
       <p class="desc">Cuando algo sale físicamente del depósito — venta, préstamo, traslado. La cantidad disponible se descuenta en el momento.</p>
       <ol class="steps">
         <li><span class="num">1</span><span>Elegí <b>Categoría de origen</b>: de dónde sale — Stock vendible, Stock con descuento, Muestras, Banco de recuperables, Zona de playa o Repuesto.</span></li>
-        <li><span class="num">2</span><span>Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</span></li>
-        <li><span class="num">3</span><span>Guardá — el stock de esa categoría baja automáticamente.</span></li>
+        <li><span class="num">2</span><span>Elegí el <b>producto</b>: para equipos, primero el modelo por categoría y después la unidad puntual; para repuestos, buscás directo en el mismo listado ordenado del Catálogo.</span></li>
+        <li><span class="num">3</span><span>Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</span></li>
+        <li><span class="num">4</span><span>Guardá — el stock de esa categoría baja automáticamente.</span></li>
       </ol>
       <div class="tip"><b>Tip.</b> Si la salida corresponde a una cotización ya aprobada, usá <b>Generar desde cotización</b> arriba de la lista en vez de cargarla a mano — trae los productos y cantidades solos.</div>
+    </section>
+
+    <section class="card" id="dep-conteo">
+      <h3>Conteo de stock</h3>
+      <p class="desc">Contar lo que hay físicamente en el depósito y cargarlo código por código, para detectar diferencias contra lo que dice el sistema.</p>
+      <ol class="steps">
+        <li><span class="num">1</span><span>Buscá el código con el árbol de categorías (igual que en el Catálogo) o con la lupa.</span></li>
+        <li><span class="num">2</span><span>Escribí la <b>cantidad contada</b> en el casillero de ese código — se guarda solo al salir del campo.</span></li>
+      </ol>
+      <div class="tip"><b>Tip.</b> No hace falta terminar todo de una — la barra de arriba muestra el progreso, y se puede seguir después donde quedó.</div>
+    </section>
+
+    <section class="card" id="dep-equipos">
+      <h3>Maestro de equipos</h3>
+      <p class="desc">Un registro por cada unidad física (código interno AEO-####, N° de serie, modelo, estado, ubicación). Desde acá se da de alta stock nuevo:</p>
+      <div class="fields">
+        <div class="field"><div class="k">Nuevo equipo</div><div class="v">Carga una unidad a la vez, eligiendo el modelo del catálogo (o "Cargarlo a mano" si todavía no está).</div></div>
+        <div class="field"><div class="k">Cargar por escaneo</div><div class="v">Un modelo elegido una sola vez + una serie escaneada por unidad.</div></div>
+        <div class="field"><div class="k">Buscar por escaneo</div><div class="v">Encontrar un equipo ya cargado por su código o serie, para darle salida o reubicarlo.</div></div>
+      </div>
+    </section>
+
+    <section class="card" id="dep-recuperables">
+      <h3>Banco de recuperables</h3>
+      <p class="desc">Equipos con desperfecto — pendientes de reparación, en reparación, o reservados como unidad de rescate — derivados desde Zona de playa o desde una Entrada. Por cada unidad se actualiza el estado a medida que avanza la reparación, y se deja un comentario de qué se le está arreglando.</p>
     </section>
 
     <!-- ============ PARTE 2: MANUAL COMPLETO ============ -->
@@ -193,16 +223,23 @@
 
       <section class="card"><h3>Zona de playa</h3><p class="desc">Ver guía de depósito arriba — funciona igual para admin, con acceso además a exportar el listado.</p></section>
 
-      <section class="card"><h3>Maestro de equipos</h3><p class="desc">Un registro por cada unidad física, con su código interno (AEO-####), N° de serie, modelo, estado y ubicación. Es la fuente real de las cantidades que se ven resumidas en Depósito. El modelo y el estado se editan directo desde la tabla.</p></section>
+      <section class="card"><h3>Conteo de stock</h3><p class="desc">Ver guía de depósito arriba. Admin ve además, en vivo, la diferencia contado vs. sistema por código, ordenada con las diferencias primero.</p></section>
 
-      <section class="card"><h3>Banco de recuperables</h3><p class="desc">Equipos con desperfecto: en reparación, pendientes, o reservados como unidad de rescate para un service. Es el destino de "Derivar a → Banco de recuperables" desde Zona de playa.</p></section>
+      <section class="card"><h3>Maestro de equipos</h3><p class="desc">Ver guía de depósito arriba. Es la fuente real de las cantidades que se ven resumidas en Depósito — el modelo y el estado también se pueden editar directo desde la tabla.</p></section>
+
+      <section class="card"><h3>Banco de recuperables</h3><p class="desc">Ver guía de depósito arriba. Es el destino de "Derivar a → Banco de recuperables" desde Zona de playa.</p></section>
 
       <section class="card"><h3>Muestras</h3><p class="desc">Piezas de exhibición — separadas entre "en depósito" y "prestadas a un cliente" (fuera de depósito), y entre con marca / sin marca de fábrica. El total de acá es el mismo que se reporta al seguro.</p></section>
 
       <section class="card" style="grid-column:1/-1"><h3>Catálogo de productos</h3>
-        <p class="desc">Dos carpetas separadas: <b>Productos</b> (Aire Acondicionado, Cocina, Termocalefones) y <b>Repuestos</b>. Cada producto trae precio de lista, ficha técnica, y ahora también el <b>stock</b> actual (verde/rojo, al lado del precio) — para productos es la suma de Maestro de equipos, para repuestos es su propio campo de stock.</p>
-        <div class="chip-row"><span class="chip">nombre / código</span><span class="chip">costoOrigen</span><span class="chip">costoPy</span><span class="chip">precioLista</span><span class="chip">contenedor</span></div>
-        <div class="tip gray"><b>Info interna.</b> El costo de origen y puesto en PY nunca aparecen en una cotización — son solo para uso interno, visibles acá y en los reportes.</div>
+        <p class="desc">Dos carpetas separadas: <b>Productos</b> (Aire Acondicionado, Cocina, Termocalefones) y <b>Repuestos</b>. Cada producto trae precio de lista, ficha técnica, stock actual (verde/rojo, al lado del precio — para productos es la suma de Maestro de equipos, para repuestos es su propio campo de stock), y un panel de solo lectura con el desglose completo del <b>Costo Real</b> (ver Matriz de costos abajo).</p>
+        <div class="chip-row"><span class="chip">nombre / código</span><span class="chip">costoOrigen</span><span class="chip">costoPy</span><span class="chip">costoReal</span><span class="chip">precioLista</span><span class="chip">contenedor</span></div>
+        <div class="tip gray"><b>Info interna.</b> El costo de origen, puesto en PY y Costo Real nunca aparecen en una cotización — son solo para uso interno, visibles acá y en los reportes.</div>
+      </section>
+
+      <section class="card" style="grid-column:1/-1"><h3>Matriz de costos</h3>
+        <p class="desc">De acá sale el <b>Costo Real</b> de cada producto: al costo de origen que se carga a mano se le suman, ya calculados solos, comisión de agente, flete (siempre contra el contenedor 40HQ), despacho, comisión de venta y costo financiero. También se configura acá el piso y el margen ideal de descuento por categoría (Aire Acondicionado vs. el resto).</p>
+        <div class="tip gray"><b>Dónde se usa.</b> El indicador de color en cada línea de Cotizaciones y del Panel de simulación (verde/amarillo/rojo/alerta/error) compara el precio contra este Costo Real, no contra un markup simple — así se ve al toque si un descuento todavía deja margen o ya vende por debajo de costo.</div>
       </section>
     </div>
 
@@ -218,12 +255,12 @@
 
       <section class="card"><h3>Ventas y garantías</h3><p class="desc">La ficha de una obra ya vendida: contrato, remitos vinculados y certificado de garantía, con seguimiento de service a los 12 y 24 meses.</p></section>
 
-      <section class="card"><h3>Cotizaciones</h3><p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por cliente y obra — volver a cotizar la misma obra crea una nueva versión con historial, no una cotización suelta.</p></section>
+      <section class="card"><h3>Cotizaciones</h3><p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por cliente y obra — volver a cotizar la misma obra crea una nueva versión con historial, no una cotización suelta. Cada línea muestra un indicador de color contra el Costo Real (ver Matriz de costos) para saber al toque si el descuento todavía deja margen.</p></section>
 
       <section class="card"><h3>Presupuestos de reparación</h3><p class="desc">Vía separada de las cotizaciones de venta — para reparación, repuestos y mantenimiento de un equipo puntual (AA, termocalefón, campana).</p></section>
 
       <section class="card" style="grid-column:1/-1"><h3>Panel de simulación</h3><p class="desc">Un ejercicio de "si me piden esto, con qué lo cubro" — armás una lista de productos para ver disponibilidad y precio, sin que cuente como nada real todavía.</p>
-        <div class="tip"><b>Importante.</b> Mientras no lo confirmes como cotización real, no reserva stock ni entra en el Reporte para Seguro, Reporte para Joel, ni ningún cálculo real de la app. Es puramente un borrador.</div>
+        <div class="tip"><b>Importante.</b> Mientras no lo confirmes como cotización real, no reserva stock ni entra en el Reporte para Seguro, Reporte Financiero, ni ningún cálculo real de la app. Es puramente un borrador.</div>
       </section>
     </div>
 
@@ -236,7 +273,7 @@
 
       <section class="card"><h3>Reporte para Seguro</h3><p class="desc">Todo lo físico en Paraguay (equipos, repuestos y Zona de playa) valorizado a <b>costo puesto en PY</b> — no a precio de venta, porque el seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla.</p></section>
 
-      <section class="card" style="grid-column:1/-1"><h3>Reporte para Joel</h3><p class="desc">El balance financiero completo: lo físico en Paraguay (a precio de lista), lo que viene en tránsito con sus costos compartidos (flete, despacho, seguro), el estado de las cotizaciones en juego, y la plata por cobrar de ventas comprometidas.</p></section>
+      <section class="card" style="grid-column:1/-1"><h3>Reporte Financiero</h3><p class="desc">El balance financiero completo: lo físico en Paraguay (a precio de lista), lo que viene en tránsito con sus costos compartidos (flete, despacho, seguro), el estado de las cotizaciones en juego, y la plata por cobrar de ventas comprometidas.</p></section>
     </div>
 
     <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="roles">Roles y accesos</h4>
@@ -250,7 +287,7 @@
         </div>
         <div class="role-card dep">
           <h4>Depósito</h4>
-          <ul><li>Solo Depósito, Zona de playa, Entradas y Salidas</li><li>Puede mover stock, no tocar precios</li><li>Sin acceso a ventas, cotizaciones ni clientes</li></ul>
+          <ul><li>Depósito, Zona de playa, Entradas, Salidas, Conteo de stock, Maestro de equipos y Banco de recuperables</li><li>Puede mover stock, no tocar precios</li><li>Sin acceso a ventas, cotizaciones, clientes ni al Catálogo (no ve precios ni costos)</li></ul>
         </div>
       </div>
       <div class="tip gray"><b>Trazabilidad.</b> Cada movimiento (entrada, salida, cambio de stock) queda firmado con el usuario que lo hizo y la fecha — así siempre se puede saber quién cargó qué.</div>

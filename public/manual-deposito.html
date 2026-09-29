@@ -49,18 +49,19 @@
 <main>
   <span class="kicker">AEON Home Tech · Depósito</span>
   <h1>Guía rápida para depósito</h1>
-  <p class="lede">Con tu usuario de depósito la app solo te muestra estas cuatro pantallas: Depósito, Zona de playa, Entradas y Salidas. Acá va cómo se usa cada una.</p>
+  <p class="lede">Con tu usuario de depósito la app te muestra estas pantallas: Depósito, Zona de playa, Entradas, Salidas, Conteo de stock, Maestro de equipos y Banco de recuperables. Acá va cómo se usa cada una.</p>
 
   <section class="card" id="deposito">
     <h3>Depósito</h3>
     <p class="desc">La foto del stock. Al entrar es lo primero que ves: cuánto hay de cada cosa y dónde está.</p>
     <div class="fields">
-      <div class="field"><div class="k">Equipos totales activos</div><div class="v">Todo lo que todavía cuenta como inventario (no incluye lo vendido ni lo dado de baja).</div></div>
       <div class="field"><div class="k">Stock vendible</div><div class="v">Lo que se puede ofrecer hoy a un cliente.</div></div>
       <div class="field"><div class="k">Zona de playa</div><div class="v">Lo que llegó y todavía no se clasificó.</div></div>
+      <div class="field"><div class="k">Banco de recuperables</div><div class="v">Unidades en reparación o reservadas como equipo de socorro.</div></div>
       <div class="field"><div class="k">Muestras</div><div class="v">Piezas de exhibición, en depósito o prestadas.</div></div>
       <div class="field"><div class="k">Repuestos</div><div class="v">Unidades sueltas de piezas, por modelo.</div></div>
     </div>
+    <p class="desc" style="margin-top:16px">Cada tarjeta es un atajo: tocala y te lleva directo a esa pantalla (Maestro de equipos, Banco de recuperables, etc.).</p>
     <div class="tip"><b>Tip.</b> El color del stock es la señal: verde es &gt; 0, rojo es 0. Si buscás un modelo puntual, usá la lupa de arriba — busca por código y por nombre a la vez.</div>
   </section>
 
@@ -86,7 +87,7 @@
     <h3>Entradas</h3>
     <p class="desc">Todo lo que vuelve o ingresa al depósito después del alta inicial: una devolución, un equipo que vuelve de una muestra prestada, algo que vuelve de reparación.</p>
     <div class="fields">
-      <div class="field"><div class="k">Equipo</div><div class="v">Elegís de la lista por código (ej. AEO-0007) o modelo.</div></div>
+      <div class="field"><div class="k">Equipo</div><div class="v">Elegís en 2 pasos: primero el modelo (ordenado por categoría, igual que el Catálogo), después la unidad puntual de la lista corta que aparece.</div></div>
       <div class="field"><div class="k">Tipo de entrada</div><div class="v">Devolución por error de fábrica · Retorno de muestra · Retorno de equipo de sustitución · Retorno de reparación propia.</div></div>
       <div class="field"><div class="k">Estado resultante</div><div class="v">Cómo queda después: Apto para venta, Muestra, Pendiente de reparación, etc.</div></div>
       <div class="field"><div class="k">Responsable</div><div class="v">Quién hizo el movimiento — la app también guarda sola qué usuario lo cargó.</div></div>
@@ -98,10 +99,38 @@
     <p class="desc">Cuando algo sale físicamente del depósito — venta, préstamo, traslado. La cantidad disponible se descuenta en el momento.</p>
     <ol class="steps">
       <li><span class="num">1</span><span>Elegí <b>Categoría de origen</b>: de dónde sale — Stock vendible, Stock con descuento, Muestras, Banco de recuperables, Zona de playa o Repuesto.</span></li>
-      <li><span class="num">2</span><span>Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</span></li>
-      <li><span class="num">3</span><span>Guardá — el stock de esa categoría baja automáticamente.</span></li>
+      <li><span class="num">2</span><span>Elegí el <b>producto</b>: para equipos, primero el modelo por categoría y después la unidad puntual; para repuestos, buscás directo en el mismo listado ordenado del Catálogo.</span></li>
+      <li><span class="num">3</span><span>Completá la <b>ficha de remito</b>: empresa, obra, N° de remito, quién retira (nombre y C.I.), y podés adjuntar una <b>foto del remito en papel</b> si se firmó a mano.</span></li>
+      <li><span class="num">4</span><span>Guardá — el stock de esa categoría baja automáticamente.</span></li>
     </ol>
     <div class="tip"><b>Tip.</b> Si la salida corresponde a una cotización ya aprobada, avisale a tu encargado — esas se generan desde la cotización directamente, no hace falta cargarla a mano.</div>
+  </section>
+
+  <section class="card" id="conteo">
+    <h3>Conteo de stock</h3>
+    <p class="desc">Contá lo que hay físicamente en el depósito y cargalo acá, código por código — sirve para detectar diferencias contra lo que dice el sistema.</p>
+    <ol class="steps">
+      <li><span class="num">1</span><span>Buscá el código con el árbol de categorías de arriba (igual que en el Catálogo) o con la lupa.</span></li>
+      <li><span class="num">2</span><span>Escribí la <b>cantidad contada</b> en el casillero de ese código.</span></li>
+      <li><span class="num">3</span><span>Se guarda solo al salir del campo — no hace falta ningún botón de guardar.</span></li>
+    </ol>
+    <div class="tip"><b>Tip.</b> No hace falta terminar todo de una — la barra de arriba muestra cuántos códigos ya contaste sobre el total, y podés seguir después donde quedaste.</div>
+  </section>
+
+  <section class="card" id="equipos">
+    <h3>Maestro de equipos</h3>
+    <p class="desc">Un registro por cada unidad física (código interno AEO-####, N° de serie, modelo, estado, ubicación). Desde acá se da de alta stock nuevo, y también se busca uno ya cargado:</p>
+    <div class="fields">
+      <div class="field"><div class="k">Nuevo equipo</div><div class="v">Carga una unidad a la vez. Elegís el modelo del catálogo (o "Cargarlo a mano" si todavía no está) y completás estado y ubicación.</div></div>
+      <div class="field"><div class="k">Cargar por escaneo</div><div class="v">Elegís un modelo una sola vez y después escaneás una serie por unidad — cada código escaneado carga una unidad nueva.</div></div>
+      <div class="field"><div class="k">Buscar por escaneo</div><div class="v">Escaneá el código o N° de serie de un equipo ya cargado para ver su ficha y darle salida o reubicarlo (a playa, stock vendible, muestra, etc.) sin tocar la tabla a mano.</div></div>
+    </div>
+  </section>
+
+  <section class="card" id="recuperables">
+    <h3>Banco de recuperables</h3>
+    <p class="desc">Equipos con desperfecto: pendientes de reparación, en reparación, o reservados como unidad de rescate para un service. Llegan acá derivados desde Zona de playa o desde una Entrada.</p>
+    <p class="desc" style="margin-top:10px">Por cada unidad podés actualizar su <b>estado</b> a medida que avanza la reparación, y dejar un <b>comentario</b> (qué se le está arreglando, en qué está). Cuando queda "Apto para venta con descuento", aparece un botón para compartirlo por WhatsApp.</p>
   </section>
 
   <p class="foot">AEON Home Tech · Quantum Investments S.A.</p>

@@ -10625,9 +10625,11 @@ function PrecioMayoristaCard({ r, productos, productosPorGrupo, onDelete, onUpda
         <FotoMayoristaInline r={r} onUpdateField={onUpdateField} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium" style={{ color: INK }}>{r.descripcion}</p>
-          <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-            {r.fecha} · {r.empresa}{r.clienteObra ? ` · ${r.clienteObra}` : ""}
-          </p>
+          <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-1">
+            <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{fmtDate(r.fecha)}</span>
+            <span className="text-sm font-bold" style={{ color: INK }}>{r.empresa || "—"}</span>
+            {r.clienteObra && <span className="text-xs" style={{ color: MUTED }}>· {r.clienteObra}</span>}
+          </div>
           {enMoneda && (
             <p className="text-sm font-semibold mt-1" style={{ color: ACCENT }}>
               {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString()}`}

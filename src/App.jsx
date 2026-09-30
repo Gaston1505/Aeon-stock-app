@@ -5239,34 +5239,72 @@ function EquipoForm({ equipos, productos, onSave }) {
   const [cantidad, setCantidad] = useState(1);
   const [notas, setNotas] = useState("");
   const [motivoBaja, setMotivoBaja] = useState("");
+  const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
+
+  // Para el próximo código auto-sugerido hay que tener en cuenta también los códigos que ya se
+  // agregaron a este mismo lote (todavía no existen en Firestore, así que `equipos` no los ve).
+  const equiposConLote = useMemo(
+    () => equipos.concat(lineas.map((l) => ({ codigo: l.codigo }))),
+    [equipos, lineas]
+  );
 
   // El código interno se arma solo a partir del modelo (modelo-01, modelo-02...) mientras el
   // usuario no lo edite a mano — si lo toca, dejamos de pisarlo aunque siga cambiando el modelo.
   const handleModelo = (v) => {
     setModelo(v);
-    if (codigoAuto) setCodigo(nextCodigoParaModelo(equipos, v));
+    if (codigoAuto) setCodigo(nextCodigoParaModelo(equiposConLote, v));
   };
   const handleCodigo = (v) => {
     setCodigo(v);
     setCodigoAuto(false);
   };
 
-  const submit = () => {
+  const agregarLinea = () => {
+    setError("");
     if (!codigo.trim() || !modelo.trim()) {
       setError("Completá al menos código y modelo.");
       return;
     }
-    onSave({ codigo, serie, modelo, fechaIngreso, estado, ubicacion, cantidad: Number(cantidad) || 1, notas, motivoBaja: estado === "Dado de baja" ? motivoBaja : "" });
+    if (lineas.some((l) => l.codigo === codigo)) {
+      setError("Ese código ya está en la lista.");
+      return;
+    }
+    setLineas([...lineas, {
+      codigo, serie, modelo, estado, ubicacion, cantidad: Number(cantidad) || 1, notas,
+      motivoBaja: estado === "Dado de baja" ? motivoBaja : "",
+    }]);
+    setCodigo("");
+    setCodigoAuto(true);
+    setSerie("");
+    setModelo("");
+    setEstado("En depósito");
+    setUbicacion("");
+    setCantidad(1);
+    setNotas("");
+    setMotivoBaja("");
+  };
+
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  const submit = () => {
+    setError("");
+    if (lineas.length === 0) {
+      setError("Agregá al menos un equipo.");
+      return;
+    }
+    for (const l of lineas) onSave({ ...l, fechaIngreso });
   };
 
   return (
     <div>
+      <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Agregar equipo</p>
       <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={modelo} onChange={handleModelo} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
       <Field label="Código interno"><TextInput value={codigo} onChange={(e) => handleCodigo(e.target.value)} placeholder="Se arma solo a partir del modelo" /></Field>
       <Field label="N° de serie"><TextInput value={serie} onChange={(e) => setSerie(e.target.value)} placeholder="N° de serie de fábrica" /></Field>
       <Field label="Cantidad"><TextInput type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
-      <Field label="Fecha de ingreso"><TextInput type="date" value={fechaIngreso} onChange={(e) => setFechaIngreso(e.target.value)} /></Field>
       <Field label="Estado"><Select value={estado} onChange={(e) => setEstado(e.target.value)}>{ESTADOS.map((s) => <option key={s}>{s}</option>)}</Select></Field>
       {estado === "Dado de baja" && (
         <Field label="Motivo de la baja">
@@ -5278,8 +5316,26 @@ function EquipoForm({ equipos, productos, onSave }) {
       )}
       <Field label="Ubicación"><TextInput value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} placeholder="Ej: Depósito principal, estante 3" /></Field>
       <Field label="Comentario"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
-      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
-      <PrimaryButton onClick={submit}>Guardar equipo</PrimaryButton>
+      <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar equipo</SecondaryButton>
+
+      {lineas.length > 0 && (
+        <div className="mt-3 mb-1 rounded-lg border divide-y" style={{ borderColor: BORDER }}>
+          {lineas.map((l, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <CodeTag>{l.codigo}</CodeTag>
+                <span className="text-xs ml-1.5" style={{ color: MUTED }}>{l.cantidad}× {l.modelo} · {l.estado}</span>
+              </div>
+              <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                <X size={14} style={{ color: MUTED }} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="text-xs mt-2 mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar equipo{lineas.length > 1 ? "s" : ""}</PrimaryButton>
     </div>
   );
 }
@@ -5500,8 +5556,9 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
   const [sourceId, setSourceId] = useState(preset ? preset.sourceId : "");
   const [cantidad, setCantidad] = useState(1);
   const [motivo, setMotivo] = useState(preset ? (MOTIVO_DEFAULT[preset.categoria] || "") : "");
-  const [cliente, setCliente] = useState("");
   const [monto, setMonto] = useState("");
+  const [lineas, setLineas] = useState([]);
+  const [cliente, setCliente] = useState("");
   const [remito, setRemito] = useState("");
   const [responsable, setResponsable] = useState("");
   const [observaciones, setObservaciones] = useState("");
@@ -5530,15 +5587,19 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
 
   const source = opciones.find((o) => o.id === sourceId);
   const comprometido = source && cat.type === "equipo" ? (Number(source.comprometido) || 0) : 0;
+  // Lo ya agregado en este mismo lote (todavía no guardado en Firestore) también hay que
+  // descontarlo del disponible, para no dejar cargar de más entre varias líneas del mismo producto.
+  const yaEnLote = source ? lineas.filter((l) => l.sourceId === source.id).reduce((acc, l) => acc + l.cantidad, 0) : 0;
   const disponible = !source ? 0
-    : cat.type === "producto-repuesto" ? Math.max(0, Number(source.stockDisponible) || 0)
-    : Math.max(0, (Number(source.cantidad) || 1) - comprometido);
+    : cat.type === "producto-repuesto" ? Math.max(0, (Number(source.stockDisponible) || 0) - yaEnLote)
+    : Math.max(0, (Number(source.cantidad) || 1) - comprometido - yaEnLote);
 
   const handleCategoria = (v) => {
     setCategoria(v);
     setSourceId("");
     setCantidad(1);
     setMotivo(MOTIVO_DEFAULT[v] || "");
+    setMonto("");
   };
 
   const handleFoto = async (e) => {
@@ -5554,17 +5615,10 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
     setSubiendoFoto(false);
   };
 
-  const submit = () => {
+  const agregarLinea = () => {
+    setError("");
     if (!cat || !source) {
       setError("Elegí una categoría y un producto.");
-      return;
-    }
-    if (!remito.trim()) {
-      setError("Ingresá el N° de remito.");
-      return;
-    }
-    if (!firmaNombre.trim()) {
-      setError("Falta la aclaración de firma de quien retira/recibe.");
       return;
     }
     const cant = Number(cantidad) || 0;
@@ -5587,18 +5641,58 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
     const codigo = cat.type === "equipo" ? source.codigo
       : cat.type === "producto-repuesto" ? source.nombre
       : (source.codigo || modelo);
-    onSave({
-      fecha, categoria: cat.value, categoriaLabel: cat.label, sourceId, codigo, modelo,
-      cantidad: cant, motivo: cat.type === "equipo" ? motivo : "",
-      cliente, obra, monto: motivo === "Venta" ? Number(monto) || 0 : 0,
-      remito, responsable, observaciones,
-      lugarSalida, empresaCliente, rucCliente, firmaNombre, firmaCedula, fotoRemito,
-    });
+    const nuevoMonto = motivo === "Venta" ? Number(monto) || 0 : 0;
+    // Si el mismo producto ya está en el lote, se suma a esa línea en vez de duplicarla — cada
+    // línea dispara su propia resta de stock contra un snapshot que no se actualiza entre
+    // líneas, así que dos líneas separadas del mismo producto calcularían mal el remanente.
+    const existenteIdx = lineas.findIndex((l) => l.sourceId === sourceId);
+    if (existenteIdx >= 0) {
+      setLineas(lineas.map((l, i) => i === existenteIdx ? { ...l, cantidad: l.cantidad + cant, monto: l.monto + nuevoMonto } : l));
+    } else {
+      setLineas([...lineas, {
+        categoria: cat.value, categoriaLabel: cat.label, sourceId, codigo, modelo,
+        cantidad: cant, motivo: cat.type === "equipo" ? motivo : "",
+        monto: nuevoMonto,
+      }]);
+    }
+    setSourceId("");
+    setCantidad(1);
+    setMotivo(MOTIVO_DEFAULT[categoria] || "");
+    setMonto("");
+  };
+
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  const submit = () => {
+    setError("");
+    if (lineas.length === 0) {
+      setError("Agregá al menos un producto a la salida.");
+      return;
+    }
+    if (!remito.trim()) {
+      setError("Ingresá el N° de remito.");
+      return;
+    }
+    if (!firmaNombre.trim()) {
+      setError("Falta la aclaración de firma de quien retira/recibe.");
+      return;
+    }
+    for (const l of lineas) {
+      onSave({
+        fecha, categoria: l.categoria, categoriaLabel: l.categoriaLabel, sourceId: l.sourceId,
+        codigo: l.codigo, modelo: l.modelo, cantidad: l.cantidad, motivo: l.motivo,
+        cliente, obra, monto: l.monto,
+        remito, responsable, observaciones,
+        lugarSalida, empresaCliente, rucCliente, firmaNombre, firmaCedula, fotoRemito,
+      });
+    }
   };
 
   return (
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Agregar producto</p>
       <Field label="Categoría de origen">
         <Select value={categoria} onChange={(e) => handleCategoria(e.target.value)}>
           <option value="">De dónde sale el producto...</option>
@@ -5651,12 +5745,31 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
           </Select>
         </Field>
       )}
-      <Field label="Cliente / destino"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
       {motivo === "Venta" && (
         <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="Opcional" /></Field>
       )}
+      <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar a la salida</SecondaryButton>
 
-      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      {lineas.length > 0 && (
+        <div className="mt-3 mb-1 rounded-lg border divide-y" style={{ borderColor: BORDER }}>
+          {lineas.map((l, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.modelo}</span>
+                <span className="text-xs ml-1.5" style={{ color: MUTED }}>
+                  {l.categoriaLabel}{l.motivo ? ` · ${l.motivo}` : ""}{l.monto > 0 ? ` · U$S ${fmtN(l.monto)}` : ""}
+                </span>
+              </div>
+              <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                <X size={14} style={{ color: MUTED }} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-base font-bold mt-5 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
+      <Field label="Cliente / destino"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
       <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
@@ -6389,6 +6502,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
 function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
   const [fecha, setFecha] = useState(todayISO());
   const [codigo, setCodigo] = useState("");
+  const [codigos, setCodigos] = useState([]);
   const [tipo, setTipo] = useState(TIPOS_ENTRADA[0]);
   const [origen, setOrigen] = useState("");
   const [motivo, setMotivo] = useState("");
@@ -6396,17 +6510,38 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
   const [responsable, setResponsable] = useState("");
   const [error, setError] = useState("");
 
-  const submit = () => {
+  const agregarLinea = () => {
+    setError("");
     if (!codigo) {
       setError("Elegí el equipo que está ingresando.");
       return;
     }
-    onSave({ fecha, codigo, tipo, origen, motivo, estadoResultante, responsable });
+    if (codigos.includes(codigo)) {
+      setError("Ese equipo ya está en la lista.");
+      return;
+    }
+    setCodigos([...codigos, codigo]);
+    setCodigo("");
+  };
+
+  const quitarLinea = (idx) => setCodigos(codigos.filter((_, i) => i !== idx));
+
+  const submit = () => {
+    setError("");
+    if (codigos.length === 0) {
+      setError("Agregá al menos un equipo a la entrada.");
+      return;
+    }
+    for (const c of codigos) {
+      onSave({ fecha, codigo: c, tipo, origen, motivo, estadoResultante, responsable });
+    }
   };
 
   return (
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Agregar equipo</p>
       <Field label="Equipo">
         <SelectorEquipo
           equiposDisponibles={equipos} productos={productos}
@@ -6415,6 +6550,22 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
           placeholder="Elegí el modelo que está ingresando..."
         />
       </Field>
+      <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar a la entrada</SecondaryButton>
+
+      {codigos.length > 0 && (
+        <div className="mt-3 mb-1 rounded-lg border divide-y" style={{ borderColor: BORDER }}>
+          {codigos.map((c, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <CodeTag>{c}</CodeTag>
+              <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                <X size={14} style={{ color: MUTED }} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-base font-bold mt-5 mb-2" style={{ color: ACCENT }}>Datos de la entrada</p>
       <Field label="Tipo de entrada"><Select value={tipo} onChange={(e) => setTipo(e.target.value)}>{TIPOS_ENTRADA.map((t) => <option key={t}>{t}</option>)}</Select></Field>
       <Field label="Origen"><TextInput value={origen} onChange={(e) => setOrigen(e.target.value)} placeholder="Ej: Cliente, Fábrica, Técnico" /></Field>
       <Field label="Motivo"><TextInput value={motivo} onChange={(e) => setMotivo(e.target.value)} /></Field>
@@ -6687,16 +6838,20 @@ function ComprometidaForm({ equipos, productos, onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [razonSocial, setRazonSocial] = useState("");
   const [obra, setObra] = useState("");
+  const [fechaEntrega, setFechaEntrega] = useState("");
   const [equipoId, setEquipoId] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [monto, setMonto] = useState("");
   const [montoTocado, setMontoTocado] = useState(false);
-  const [fechaEntrega, setFechaEntrega] = useState("");
+  const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
 
   const vendibles = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta" || e.estado === "Apto para venta con descuento");
   const equipo = vendibles.find((e) => e.id === equipoId);
-  const disponible = equipo ? Math.max(0, (Number(equipo.cantidad) || 1) - (Number(equipo.comprometido) || 0)) : 0;
+  // Lo ya agregado en este mismo lote (todavía no guardado en Firestore) también se descuenta,
+  // para no dejar comprometer de más entre varias líneas del mismo equipo.
+  const yaEnLote = equipo ? lineas.filter((l) => l.equipoId === equipo.id).reduce((acc, l) => acc + l.cantidad, 0) : 0;
+  const disponible = equipo ? Math.max(0, (Number(equipo.cantidad) || 1) - (Number(equipo.comprometido) || 0) - yaEnLote) : 0;
   const productoCatalogo = equipo ? (productos || []).find((p) => p.nombre === equipo.modelo) : null;
 
   const sugerirMonto = (cant, prod) => {
@@ -6707,6 +6862,7 @@ function ComprometidaForm({ equipos, productos, onSave }) {
   const handleEquipo = (id) => {
     setEquipoId(id);
     setCantidad(1);
+    setMontoTocado(false);
     const eq = vendibles.find((e) => e.id === id);
     const prod = eq ? (productos || []).find((p) => p.nombre === eq.modelo) : null;
     sugerirMonto(1, prod);
@@ -6717,9 +6873,10 @@ function ComprometidaForm({ equipos, productos, onSave }) {
     sugerirMonto(Number(v) || 0, productoCatalogo);
   };
 
-  const submit = () => {
-    if (!razonSocial.trim() || !equipo) {
-      setError("Ingresá la razón social y elegí el producto.");
+  const agregarLinea = () => {
+    setError("");
+    if (!equipo) {
+      setError("Elegí el producto a comprometer.");
       return;
     }
     const cant = Number(cantidad) || 0;
@@ -6727,17 +6884,47 @@ function ComprometidaForm({ equipos, productos, onSave }) {
       setError(`La cantidad no puede superar lo disponible sin comprometer (${disponible}).`);
       return;
     }
-    onSave({
-      fecha, razonSocial, obra, equipoId, modelo: equipo.modelo, codigo: equipo.codigo,
-      cantidad: cant, monto: Number(monto) || 0, fechaEntrega,
-    });
+    const nuevoMonto = Number(monto) || 0;
+    // Igual que en Salidas: si el mismo equipo ya está en el lote, se suma a esa línea en vez de
+    // duplicarla, para no calcular mal el disponible contra un snapshot que no se actualiza entre
+    // líneas dentro del mismo guardado.
+    const existenteIdx = lineas.findIndex((l) => l.equipoId === equipoId);
+    if (existenteIdx >= 0) {
+      setLineas(lineas.map((l, i) => i === existenteIdx ? { ...l, cantidad: l.cantidad + cant, monto: l.monto + nuevoMonto } : l));
+    } else {
+      setLineas([...lineas, { equipoId, modelo: equipo.modelo, codigo: equipo.codigo, cantidad: cant, monto: nuevoMonto }]);
+    }
+    setEquipoId("");
+    setCantidad(1);
+    setMonto("");
+    setMontoTocado(false);
+  };
+
+  const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
+
+  const submit = () => {
+    setError("");
+    if (!razonSocial.trim()) {
+      setError("Ingresá la razón social.");
+      return;
+    }
+    if (lineas.length === 0) {
+      setError("Agregá al menos un producto a comprometer.");
+      return;
+    }
+    for (const l of lineas) {
+      onSave({
+        fecha, razonSocial, obra, equipoId: l.equipoId, modelo: l.modelo, codigo: l.codigo,
+        cantidad: l.cantidad, monto: l.monto, fechaEntrega,
+      });
+    }
   };
 
   return (
     <div>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-      <Field label="Razón social"><TextInput value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} /></Field>
-      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Agregar equipo</p>
       <Field label="Producto">
         <SelectorEquipo equiposDisponibles={vendibles} productos={productos} value={equipoId} onChange={handleEquipo} />
       </Field>
@@ -6751,7 +6938,30 @@ function ComprometidaForm({ equipos, productos, onSave }) {
           <TextInput type="number" min="1" max={disponible} value={cantidad} onChange={(e) => handleCantidad(e.target.value)} />
         </Field>
       )}
-      <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => { setMonto(e.target.value); setMontoTocado(true); }} /></Field>
+      {equipo && (
+        <Field label="Monto U$S"><TextInput type="number" value={monto} onChange={(e) => { setMonto(e.target.value); setMontoTocado(true); }} /></Field>
+      )}
+      <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar a la venta comprometida</SecondaryButton>
+
+      {lineas.length > 0 && (
+        <div className="mt-3 mb-1 rounded-lg border divide-y" style={{ borderColor: BORDER }}>
+          {lineas.map((l, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.modelo}</span>
+                {l.monto > 0 && <span className="text-xs ml-1.5" style={{ color: MUTED }}>U$S {fmtN(l.monto)}</span>}
+              </div>
+              <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                <X size={14} style={{ color: MUTED }} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-base font-bold mt-5 mb-2" style={{ color: ACCENT }}>Datos de la venta</p>
+      <Field label="Razón social"><TextInput value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label="Fecha estimada de entrega"><TextInput type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} /></Field>
       <p className="text-xs mb-3" style={{ color: MUTED }}>
         Esta cantidad queda reservada: no se va a poder retirar del depósito para otra salida hasta que la marques como retirada.

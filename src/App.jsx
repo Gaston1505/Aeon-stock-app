@@ -1748,8 +1748,12 @@ function LoginScreen({ onLogin, error }) {
     <div className="flex items-center justify-center min-h-screen px-4" style={{ backgroundColor: BG }}>
       <form onSubmit={submit} className="w-full rounded-xl p-6" style={{ maxWidth: 340, backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
         <img src={`${import.meta.env.BASE_URL}aeon-logo.jpg`} alt="AEON" className="h-16 w-auto mx-auto mb-5" />
-        <Field label="Email"><TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></Field>
-        <Field label="Contraseña"><TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        <Field label="Email">
+          <TextInput type="email" name="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Contraseña">
+          <TextInput type="password" name="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
         {error && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{error}</p>}
         <PrimaryButton type="submit" onClick={submit} disabled={enviando}>
           {enviando ? "Ingresando..." : "Ingresar"}

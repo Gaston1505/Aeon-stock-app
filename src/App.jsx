@@ -72,8 +72,8 @@ const MATRIZ_COSTOS_DEFAULT = {
     "20": { m3: 32.60 },
   },
   categorias: {
-    aires: { comisionVentaPct: 1.88, margenMinimoPct: 10, margenIdealMinPct: 25, margenIdealMaxPct: 30 },
-    otros: { comisionVentaPct: 2.5, margenMinimoPct: 25, margenIdealMinPct: 50, margenIdealMaxPct: 60 },
+    aires: { comisionVentaPct: 1.88, despachoPct: 35, margenMinimoPct: 10, margenIdealMinPct: 25, margenIdealMaxPct: 30 },
+    otros: { comisionVentaPct: 2.5, despachoPct: 31, margenMinimoPct: 25, margenIdealMinPct: 60, margenIdealMaxPct: 65 },
   },
 };
 
@@ -736,9 +736,12 @@ function calcularCostosProducto(producto, matriz) {
   const catCfg = matriz.categorias?.[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
   const fleteUsd40HQ = Number(matriz.contenedores?.["40HQ"]?.fleteUsd) || 0;
 
+  // Despacho por categoría (Aires históricamente más alto que el resto) — si la categoría no
+  // trae su propio despachoPct cargado (Matriz vieja), cae al despachoPct general de siempre.
+  const despachoPct = catCfg.despachoPct != null ? Number(catCfg.despachoPct) : (Number(matriz.despachoPct) || 0);
   const comisionAgente = origen * (Number(matriz.comisionAgentePct) || 0) / 100;
   const flete = fleteUsd40HQ / cantidad;
-  const despacho = (origen + flete) * (Number(matriz.despachoPct) || 0) / 100;
+  const despacho = (origen + flete) * despachoPct / 100;
   const costoPy = origen + comisionAgente + flete + despacho;
   const comisionVenta = costoPy * (Number(catCfg.comisionVentaPct) || 0) / 100;
   const costoFinanciero = costoPy * (Number(matriz.costoFinancieroPct) || 0) / 100;
@@ -752,25 +755,29 @@ function calcularCostosProducto(producto, matriz) {
   };
 }
 
-// Clasifica un margen % (sobre precio de venta) contra el piso/ideal de su categoría — 5 estados:
-// error (bajo costo real), alerta (bajo el mínimo admisible pero todavía con ganancia), rojo (cerca
-// del piso, o sea cerca del descuento máximo), amarillo (entre el punto medio y el ideal) y verde
-// (en o por arriba del ideal). Para Electrodomésticos hoy piso=25% e ideal=50-60%, así que la banda
-// roja va de 25% a 37,5% — para Aires (piso 10%, ideal 25-30%) va de 10% a 17,5%.
-function bandaDescuento(margenPct, cfg) {
-  if (margenPct < 0) return { estado: "error", color: "#7F1D1D", bg: "#FCA5A5", label: "Bajo costo real" };
-  if (margenPct < cfg.margenMinimoPct) return { estado: "alerta", color: "#9A3412", bg: "#FFEDD5", label: "Bajo el mínimo" };
+// Clasifica un markup % (sobre Costo PY, no sobre precio de venta) contra el piso/ideal de su
+// categoría — 5 estados: error (el markup no alcanza siquiera a cubrir comisión de venta + costo
+// financiero, o sea se vende bajo Costo Real), alerta (bajo el mínimo admisible pero todavía con
+// ganancia real), rojo (cerca del piso, o sea cerca del descuento máximo), amarillo (entre el punto
+// medio y el ideal) y verde (en o por arriba del ideal). Así arma el precio el Excel de Armado de
+// Precios: precio = CostoPy × (1 + markup) — acá se mide al revés, qué markup implica un precio dado.
+// `costoFinancieroPct` se pasa aparte porque vive en la Matriz general, no por categoría.
+function bandaDescuento(markupPct, cfg, costoFinancieroPct) {
+  const breakeven = (Number(cfg.comisionVentaPct) || 0) + (Number(costoFinancieroPct) || 0);
+  if (markupPct < breakeven) return { estado: "error", color: "#7F1D1D", bg: "#FCA5A5", label: "Bajo costo real" };
+  if (markupPct < cfg.margenMinimoPct) return { estado: "alerta", color: "#9A3412", bg: "#FFEDD5", label: "Bajo el mínimo" };
   const puntoMedio = (cfg.margenMinimoPct + cfg.margenIdealMinPct) / 2;
-  if (margenPct < puntoMedio) return { estado: "rojo", color: "#B91C1C", bg: "#FBEAEA", label: "Cerca del máximo descuento" };
-  if (margenPct < cfg.margenIdealMinPct) return { estado: "amarillo", color: "#B45309", bg: "#FDF1E0", label: "Por debajo de lo ideal" };
+  if (markupPct < puntoMedio) return { estado: "rojo", color: "#B91C1C", bg: "#FBEAEA", label: "Cerca del máximo descuento" };
+  if (markupPct < cfg.margenIdealMinPct) return { estado: "amarillo", color: "#B45309", bg: "#FDF1E0", label: "Por debajo de lo ideal" };
   return { estado: "verde", color: "#15803D", bg: "#E9F7EF", label: "Ideal" };
 }
 
-// Cuánto se puede descontar del precio de lista sin perforar el margen mínimo admisible.
-function descuentoMaximoPct(precioLista, costoReal, margenMinimoPct) {
+// Cuánto se puede descontar del precio de lista sin perforar el margen mínimo admisible (medido
+// como markup sobre Costo PY).
+function descuentoMaximoPct(precioLista, costoPy, margenMinimoPct) {
   const lista = Number(precioLista) || 0;
   if (lista <= 0) return null;
-  const precioPiso = costoReal / (1 - margenMinimoPct / 100);
+  const precioPiso = costoPy * (1 + margenMinimoPct / 100);
   return (lista - precioPiso) / lista * 100;
 }
 
@@ -817,8 +824,9 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     const costoTotal = cantidad * costoUnit;
     const margen = ventaNeta - costoTotal;
     const margenPct = ventaNeta > 0 ? (margen / ventaNeta) * 100 : 0;
-    // Banda de descuento contra Costo Real (con comisión de venta + costo financiero) — piso más
-    // exigente que el costoUnit de arriba (Costo PY), que es la base de la rentabilidad "empresa".
+    // Banda de descuento: markup sobre Costo PY, contra el piso/ideal de la categoría — más
+    // exigente que el margen bruto de arriba (ventaNeta vs. costoUnit), que es la rentabilidad
+    // "empresa" sin descontar comisión de venta ni costo financiero.
     let bandaCostoReal = null;
     const precioNeto = precioUnit * factorDescuento;
     if (producto && precioNeto > 0) {
@@ -826,7 +834,7 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
       const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
       const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
       const costoReal = costos ? costos.costoReal : costoUnit;
-      if (costoReal > 0) bandaCostoReal = bandaDescuento(((precioNeto - costoReal) / precioNeto) * 100, catCfg);
+      if (costoReal > 0 && costos) bandaCostoReal = bandaDescuento(((precioNeto - costos.costoPy) / costos.costoPy) * 100, catCfg, matriz.costoFinancieroPct);
     }
     return { codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct, sinCosto, bandaCostoReal };
   });
@@ -7386,17 +7394,18 @@ function FilaCosto({ label, formula, valor, destacado }) {
 function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
   const catCfg = matriz.categorias[costos.categoria] || MATRIZ_COSTOS_DEFAULT.categorias[costos.categoria];
   const fleteUsd40HQ = Number(matriz.contenedores?.["40HQ"]?.fleteUsd) || 0;
+  const despachoPctEfectivo = catCfg.despachoPct != null ? catCfg.despachoPct : matriz.despachoPct;
   return (
     <div className="space-y-1.5">
       <FilaCosto label="Comisión agente" formula={`Costo origen × ${matriz.comisionAgentePct}%`} valor={costos.comisionAgente} />
       <FilaCosto label="Flete" formula={`U$S ${fleteUsd40HQ.toLocaleString()} (40HQ) ÷ ${contenedorCantidad} unidades`} valor={costos.flete} />
-      <FilaCosto label="Despacho" formula={`(Costo origen + Flete) × ${matriz.despachoPct}%`} valor={costos.despacho} />
+      <FilaCosto label="Despacho" formula={`(Costo origen + Flete) × ${despachoPctEfectivo}%`} valor={costos.despacho} />
       <FilaCosto label="Costo puesto en PY" formula="Costo origen + Comisión agente + Flete + Despacho" valor={costos.costoPy} destacado />
       <FilaCosto label="Comisión venta" formula={`Costo PY × ${catCfg.comisionVentaPct}% (${costos.categoria === "aires" ? "Aire Acondicionado" : "Electrodomésticos"})`} valor={costos.comisionVenta} />
       <FilaCosto label="Costo financiero" formula={`Costo PY × ${matriz.costoFinancieroPct}%`} valor={costos.costoFinanciero} />
       <FilaCosto label="Costo Real" formula="Costo PY + Comisión venta + Costo financiero" valor={costos.costoReal} destacado />
       <p className="text-[10px] pt-1" style={{ color: MUTED }}>
-        Margen mínimo admisible: {costos.margenMinimoPct}% · Ideal: {costos.margenIdealMinPct}%-{costos.margenIdealMaxPct}%
+        Markup mínimo admisible (sobre Costo PY): {costos.margenMinimoPct}% · Ideal: {costos.margenIdealMinPct}%-{costos.margenIdealMaxPct}%
       </p>
     </div>
   );
@@ -8811,22 +8820,21 @@ function IndicadorDescuentoLinea({ producto, precioUnit, matrizCostos }) {
   const costos = calcularCostosProducto(producto, matriz);
   const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
   const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
-  const costoReal = costos ? costos.costoReal : (Number(producto.costoPy) || Number(producto.costoOrigen) || 0);
-  if (!costoReal) {
+  if (!costos) {
     return <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#F2F3F4", color: MUTED }}>Sin costo cargado</span>;
   }
   const precio = Number(precioUnit) || 0;
   if (precio <= 0) return null;
-  const margenPct = ((precio - costoReal) / precio) * 100;
-  const banda = bandaDescuento(margenPct, catCfg);
-  const maxDesc = descuentoMaximoPct(producto.precioLista, costoReal, catCfg.margenMinimoPct);
+  const markupPct = ((precio - costos.costoPy) / costos.costoPy) * 100;
+  const banda = bandaDescuento(markupPct, catCfg, matriz.costoFinancieroPct);
+  const maxDesc = descuentoMaximoPct(producto.precioLista, costos.costoPy, catCfg.margenMinimoPct);
   return (
     <span
       className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
       style={{ backgroundColor: banda.bg, color: banda.color }}
-      title={`Margen actual: ${fmtN(margenPct, 1)}% (piso ${catCfg.margenMinimoPct}%, ideal ${catCfg.margenIdealMinPct}-${catCfg.margenIdealMaxPct}%)`}
+      title={`Markup actual sobre Costo PY: ${fmtN(markupPct, 1)}% (piso ${catCfg.margenMinimoPct}%, ideal ${catCfg.margenIdealMinPct}-${catCfg.margenIdealMaxPct}%)`}
     >
-      {banda.label} ({fmtN(margenPct, 0)}%){maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${fmtN(maxDesc, 0)}%` : ""}
+      {banda.label} ({fmtN(markupPct, 0)}%){maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${fmtN(maxDesc, 0)}%` : ""}
     </span>
   );
 }
@@ -10549,7 +10557,8 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
       ])),
       categorias: Object.fromEntries(Object.entries(form.categorias).map(([cat, v]) => [
         cat, {
-          comisionVentaPct: Number(v.comisionVentaPct) || 0, margenMinimoPct: Number(v.margenMinimoPct) || 0,
+          comisionVentaPct: Number(v.comisionVentaPct) || 0, despachoPct: Number(v.despachoPct) || 0,
+          margenMinimoPct: Number(v.margenMinimoPct) || 0,
           margenIdealMinPct: Number(v.margenIdealMinPct) || 0, margenIdealMaxPct: Number(v.margenIdealMaxPct) || 0,
         },
       ])),
@@ -10564,6 +10573,9 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
         <p className="text-sm mt-0.5" style={{ color: MUTED }}>
           Estas son las únicas variables que se editan a mano — el Costo Real de cada producto (Catálogo → Datos internos de costo) sale de acá + su costo origen y unidades por contenedor.
         </p>
+        <p className="text-sm mt-1" style={{ color: MUTED }}>
+          El margen mínimo/ideal de cada categoría es <b>markup sobre Costo PY</b> (precio = Costo PY × (1 + markup)) — igual que arma los precios Armado de Precios en Excel. El límite real de descuento sale de restarle a ese markup la comisión de venta y el costo financiero: si el markup cae por debajo de esa suma, ya se está vendiendo bajo Costo Real.
+        </p>
       </div>
 
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Variables generales</p>
@@ -10571,7 +10583,7 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
         <Field label="Comisión agente % (sobre costo origen)">
           <TextInput type="number" value={num(["comisionAgentePct"])} onChange={(e) => set(["comisionAgentePct"], e.target.value)} />
         </Field>
-        <Field label="Despacho % (sobre origen + flete)">
+        <Field label="Despacho % general (sobre origen + flete)">
           <TextInput type="number" value={num(["despachoPct"])} onChange={(e) => set(["despachoPct"], e.target.value)} />
         </Field>
         <Field label="Costo financiero % (sobre costo PY)">
@@ -10595,18 +10607,23 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
         <div key={cat}>
           <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>{label}</p>
           <div className="flex gap-2">
+            <Field label="Despacho % (sobre origen + flete, reemplaza el general)">
+              <TextInput type="number" value={num(["categorias", cat, "despachoPct"])} onChange={(e) => set(["categorias", cat, "despachoPct"], e.target.value)} />
+            </Field>
             <Field label="Comisión venta % (sobre costo PY)">
               <TextInput type="number" value={num(["categorias", cat, "comisionVentaPct"])} onChange={(e) => set(["categorias", cat, "comisionVentaPct"], e.target.value)} />
             </Field>
-            <Field label="Margen mínimo admisible %">
+          </div>
+          <div className="flex gap-2">
+            <Field label="Markup mínimo admisible % (sobre Costo PY)">
               <TextInput type="number" value={num(["categorias", cat, "margenMinimoPct"])} onChange={(e) => set(["categorias", cat, "margenMinimoPct"], e.target.value)} />
             </Field>
           </div>
           <div className="flex gap-2">
-            <Field label="Margen ideal — mínimo %">
+            <Field label="Markup ideal — mínimo % (sobre Costo PY)">
               <TextInput type="number" value={num(["categorias", cat, "margenIdealMinPct"])} onChange={(e) => set(["categorias", cat, "margenIdealMinPct"], e.target.value)} />
             </Field>
-            <Field label="Margen ideal — máximo %">
+            <Field label="Markup ideal — máximo % (sobre Costo PY)">
               <TextInput type="number" value={num(["categorias", cat, "margenIdealMaxPct"])} onChange={(e) => set(["categorias", cat, "margenIdealMaxPct"], e.target.value)} />
             </Field>
           </div>

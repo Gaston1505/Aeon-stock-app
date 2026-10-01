@@ -2231,7 +2231,7 @@ export default function App() {
     const filas = armado.filas || [];
     const rows = filas.map((f) => ({
       Nivel: f.nivel || "", Ubicación: f.ubicacion || "", Capacidad: f.capacidad || "",
-      "Tipo (cliente)": f.tipoOriginal || "", Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
+      "Tipo (cliente)": `${f.esAgregado ? "[AGREGADO] " : ""}${f.tipoOriginal || ""}`, Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
       "Cantidad total": (Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0),
       "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       "Grupo / exterior compartido": textoGrupoExterior(f),
@@ -2242,7 +2242,6 @@ export default function App() {
     for (const f of filas) {
       const rep = Number(f.repeticiones) || 0;
       if (f.equipoCodigo) totalesPorCodigo.set(f.equipoCodigo, (totalesPorCodigo.get(f.equipoCodigo) || 0) + (Number(f.cantidad) || 0) * rep);
-      if (f.exteriorCodigo) totalesPorCodigo.set(f.exteriorCodigo, (totalesPorCodigo.get(f.exteriorCodigo) || 0) + (Number(f.exteriorCantidad) || 1) * rep);
     }
     const totalUnidades = Array.from(totalesPorCodigo.values()).reduce((a, b) => a + b, 0);
 
@@ -10041,19 +10040,22 @@ function ObraGrupoArmados({ grupo, productos, onDelete, onEditar, onDescargarPdf
   );
 }
 
-// Cada fila es UNA línea tal cual la pidió el cliente (mismo orden, nada afuera — se combine o
-// no). El equipo AEON de esa línea se cuenta siempre; el exterior compartido de un grupo se
-// carga UNA sola vez (en cualquiera de las líneas de ese grupo) para no contarlo de más cuando
-// varias líneas comparten el mismo exterior — por eso el total no es una simple suma ingenua.
+// Cada fila "del pedido" es UNA línea tal cual la pidió el cliente (mismo orden, nada afuera —
+// se combine o no). Un exterior multi que combina varias de esas líneas aparece ADEMÁS como su
+// propia fila — marcada `esAgregado` porque no viene del pedido, es equipo que pone AEON para
+// resolver la combinación — así se ve como un producto más del depto y no solo como una nota
+// adentro de otra línea. El total de equipos suma TODAS las filas por igual (ya no hay que
+// tratar el exterior aparte: al tener su propia fila, ya se cuenta una sola vez solo).
 function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, descargandoId }) {
   const filas = a.filas || [];
+  const lineasPedido = filas.filter((f) => !f.esAgregado).length;
+  const equiposAgregados = filas.filter((f) => f.esAgregado).length;
   const totalesPorCodigo = useMemo(() => {
     const map = new Map();
     const sumar = (codigo, cant) => { if (codigo) map.set(codigo, (map.get(codigo) || 0) + cant); };
     for (const f of filas) {
       const rep = Number(f.repeticiones) || 0;
       sumar(f.equipoCodigo, (Number(f.cantidad) || 0) * rep);
-      if (f.exteriorCodigo) sumar(f.exteriorCodigo, (Number(f.exteriorCantidad) || 1) * rep);
     }
     return Array.from(map.entries()).map(([codigo, cantidad]) => ({ codigo, cantidad })).sort((x, y) => x.codigo.localeCompare(y.codigo));
   }, [filas]);
@@ -10065,7 +10067,8 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
         <div>
           {a.categoria && <CodeTag>{a.categoria}</CodeTag>}
           <p className="text-xs mt-1" style={{ color: MUTED }}>
-            {fmtDate(a.fecha)} · {filas.length} línea{filas.length !== 1 ? "s" : ""} del pedido
+            {fmtDate(a.fecha)} · {lineasPedido} línea{lineasPedido !== 1 ? "s" : ""} del pedido
+            {equiposAgregados > 0 && ` + ${equiposAgregados} equipo${equiposAgregados !== 1 ? "s" : ""} agregado${equiposAgregados !== 1 ? "s" : ""} (exteriores)`}
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -10098,11 +10101,14 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
           </thead>
           <tbody>
             {filas.map((f, i) => (
-              <tr key={i} className="border-t" style={{ borderColor: BORDER }}>
+              <tr key={i} className="border-t" style={{ borderColor: BORDER, backgroundColor: f.esAgregado ? "#FBF8EE" : "transparent" }}>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.nivel}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.ubicacion}</td>
                 <td className="px-2 py-1.5 text-right whitespace-nowrap" style={{ color: INK }}>{f.capacidad}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.tipoOriginal}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: f.esAgregado ? "#B45309" : INK }}>
+                  {f.esAgregado && <span className="text-[9px] font-semibold uppercase mr-1 px-1 py-0.5 rounded" style={{ backgroundColor: "#FDF1E0", color: "#B45309" }}>Agregado</span>}
+                  {f.tipoOriginal}
+                </td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>{f.cantidad}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>×{f.repeticiones}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap font-semibold" style={{ color: INK }}>{(Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)}</td>
@@ -10131,25 +10137,35 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
 
 function FilaArmadoEditor({ fila, idx, productos, productosPorGrupo, onChange, onQuitarFila }) {
   return (
-    <div className="p-3 rounded-lg" style={{ backgroundColor: "#F7F8FA", border: `0.5px solid ${BORDER}` }}>
+    <div className="p-3 rounded-lg" style={{ backgroundColor: fila.esAgregado ? "#FBF8EE" : "#F7F8FA", border: `0.5px solid ${fila.esAgregado ? "#F3E4BE" : BORDER}` }}>
       <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-semibold" style={{ color: MUTED }}>Línea {idx + 1} — tal cual viene en el pedido del cliente</p>
+        <p className="text-xs font-semibold" style={{ color: MUTED }}>
+          Línea {idx + 1} — {fila.esAgregado ? "equipo agregado (no viene en el pedido)" : "tal cual viene en el pedido del cliente"}
+        </p>
         <button onClick={onQuitarFila} className="p-1 rounded hover:bg-gray-200" title="Quitar línea"><X size={14} style={{ color: MUTED }} /></button>
       </div>
+      <label className="flex items-start gap-2 mb-3 text-xs" style={{ color: INK }}>
+        <input type="checkbox" className="mt-0.5" checked={!!fila.esAgregado} onChange={(e) => onChange("esAgregado", e.target.checked)} />
+        <span>Este renglón es un equipo que agrega AEON (ej. el exterior multi que combina otras líneas) — no viene en el pedido del cliente</span>
+      </label>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Nivel"><TextInput value={fila.nivel} onChange={(e) => onChange("nivel", e.target.value)} placeholder="Ej: PT1" /></Field>
         <Field label="Ubicación"><TextInput value={fila.ubicacion} onChange={(e) => onChange("ubicacion", e.target.value)} placeholder="Ej: DPTO. A" /></Field>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Capacidad (BTU, del pedido)"><TextInput value={fila.capacidad} onChange={(e) => onChange("capacidad", e.target.value)} placeholder="Ej: 24000" /></Field>
-        <Field label="Tipo (del pedido)"><TextInput value={fila.tipoOriginal} onChange={(e) => onChange("tipoOriginal", e.target.value)} placeholder="Ej: SPLIT INVERTER" /></Field>
+        <Field label={fila.esAgregado ? "Capacidad (BTU del equipo agregado)" : "Capacidad (BTU, del pedido)"}>
+          <TextInput value={fila.capacidad} onChange={(e) => onChange("capacidad", e.target.value)} placeholder="Ej: 24000" />
+        </Field>
+        <Field label={fila.esAgregado ? "Tipo (del equipo agregado)" : "Tipo (del pedido)"}>
+          <TextInput value={fila.tipoOriginal} onChange={(e) => onChange("tipoOriginal", e.target.value)} placeholder={fila.esAgregado ? "Ej: EXTERIOR MULTI" : "Ej: SPLIT INVERTER"} />
+        </Field>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Cantidad"><TextInput type="number" value={fila.cantidad} onChange={(e) => onChange("cantidad", e.target.value)} /></Field>
         <Field label="Repeticiones"><TextInput type="number" value={fila.repeticiones} onChange={(e) => onChange("repeticiones", e.target.value)} /></Field>
       </div>
       <p className="text-xs -mt-2 mb-3" style={{ color: MUTED }}>
-        Cantidad total (como en el Excel del cliente): <b style={{ color: INK }}>{(Number(fila.cantidad) || 0) * (Number(fila.repeticiones) || 0)}</b>
+        Cantidad total: <b style={{ color: INK }}>{(Number(fila.cantidad) || 0) * (Number(fila.repeticiones) || 0)}</b>
       </p>
 
       <Field label="Equipo AEON asignado a esta línea">
@@ -10160,21 +10176,28 @@ function FilaArmadoEditor({ fila, idx, productos, productosPorGrupo, onChange, o
         />
       </Field>
 
-      <Field label='Grupo de combinación (opcional — mismo texto en todas las líneas que comparten un exterior, ej. "A-1"; vacío si no combina)'>
+      <Field label={fila.esAgregado
+        ? 'Grupo que este exterior resuelve (mismo texto que las líneas que cubre, ej. "A-1")'
+        : 'Grupo de combinación (opcional — mismo texto en todas las líneas que comparten un exterior, ej. "A-1"; vacío si no combina)'}
+      >
         <TextInput value={fila.grupo} onChange={(e) => onChange("grupo", e.target.value)} placeholder="Ej: A-1" />
       </Field>
 
-      <Field label="Exterior compartido (cargarlo UNA sola vez por grupo, en cualquiera de sus líneas — no repetir en las demás)">
-        <SelectorProducto
-          productos={productos} productosPorGrupo={productosPorGrupo}
-          value={productos.find((p) => p.nombre === fila.exteriorCodigo)?.id || ""}
-          onChange={(id) => onChange("exteriorCodigo", productos.find((p) => p.id === id)?.nombre || "")}
-        />
-      </Field>
-      {fila.exteriorCodigo && (
-        <p className="text-xs -mt-2 mb-3" style={{ color: MUTED }}>
-          Total de exteriores para este grupo: <b style={{ color: INK }}>{(Number(fila.repeticiones) || 0)}</b> (1 por repetición × {fila.repeticiones || 0} repeticiones)
-        </p>
+      {!fila.esAgregado && (
+        <>
+          <Field label="Exterior compartido (cargarlo UNA sola vez por grupo, en cualquiera de sus líneas — no repetir en las demás)">
+            <SelectorProducto
+              productos={productos} productosPorGrupo={productosPorGrupo}
+              value={productos.find((p) => p.nombre === fila.exteriorCodigo)?.id || ""}
+              onChange={(id) => onChange("exteriorCodigo", productos.find((p) => p.id === id)?.nombre || "")}
+            />
+          </Field>
+          {fila.exteriorCodigo && (
+            <p className="text-xs -mt-2 mb-3" style={{ color: MUTED }}>
+              Total de exteriores para este grupo: <b style={{ color: INK }}>{(Number(fila.repeticiones) || 0)}</b> (1 por repetición × {fila.repeticiones || 0} repeticiones) — recordá agregar también la línea del equipo exterior en sí (checkbox de arriba) para que aparezca como producto propio del depto.
+            </p>
+          )}
+        </>
       )}
 
       <Field label="Notas (opcional)"><TextInput value={fila.notas} onChange={(e) => onChange("notas", e.target.value)} placeholder="Ej: combina con la línea de 12.000 BTU en el exterior de 36K" /></Field>
@@ -10194,7 +10217,7 @@ function ArmadoCombinacionForm({ productos, clientes, initial, editId, onSave, o
 
   const agregarFila = () => setFilas([...filas, {
     nivel: "", ubicacion: "", capacidad: "", tipoOriginal: "", cantidad: 1, repeticiones: 1,
-    equipoCodigo: "", grupo: "", exteriorCodigo: "", notas: "",
+    equipoCodigo: "", grupo: "", exteriorCodigo: "", notas: "", esAgregado: false,
   }]);
   const quitarFila = (idx) => setFilas(filas.filter((_, i) => i !== idx));
   const actualizarFila = (idx, campo, valor) => setFilas(filas.map((f, i) => (i === idx ? { ...f, [campo]: valor } : f)));

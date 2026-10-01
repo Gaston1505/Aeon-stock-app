@@ -1725,7 +1725,7 @@ export async function generateArmadoCombinacionPdf(armado) {
       nivel: f.nivel || "",
       ubicacion: f.ubicacion || "",
       capacidad: f.capacidad || "",
-      tipoOriginal: f.tipoOriginal || "",
+      tipoOriginal: `${f.esAgregado ? "[AGREGADO] " : ""}${f.tipoOriginal || ""}`,
       cantidad: String(f.cantidad ?? ""),
       repeticiones: `×${f.repeticiones ?? ""}`,
       cantidadTotal: String((Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)),
@@ -1745,6 +1745,7 @@ export async function generateArmadoCombinacionPdf(armado) {
     ensureSpace(rowH + 20);
     if (y === AC_PAGE_H - AC_MARGIN) drawHeader();
 
+    if (f.esAgregado) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfb / 255, 0xf8 / 255, 0xee / 255) });
     let cx = AC_MARGIN;
     for (const c of cols) {
       rect(cx, y - rowH, c.w, rowH, { border: BORDER });
@@ -1757,13 +1758,12 @@ export async function generateArmadoCombinacionPdf(armado) {
     y -= rowH;
   }
 
-  // Total de equipos de la cotización — mismo cálculo que en la pantalla: el exterior de un
-  // grupo solo se cuenta en la línea que lo trae cargado, para no duplicarlo.
+  // Total de equipos de la cotización — suma todas las filas por igual (los exteriores ya
+  // tienen su propia fila "agregada", así que no hay que sumarlos aparte).
   const totalesPorCodigo = new Map();
   for (const f of filas) {
     const rep = Number(f.repeticiones) || 0;
     if (f.equipoCodigo) totalesPorCodigo.set(f.equipoCodigo, (totalesPorCodigo.get(f.equipoCodigo) || 0) + (Number(f.cantidad) || 0) * rep);
-    if (f.exteriorCodigo) totalesPorCodigo.set(f.exteriorCodigo, (totalesPorCodigo.get(f.exteriorCodigo) || 0) + (Number(f.exteriorCantidad) || 1) * rep);
   }
   const items = Array.from(totalesPorCodigo.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   const totalUnidades = items.reduce((acc, [, cant]) => acc + cant, 0);

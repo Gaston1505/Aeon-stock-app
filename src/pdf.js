@@ -1793,6 +1793,187 @@ export async function downloadArmadoCombinacionPdf(armado) {
   downloadBlob(bytes, nombreArchivoArmadoCombinacion(armado), "application/pdf");
 }
 
+// ---------- Rentabilidad de una cotización ----------
+// `r` es el objeto que ya devuelve calcularRentabilidadCotizacion (App.jsx) — este módulo solo
+// lo dibuja, no recalcula nada, para que el PDF nunca pueda desviarse de lo que se ve en pantalla.
+export async function generateRentabilidadPdf(cotizacion, r) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() { page = pdf.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN; }
+  function ensureSpace(h) { if (y - h < MARGIN) newPage(); }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
+    const { size = 6.5, bold: isBold = false, color } = opts;
+    const f = isBold ? bold : font;
+    const w = f.widthOfTextAtSize(str, size);
+    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
+  }
+  const money = (n) => `U$S ${fmtNum(n)}`;
+
+  if (logoImg) {
+    const w = 85;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+  }
+  text(COMPANY.razonSocial, MARGIN + 95, y - 10, { bold: true, size: 9 });
+  text(`Cliente: ${cotizacion.cliente || "—"}`, MARGIN + 95, y - 22, { size: 8 });
+  text(`Obra: ${cotizacion.obra || "—"}`, MARGIN + 95, y - 33, { size: 8 });
+  const fechaStr = `Fecha: ${fmtFecha(cotizacion.fecha)}`;
+  text(fechaStr, PAGE_W - MARGIN - bold.widthOfTextAtSize(fechaStr, 8), y - 10, { size: 8 });
+  y -= 48;
+
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const titulo = `RENTABILIDAD${cotizacion.categoria ? " — " + cotizacion.categoria : ""}`;
+  const titleW = bold.widthOfTextAtSize(titulo, 10);
+  text(titulo, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
+  y -= 18;
+  y -= 10;
+
+  // Resumen: igual a los 2 bloques de la pantalla (bruto, y neto con comisión/financiero).
+  const resumen1 = [
+    ["Venta", money(r.ventaTotal)], ["Costo", money(r.costoTotal)],
+    ["Margen bruto", money(r.margenTotal)], ["Markup bruto (sobre Costo PY)", `${fmtNum(r.margenTotalPct)}%`],
+  ];
+  const resumen2 = [
+    ["Comisión venta", money(r.comisionVentaTotal)], ["Costo financiero", money(r.costoFinancieroTotal)],
+    ["Margen empresa (neto)", money(r.margenEmpresa)], ["Markup empresa (sobre Costo PY)", `${fmtNum(r.margenEmpresaPct)}%`],
+  ];
+  const colResumen = CONTENT_W / 4;
+  function drawResumen(fila, fillBg) {
+    ensureSpace(34);
+    if (fillBg) rect(MARGIN, y - 30, CONTENT_W, 30, { fill: ACCENT_LIGHT });
+    fila.forEach(([label, valor], i) => {
+      const cx = MARGIN + i * colResumen;
+      text(label, cx + 4, y - 11, { size: 6.5, color: MUTED });
+      text(valor, cx + 4, y - 23, { bold: true, size: 9 });
+    });
+    y -= 34;
+  }
+  drawResumen(resumen1, false);
+  drawResumen(resumen2, true);
+  y -= 4;
+
+  if (r.descuentoPct > 0) {
+    text(`Incluye el descuento del ${r.descuentoPct}% prorrateado en todos los productos.`, MARGIN, y, { size: 7, color: MUTED });
+    y -= 12;
+  }
+  if (r.instalacionMonto > 0) {
+    text(`Instalación/servicios ${money(r.instalacionMonto)} sumado a la venta — costo del técnico ${money(r.costoInstalacion)}.`, MARGIN, y, { size: 7, color: MUTED });
+    y -= 12;
+  }
+  y -= 4;
+
+  const cols = [
+    { key: "codigo", label: "Código", w: 95 },
+    { key: "cantidad", label: "Cant.", w: 30 },
+    { key: "precioUnit", label: "Precio Unit. U$S", w: 62 },
+    { key: "venta", label: "Venta U$S", w: 62 },
+    { key: "costo", label: "Costo U$S", w: 62 },
+    { key: "margen", label: "Margen U$S", w: 62 },
+    { key: "markup", label: "Markup %", w: 42 },
+    { key: "banda", label: "Vs. Costo Real", w: 0 },
+  ];
+  const fixedW = cols.slice(0, -1).reduce((acc, c) => acc + c.w, 0);
+  cols[cols.length - 1].w = CONTENT_W - fixedW;
+
+  function drawHeader() {
+    ensureSpace(20);
+    rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    cols.forEach((c) => {
+      const lw = bold.widthOfTextAtSize(c.label, 6.5);
+      text(c.label, cx + c.w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+      cx += c.w;
+    });
+    y -= 18;
+  }
+  drawHeader();
+
+  for (const f of r.filas) {
+    const bandaLabel = f.sinCosto ? "Sin costo cargado" : (f.bandaCostoReal?.label || "");
+    const bandaLines = wrapText(font, bandaLabel, 6.5, cols[cols.length - 1].w - 6);
+    const rowH = Math.max(bandaLines.length * 8 + 6, 16);
+    ensureSpace(rowH + 20);
+    if (y === PAGE_H - MARGIN) drawHeader();
+
+    let cx = MARGIN;
+    rect(cx, y - rowH, cols[0].w, rowH, { border: BORDER });
+    text(f.codigo || "", cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+    cx += cols[0].w;
+
+    rect(cx, y - rowH, cols[1].w, rowH, { border: BORDER });
+    centerText(String(f.cantidad), cx, y, cols[1].w, rowH);
+    cx += cols[1].w;
+
+    rect(cx, y - rowH, cols[2].w, rowH, { border: BORDER });
+    centerText(fmtNum(f.precioUnit), cx, y, cols[2].w, rowH, { size: 6 });
+    cx += cols[2].w;
+
+    rect(cx, y - rowH, cols[3].w, rowH, { border: BORDER });
+    centerText(fmtNum(f.ventaNeta), cx, y, cols[3].w, rowH, { size: 6 });
+    cx += cols[3].w;
+
+    rect(cx, y - rowH, cols[4].w, rowH, { border: BORDER });
+    centerText(f.sinCosto ? "—" : fmtNum(f.costoTotal), cx, y, cols[4].w, rowH, { size: 6 });
+    cx += cols[4].w;
+
+    rect(cx, y - rowH, cols[5].w, rowH, { border: BORDER });
+    centerText(f.sinCosto ? "—" : fmtNum(f.margen), cx, y, cols[5].w, rowH, { size: 6, color: f.margen < 0 ? rgb(0.73, 0.1, 0.1) : INK });
+    cx += cols[5].w;
+
+    rect(cx, y - rowH, cols[6].w, rowH, { border: BORDER });
+    centerText(f.sinCosto ? "—" : `${fmtNum(f.margenPct)}%`, cx, y, cols[6].w, rowH, { size: 6 });
+    cx += cols[6].w;
+
+    const bandaBg = f.bandaCostoReal ? hexToRgb(f.bandaCostoReal.bg) : null;
+    const bandaColor = f.bandaCostoReal ? hexToRgb(f.bandaCostoReal.color) : MUTED;
+    rect(cx, y - rowH, cols[7].w, rowH, { border: BORDER, fill: bandaBg });
+    const blockH = bandaLines.length * 8;
+    const top = y - (rowH - blockH) / 2 - 6;
+    bandaLines.forEach((line, i) => {
+      const lw = font.widthOfTextAtSize(line, 6);
+      text(line, cx + cols[7].w / 2 - lw / 2, top - i * 8, { size: 6, color: bandaColor });
+    });
+
+    y -= rowH;
+  }
+
+  return pdf.save();
+}
+
+function hexToRgb(hex) {
+  if (!hex) return null;
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16) / 255;
+  const g = parseInt(h.substring(2, 4), 16) / 255;
+  const b = parseInt(h.substring(4, 6), 16) / 255;
+  return rgb(r, g, b);
+}
+
+export function nombreArchivoRentabilidad(cotizacion) {
+  const safe = (s) => (s || "").toString().trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
+  return `Rentabilidad_${safe(cotizacion.cliente) || "cliente"}_${safe(cotizacion.obra) || "obra"}_${safe(cotizacion.categoria) || cotizacion.fecha || ""}.pdf`;
+}
+
+export async function downloadRentabilidadPdf(cotizacion, r) {
+  const bytes = await generateRentabilidadPdf(cotizacion, r);
+  downloadBlob(bytes, nombreArchivoRentabilidad(cotizacion), "application/pdf");
+}
+
 // ---------- Reporte para Joel: solo plata, sin modelos ni cantidades ----------
 // `filasFisicoPorCategoria`: [{ categoria, valorTotal }] — físico en Paraguay agrupado por categoría.
 // `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.

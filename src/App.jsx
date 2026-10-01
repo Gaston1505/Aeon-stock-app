@@ -2248,7 +2248,7 @@ export default function App() {
       "Cantidad total": (Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0),
       "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       "Grupo / exterior compartido": textoGrupoExterior(f),
-      Notas: `${f.validacionPendiente ? "[SIN VALIDAR POR MIDEA] " : ""}${f.notas || ""}`,
+      Notas: `${f.validacionPendiente ? "[SIN VALIDAR POR FÁBRICA] " : ""}${f.notas || ""}`,
     }));
 
     const totalesPorCodigo = new Map();
@@ -7820,9 +7820,9 @@ function TablaCombinacionesMultiSplit({ productos }) {
   return (
     <div>
       <p className="text-xs mb-4" style={{ color: MUTED }}>
-        Tabla de combinación de equipos Midea R32 para Latinoamérica (20260422-V2). En <span style={{ color: "#15803D", fontWeight: 600 }}>verde</span> las combinaciones armables hoy
+        Tabla de combinación de equipos R32 para Latinoamérica (20260422-V2), según la fábrica. En <span style={{ color: "#15803D", fontWeight: 600 }}>verde</span> las combinaciones armables hoy
         con lo que tenés disponible en el catálogo; en gris las que necesitan una capacidad que todavía no tenés cargada o disponible.
-        {" "}<span style={{ color: "#B45309", fontWeight: 600 }}>⚠</span> = Midea la marca "a verificar/probar" con fábrica.
+        {" "}<span style={{ color: "#B45309", fontWeight: 600 }}>⚠</span> = la fábrica la marca "a verificar/probar" antes de confirmarla para Sudamérica.
       </p>
       {exteriores.map(({ btu, producto }) => {
         const cantidades = [...new Set((MULTI_SPLIT_COMBINACIONES[btu] || []).map((c) => c.n))].sort((a, b) => a - b);
@@ -8556,7 +8556,7 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
 
   return (
     <div className="p-2.5 rounded mt-2 mb-2" style={{ backgroundColor: "#FFFFFF", border: `1px dashed ${BORDER}` }}>
-      <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>Armar combinación con interiores (tabla Midea)</p>
+      <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>Armar combinación con interiores (tabla de fábrica)</p>
       <div className="flex gap-1.5 mb-2 flex-wrap">
         {cantidadesDisponibles.map((n) => (
           <button
@@ -9982,7 +9982,15 @@ function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, on
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl font-bold" style={{ color: INK }}>Armado de combinaciones</h2>
+          <div className="flex items-center gap-1">
+            <h2 className="text-xl font-bold" style={{ color: INK }}>Armado de combinaciones</h2>
+            <InfoTip>
+              <p className="font-semibold">Línea "Agregado"</p>
+              <p>Es el exterior multi que combina varias líneas del pedido en un mismo condensador — no lo pidió el cliente así, lo agrega AEON para resolver la combinación. Se muestra como una línea propia (con fondo distinto) para que se vea como el producto real que es, no solo como una nota dentro de otra línea.</p>
+              <p className="font-semibold pt-1">Alerta roja "Sin validar por fábrica"</p>
+              <p>La combinación la arma la fábrica (sale de su tabla oficial), pero esa celda puntual todavía figura como "a probar" para Sudamérica. Cada armado con alertas trae su propio aviso explicando qué hacer en ese caso.</p>
+            </InfoTip>
+          </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Línea por línea, en el mismo orden del pedido del cliente — se combine con otra o no, nada queda afuera — con el equipo AEON y el grupo de combinación de cada una. Para explicarle al cliente y comparar celda por celda contra su pedido antes de mandar la cotización. Queda guardado aparte, no tiene precios.
           </p>
@@ -10110,7 +10118,17 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
       </div>
       {gruposSinValidar.length > 0 && (
         <div className="mb-2.5 px-2.5 py-2 rounded text-xs" style={{ backgroundColor: "#FDEDED", color: "#B91C1C" }}>
-          <b>⚠ {gruposSinValidar.length} combinación{gruposSinValidar.length !== 1 ? "es" : ""} sin validar por Midea:</b> {gruposSinValidar.join(", ")} — la tabla del fabricante las marca "a verificar/probar", no están 100% certificadas todavía.
+          <div className="flex items-start gap-1">
+            <b>⚠ {gruposSinValidar.length} combinación{gruposSinValidar.length !== 1 ? "es" : ""} sin validar por fábrica:</b>
+            <InfoTip>
+              <p className="font-semibold">¿Qué significa esta alerta?</p>
+              <p>La combinación en sí la arma la fábrica — sale literal de su tabla oficial, no es algo que inventamos. Lo que falta es que la fábrica termine de probarla/validarla para Sudamérica antes de poder ofrecerla con total seguridad al cliente.</p>
+              <p className="font-semibold pt-1">Si no se puede confirmar a tiempo:</p>
+              <p>1) Primero probar con una categoría de exterior mayor — si esa misma combinación está certificada ahí, resuelve el problema.</p>
+              <p>2) Si ni subiendo de categoría se certifica, lo más seguro es romper la combinación y vender esos splits sueltos, para no depender de algo sin probar.</p>
+            </InfoTip>
+          </div>
+          <span> {gruposSinValidar.join(", ")} — la tabla del fabricante las marca "a verificar/probar", no están 100% certificadas todavía.</span>
         </div>
       )}
       <div className="flex items-center justify-end gap-1 mb-2 flex-wrap">
@@ -10158,7 +10176,7 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
                   {textoGrupoExterior(f)}
                 </td>
                 <td className="px-2 py-1.5" style={{ color: f.validacionPendiente ? "#B91C1C" : MUTED }}>
-                  {f.validacionPendiente && <span className="block text-[9px] font-semibold uppercase mb-0.5" style={{ color: "#B91C1C" }}>⚠ Sin validar por Midea</span>}
+                  {f.validacionPendiente && <span className="block text-[9px] font-semibold uppercase mb-0.5" style={{ color: "#B91C1C" }}>⚠ Sin validar por fábrica (ver aviso arriba)</span>}
                   {f.notas}
                 </td>
               </tr>

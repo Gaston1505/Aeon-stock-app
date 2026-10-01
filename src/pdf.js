@@ -1732,7 +1732,7 @@ export async function generateArmadoCombinacionPdf(armado) {
       equipo: `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       grupo: !f.grupo ? "— sin combinar" : !f.exteriorCodigo ? f.grupo
         : `${f.grupo} — Ext: ${Number(f.exteriorCantidad) || 1}× ${f.exteriorCodigo} (×${f.repeticiones} rep = ${(Number(f.exteriorCantidad) || 1) * (Number(f.repeticiones) || 0)} u.)`,
-      notas: `${f.validacionPendiente ? "[SIN VALIDAR POR MIDEA] " : ""}${f.notas || ""}`,
+      notas: `${f.validacionPendiente ? "[SIN VALIDAR POR FÁBRICA] " : ""}${f.notas || ""}`,
     };
     const wrapped = {};
     let maxLines = 1;

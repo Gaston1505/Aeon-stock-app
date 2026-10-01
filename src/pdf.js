@@ -1732,7 +1732,7 @@ export async function generateArmadoCombinacionPdf(armado) {
       equipo: `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       grupo: !f.grupo ? "— sin combinar" : !f.exteriorCodigo ? f.grupo
         : `${f.grupo} — Ext: ${Number(f.exteriorCantidad) || 1}× ${f.exteriorCodigo} (×${f.repeticiones} rep = ${(Number(f.exteriorCantidad) || 1) * (Number(f.repeticiones) || 0)} u.)`,
-      notas: f.notas || "",
+      notas: `${f.validacionPendiente ? "[SIN VALIDAR POR MIDEA] " : ""}${f.notas || ""}`,
     };
     const wrapped = {};
     let maxLines = 1;
@@ -1745,7 +1745,8 @@ export async function generateArmadoCombinacionPdf(armado) {
     ensureSpace(rowH + 20);
     if (y === AC_PAGE_H - AC_MARGIN) drawHeader();
 
-    if (f.esAgregado) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfb / 255, 0xf8 / 255, 0xee / 255) });
+    if (f.validacionPendiente) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfd / 255, 0xed / 255, 0xed / 255) });
+    else if (f.esAgregado) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfb / 255, 0xf8 / 255, 0xee / 255) });
     let cx = AC_MARGIN;
     for (const c of cols) {
       rect(cx, y - rowH, c.w, rowH, { border: BORDER });

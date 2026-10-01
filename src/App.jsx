@@ -2248,7 +2248,7 @@ export default function App() {
       "Cantidad total": (Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0),
       "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       "Grupo / exterior compartido": textoGrupoExterior(f),
-      Notas: f.notas || "",
+      Notas: `${f.validacionPendiente ? "[SIN VALIDAR POR MIDEA] " : ""}${f.notas || ""}`,
     }));
 
     const totalesPorCodigo = new Map();
@@ -10076,6 +10076,16 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
   const filas = a.filas || [];
   const lineasPedido = filas.filter((f) => !f.esAgregado).length;
   const equiposAgregados = filas.filter((f) => f.esAgregado).length;
+  const gruposSinValidar = useMemo(() => {
+    const vistos = new Set();
+    const grupos = [];
+    for (const f of filas) {
+      if (!f.validacionPendiente || !f.grupo || vistos.has(f.ubicacion + "|" + f.grupo)) continue;
+      vistos.add(f.ubicacion + "|" + f.grupo);
+      grupos.push(`${f.ubicacion} (${f.grupo})`);
+    }
+    return grupos;
+  }, [filas]);
   const totalesPorCodigo = useMemo(() => {
     const map = new Map();
     const sumar = (codigo, cant) => { if (codigo) map.set(codigo, (map.get(codigo) || 0) + cant); };
@@ -10097,7 +10107,13 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
             {equiposAgregados > 0 && ` + ${equiposAgregados} equipo${equiposAgregados !== 1 ? "s" : ""} agregado${equiposAgregados !== 1 ? "s" : ""} (exteriores)`}
           </p>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+      </div>
+      {gruposSinValidar.length > 0 && (
+        <div className="mb-2.5 px-2.5 py-2 rounded text-xs" style={{ backgroundColor: "#FDEDED", color: "#B91C1C" }}>
+          <b>⚠ {gruposSinValidar.length} combinación{gruposSinValidar.length !== 1 ? "es" : ""} sin validar por Midea:</b> {gruposSinValidar.join(", ")} — la tabla del fabricante las marca "a verificar/probar", no están 100% certificadas todavía.
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-1 mb-2 flex-wrap">
           <SecondaryButton onClick={() => onDescargarExcel(a)}>
             <Download size={13} /> Excel
           </SecondaryButton>
@@ -10106,7 +10122,6 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
           </SecondaryButton>
           <button onClick={() => onEditar(a)} className="p-1.5 rounded hover:bg-gray-100" title="Editar"><Pencil size={14} style={{ color: MUTED }} /></button>
           <button onClick={() => onDelete(a.id)} className="p-1.5 rounded hover:bg-gray-100" title="Eliminar"><Trash2 size={14} style={{ color: MUTED }} /></button>
-        </div>
       </div>
 
       <div className="rounded border overflow-x-auto mb-3" style={{ borderColor: BORDER }}>
@@ -10127,7 +10142,7 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
           </thead>
           <tbody>
             {filas.map((f, i) => (
-              <tr key={i} className="border-t" style={{ borderColor: BORDER, backgroundColor: f.esAgregado ? "#FBF8EE" : "transparent" }}>
+              <tr key={i} className="border-t" style={{ borderColor: BORDER, backgroundColor: f.validacionPendiente ? "#FDEDED" : f.esAgregado ? "#FBF8EE" : "transparent" }}>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.nivel}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.ubicacion}</td>
                 <td className="px-2 py-1.5 text-right whitespace-nowrap" style={{ color: INK }}>{f.capacidad}</td>
@@ -10142,7 +10157,10 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: f.grupo ? INK : MUTED }}>
                   {textoGrupoExterior(f)}
                 </td>
-                <td className="px-2 py-1.5" style={{ color: MUTED }}>{f.notas}</td>
+                <td className="px-2 py-1.5" style={{ color: f.validacionPendiente ? "#B91C1C" : MUTED }}>
+                  {f.validacionPendiente && <span className="block text-[9px] font-semibold uppercase mb-0.5" style={{ color: "#B91C1C" }}>⚠ Sin validar por Midea</span>}
+                  {f.notas}
+                </td>
               </tr>
             ))}
           </tbody>

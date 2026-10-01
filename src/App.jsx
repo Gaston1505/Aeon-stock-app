@@ -820,7 +820,9 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     const sinCosto = !producto || costoUnit === 0;
     const costoTotal = cantidad * costoUnit;
     const margen = ventaNeta - costoTotal;
-    const margenPct = ventaNeta > 0 ? (margen / ventaNeta) * 100 : 0;
+    // % sobre Costo PY (markup), no sobre venta — misma base que el resto de la app (Matriz de
+    // costos, indicador de piso/ideal), para poder comparar directo contra esos rangos.
+    const margenPct = costoTotal > 0 ? (margen / costoTotal) * 100 : 0;
     // Margen "en limpio" por línea: al margen bruto (ventaNeta vs. Costo PY) se le restan los
     // costos reales de comisión de venta y costo financiero (mismos % que la Matriz de costos,
     // por categoría) — esto es lo que de verdad le queda a la empresa, y lo que determina el
@@ -841,7 +843,7 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
       }
     }
     const margenNeto = margen - comisionVentaLinea - costoFinancieroLinea;
-    const margenNetoPct = ventaNeta > 0 ? (margenNeto / ventaNeta) * 100 : 0;
+    const margenNetoPct = costoTotal > 0 ? (margenNeto / costoTotal) * 100 : 0;
     return {
       codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct,
       comisionVentaLinea, costoFinancieroLinea, margenNeto, margenNetoPct, sinCosto, bandaCostoReal,
@@ -864,13 +866,16 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   const ventaTotal = ventaProductos + instalacionMonto;
   const costoTotal = costoProductos + costoInstalacion;
   const margenTotal = ventaTotal - costoTotal;
-  const margenTotalPct = ventaTotal > 0 ? (margenTotal / ventaTotal) * 100 : 0;
+  // % sobre Costo PY (markup), no sobre venta — consistente con la Matriz de costos y el
+  // indicador de piso/ideal por línea (25-30% markup ahí equivale a ~20-23% de margen sobre
+  // venta, que es una base distinta y da un número más chico para la misma rentabilidad).
+  const margenTotalPct = costoTotal > 0 ? (margenTotal / costoTotal) * 100 : 0;
   // Margen empresa: margen bruto menos comisión de venta y costo financiero reales (por
   // categoría, sobre Costo PY) — reemplaza a la vieja "Comisión Gastón" fija del 1,5% sobre
   // venta, que se sacó del sistema por representar el mismo concepto que la comisión de venta
   // de la Matriz de costos.
   const margenEmpresa = margenTotal - comisionVentaTotal - costoFinancieroTotal;
-  const margenEmpresaPct = ventaTotal > 0 ? (margenEmpresa / ventaTotal) * 100 : 0;
+  const margenEmpresaPct = costoTotal > 0 ? (margenEmpresa / costoTotal) * 100 : 0;
 
   return {
     filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, costoInstalacion, descuentoPct,
@@ -9437,7 +9442,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
         <div><p style={{ color: MUTED }}>Venta</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.ventaTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Costo</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.costoTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Margen bruto</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>U$S {fmt(r.margenTotal)}</p></div>
-        <div><p style={{ color: MUTED }}>Margen bruto %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{fmtN(r.margenTotalPct, 1)}%</p></div>
+        <div><p style={{ color: MUTED }}>Markup bruto (sobre Costo PY)</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{fmtN(r.margenTotalPct, 1)}%</p></div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2 p-2 rounded" style={{ backgroundColor: ACCENT_LIGHT }}>
         <div>
@@ -9453,7 +9458,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
           <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>U$S {fmt(r.margenEmpresa)}</p>
         </div>
         <div>
-          <p style={{ color: MUTED }}>Margen empresa %</p>
+          <p style={{ color: MUTED }}>Markup empresa (sobre Costo PY)</p>
           <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>{fmtN(r.margenEmpresaPct, 1)}%</p>
         </div>
       </div>

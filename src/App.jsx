@@ -2963,39 +2963,42 @@ export default function App() {
   const pendientesEntrada = esAdmin ? solicitudes.filter((s) => s.tipo === "entrada" && s.estado === "Pendiente").length : 0;
   const pendientesSalida = esAdmin ? solicitudes.filter((s) => s.tipo === "salida" && s.estado === "Pendiente").length : 0;
 
+  // Cada item lleva su `section` — el nav los renderiza agrupados con un encabezado chico por
+  // sección (antes era una lista plana sin separación visual, por eso se veía "todo mezclado").
   const NAV_TODO = [
-    { key: "resumen", label: "Resumen", icon: LayoutDashboard },
+    { key: "resumen", label: "Resumen", icon: LayoutDashboard, section: null },
     // Stock / inventario
-    { key: "deposito", label: "Depósito", icon: Warehouse },
-    { key: "transito", label: "Tránsito", icon: Ship },
-    { key: "armado-pedido", label: "Armado de pedido", icon: ShoppingCart },
-    { key: "playa", label: "Zona de playa", icon: Inbox },
-    { key: "equipos", label: "Maestro de equipos", icon: Package },
-    { key: "recuperables", label: "Banco de recuperables", icon: Wrench },
-    { key: "muestras", label: "Muestras", icon: Star },
-    { key: "catalogo", label: "Catálogo de productos", icon: Tag },
-    { key: "matriz-costos", label: "Matriz de costos", icon: Calculator },
-    { key: "conteo", label: "Conteo de stock", icon: Boxes },
+    { key: "deposito", label: "Depósito", icon: Warehouse, section: "Stock e inventario" },
+    { key: "transito", label: "Tránsito", icon: Ship, section: "Stock e inventario" },
+    { key: "armado-pedido", label: "Armado de pedido", icon: ShoppingCart, section: "Stock e inventario" },
+    { key: "playa", label: "Zona de playa", icon: Inbox, section: "Stock e inventario" },
+    { key: "equipos", label: "Maestro de equipos", icon: Package, section: "Stock e inventario" },
+    { key: "recuperables", label: "Banco de recuperables", icon: Wrench, section: "Stock e inventario" },
+    { key: "muestras", label: "Muestras", icon: Star, section: "Stock e inventario" },
+    { key: "catalogo", label: "Catálogo de productos", icon: Tag, section: "Stock e inventario" },
+    { key: "matriz-costos", label: "Matriz de costos", icon: Calculator, section: "Stock e inventario" },
+    { key: "conteo", label: "Conteo de stock", icon: Boxes, section: "Stock e inventario" },
     // Movimientos
-    { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine },
-    { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine },
-    // Ventas — en orden de embudo: primero se cotiza, después queda comprometida (reservada) y
-    // recién al cerrarse pasa a Ventas y garantías. Presupuestos de reparación y el Panel de
-    // simulación son flujos aparte, van al final del bloque.
-    { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature },
-    { key: "comprometidas", label: "Ventas comprometidas", icon: Lock },
-    { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
-    { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
-    { key: "simulador", label: "Panel de simulación", icon: FlaskConical },
-    { key: "armado-combinaciones", label: "Armado de combinaciones", icon: Layers },
+    { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine, section: "Movimientos" },
+    { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine, section: "Movimientos" },
+    // Ventas — en orden de embudo: primero se arma la combinación (para proyectos de multi-split),
+    // se chequea en el Panel de simulación, y recién ahí se manda la Cotización. Después queda
+    // comprometida (reservada) y al cerrarse pasa a Ventas y garantías. Presupuestos de
+    // reparación es un flujo aparte, va al final del bloque.
+    { key: "armado-combinaciones", label: "Armado de combinaciones", icon: Layers, section: "Ventas" },
+    { key: "simulador", label: "Panel de simulación", icon: FlaskConical, section: "Ventas" },
+    { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature, section: "Ventas" },
+    { key: "comprometidas", label: "Ventas comprometidas", icon: Lock, section: "Ventas" },
+    { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck, section: "Ventas" },
+    { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer, section: "Ventas" },
     // Clientes
-    { key: "clientes", label: "Clientes", icon: Phone },
+    { key: "clientes", label: "Clientes", icon: Phone, section: "Clientes" },
     // Reportes
-    { key: "panel", label: "Panel de indicadores", icon: TrendingUp },
-    { key: "precios-mercado", label: "Precios de mercado", icon: Search },
-    { key: "precios-mayorista", label: "Precios al por mayor", icon: Building2 },
-    { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList },
-    { key: "reporte-joel", label: "Reporte Financiero", icon: Send },
+    { key: "panel", label: "Panel de indicadores", icon: TrendingUp, section: "Reportes" },
+    { key: "precios-mercado", label: "Precios de mercado", icon: Search, section: "Reportes" },
+    { key: "precios-mayorista", label: "Precios al por mayor", icon: Building2, section: "Reportes" },
+    { key: "reporte-seguro", label: "Reporte para Seguro", icon: ClipboardList, section: "Reportes" },
+    { key: "reporte-joel", label: "Reporte Financiero", icon: Send, section: "Reportes" },
   ];
   const NAV = esAdmin ? NAV_TODO : NAV_TODO.filter((n) => TABS_DEPOSITO.includes(n.key));
 
@@ -3070,24 +3073,31 @@ export default function App() {
             />
           </div>
           <nav className="flex-1 py-2 overflow-y-auto">
-            {NAV.map((n) => {
+            {NAV.map((n, i) => {
               const Icon = n.icon;
               const active = tab === n.key;
+              const seccionNueva = n.section && n.section !== NAV[i - 1]?.section;
               return (
-                <button
-                  key={n.key}
-                  onClick={() => { navigateTo(n.key); setQuery(""); setNavOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
-                  style={{
-                    color: active ? ACCENT : INK,
-                    backgroundColor: active ? ACCENT_LIGHT : "transparent",
-                    fontWeight: active ? 600 : 400,
-                    borderRight: active ? `2px solid ${ACCENT}` : "2px solid transparent",
-                  }}
-                >
-                  <Icon size={16} />
-                  {n.label}
-                </button>
+                <React.Fragment key={n.key}>
+                  {seccionNueva && (
+                    <p className="text-[10px] font-semibold uppercase tracking-wide px-4 pt-3 pb-1" style={{ color: MUTED }}>
+                      {n.section}
+                    </p>
+                  )}
+                  <button
+                    onClick={() => { navigateTo(n.key); setQuery(""); setNavOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left"
+                    style={{
+                      color: active ? ACCENT : INK,
+                      backgroundColor: active ? ACCENT_LIGHT : "transparent",
+                      fontWeight: active ? 600 : 400,
+                      borderRight: active ? `2px solid ${ACCENT}` : "2px solid transparent",
+                    }}
+                  >
+                    <Icon size={16} />
+                    {n.label}
+                  </button>
+                </React.Fragment>
               );
             })}
             <a

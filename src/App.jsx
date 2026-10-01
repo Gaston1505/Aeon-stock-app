@@ -72,7 +72,7 @@ const MATRIZ_COSTOS_DEFAULT = {
     "20": { m3: 32.60 },
   },
   categorias: {
-    aires: { comisionVentaPct: 1.88, despachoPct: 35, margenMinimoPct: 10, margenIdealMinPct: 25, margenIdealMaxPct: 30 },
+    aires: { comisionVentaPct: 1.88, despachoPct: 31, margenMinimoPct: 10, margenIdealMinPct: 25, margenIdealMaxPct: 30 },
     otros: { comisionVentaPct: 2.5, despachoPct: 31, margenMinimoPct: 25, margenIdealMinPct: 60, margenIdealMaxPct: 65 },
   },
 };
@@ -736,8 +736,9 @@ function calcularCostosProducto(producto, matriz) {
   const catCfg = matriz.categorias?.[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
   const fleteUsd40HQ = Number(matriz.contenedores?.["40HQ"]?.fleteUsd) || 0;
 
-  // Despacho por categoría (Aires históricamente más alto que el resto) — si la categoría no
-  // trae su propio despachoPct cargado (Matriz vieja), cae al despachoPct general de siempre.
+  // Despacho por categoría (se probó 35% para Aires en 2026-09-30, pero el 2026-10-01 se
+  // confirmó que el valor real es 31% para todas las categorías, igual que el resto) — si la
+  // categoría no trae su propio despachoPct cargado (Matriz vieja), cae al despachoPct general.
   const despachoPct = catCfg.despachoPct != null ? Number(catCfg.despachoPct) : (Number(matriz.despachoPct) || 0);
   const comisionAgente = origen * (Number(matriz.comisionAgentePct) || 0) / 100;
   const flete = fleteUsd40HQ / cantidad;

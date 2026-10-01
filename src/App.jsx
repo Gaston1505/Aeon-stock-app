@@ -2234,7 +2234,7 @@ export default function App() {
       "Tipo (cliente)": f.tipoOriginal || "", Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
       "Cantidad total": (Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0),
       "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
-      "Grupo / exterior compartido": f.grupo ? `${f.grupo}${f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}` : "— sin combinar",
+      "Grupo / exterior compartido": textoGrupoExterior(f),
       Notas: f.notas || "",
     }));
 
@@ -9907,6 +9907,19 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
 // cantidades totales de una cotización de multi-split — para explicarle al cliente cómo se
 // armó, y para poder revisar que cierre antes de mandarla. No tiene precios ni toca stock; es
 // puramente el razonamiento de la combinación, agrupado igual que Cotizaciones (cliente > obra).
+
+// El exterior de un grupo se carga UNA vez por repetición (ej. 1 exterior de 36K por depto) —
+// acá se multiplica por las repeticiones del grupo para que cada línea diga, sin tener que
+// sumar nada a mano, cuántos equipos exteriores hacen falta en total para ESE caso puntual (no
+// solo el total general de la cotización, que mezcla todos los grupos que comparten ese modelo).
+function textoGrupoExterior(f) {
+  if (!f.grupo) return "— sin combinar";
+  if (!f.exteriorCodigo) return f.grupo;
+  const cantExt = Number(f.exteriorCantidad) || 1;
+  const rep = Number(f.repeticiones) || 0;
+  return `${f.grupo} — Exterior: ${cantExt}× ${f.exteriorCodigo} (×${rep} rep = ${cantExt * rep} u.)`;
+}
+
 function agruparArmados(armados) {
   const porCliente = new Map();
   for (const a of armados) {
@@ -10095,7 +10108,7 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
                 <td className="px-2 py-1.5 text-center whitespace-nowrap font-semibold" style={{ color: INK }}>{(Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.cantidad}× {f.equipoCodigo}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: f.grupo ? INK : MUTED }}>
-                  {f.grupo ? f.grupo : "— sin combinar"}{f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}
+                  {textoGrupoExterior(f)}
                 </td>
                 <td className="px-2 py-1.5" style={{ color: MUTED }}>{f.notas}</td>
               </tr>
@@ -10158,6 +10171,11 @@ function FilaArmadoEditor({ fila, idx, productos, productosPorGrupo, onChange, o
           onChange={(id) => onChange("exteriorCodigo", productos.find((p) => p.id === id)?.nombre || "")}
         />
       </Field>
+      {fila.exteriorCodigo && (
+        <p className="text-xs -mt-2 mb-3" style={{ color: MUTED }}>
+          Total de exteriores para este grupo: <b style={{ color: INK }}>{(Number(fila.repeticiones) || 0)}</b> (1 por repetición × {fila.repeticiones || 0} repeticiones)
+        </p>
+      )}
 
       <Field label="Notas (opcional)"><TextInput value={fila.notas} onChange={(e) => onChange("notas", e.target.value)} placeholder="Ej: combina con la línea de 12.000 BTU en el exterior de 36K" /></Field>
     </div>

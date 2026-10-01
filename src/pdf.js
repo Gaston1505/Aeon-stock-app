@@ -1730,7 +1730,8 @@ export async function generateArmadoCombinacionPdf(armado) {
       repeticiones: `×${f.repeticiones ?? ""}`,
       cantidadTotal: String((Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)),
       equipo: `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
-      grupo: f.grupo ? `${f.grupo}${f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}` : "— sin combinar",
+      grupo: !f.grupo ? "— sin combinar" : !f.exteriorCodigo ? f.grupo
+        : `${f.grupo} — Ext: ${Number(f.exteriorCantidad) || 1}× ${f.exteriorCodigo} (×${f.repeticiones} rep = ${(Number(f.exteriorCantidad) || 1) * (Number(f.repeticiones) || 0)} u.)`,
       notas: f.notas || "",
     };
     const wrapped = {};

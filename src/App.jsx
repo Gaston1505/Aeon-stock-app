@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart,
+  Calculator, ShoppingCart, Layers,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -143,6 +143,7 @@ const COLLECTIONS = {
   ventasComprometidas: "ventasComprometidas",
   productos: "productos",
   cotizaciones: "cotizaciones",
+  armadosCombinaciones: "armadosCombinaciones",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
@@ -1840,6 +1841,7 @@ export default function App() {
   const [comprometidas, setComprometidas] = useState([]);
   const [productos, setProductos] = useState([]);
   const [cotizaciones, setCotizaciones] = useState([]);
+  const [armadosCombinaciones, setArmadosCombinaciones] = useState([]);
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
@@ -1874,6 +1876,7 @@ export default function App() {
   const [repuestoTarget, setRepuestoTarget] = useState(null);
   const [cotizacionPrefill, setCotizacionPrefill] = useState(null);
   const [cotizacionEditando, setCotizacionEditando] = useState(null);
+  const [armadoEditando, setArmadoEditando] = useState(null);
   const [ordenCompraEditando, setOrdenCompraEditando] = useState(null);
   const [nuevoProductoDefaults, setNuevoProductoDefaults] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -1894,6 +1897,7 @@ export default function App() {
       [COLLECTIONS.ventasComprometidas]: setComprometidas,
       [COLLECTIONS.productos]: setProductos,
       [COLLECTIONS.cotizaciones]: setCotizaciones,
+      [COLLECTIONS.armadosCombinaciones]: setArmadosCombinaciones,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
@@ -2176,6 +2180,10 @@ export default function App() {
   const addCotizacion = (data) => addItem(COLLECTIONS.cotizaciones, data);
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   const updateCotizacion = (id, patch) => updateItem(COLLECTIONS.cotizaciones, id, patch);
+
+  const addArmadoCombinacion = (data) => addItem(COLLECTIONS.armadosCombinaciones, data);
+  const deleteArmadoCombinacion = (id) => deleteItem(COLLECTIONS.armadosCombinaciones, id);
+  const updateArmadoCombinacion = (id, patch) => updateItem(COLLECTIONS.armadosCombinaciones, id, patch);
 
   const handleDescargarPdf = async (cotizacion) => {
     setDescargandoId(cotizacion.id + ":pdf");
@@ -2799,6 +2807,11 @@ export default function App() {
     return cotizaciones.filter((c) => !q || [c.cliente, c.obra, c.categoria].some((v) => (v || "").toLowerCase().includes(q)));
   }, [cotizaciones, query]);
 
+  const filteredArmadosCombinaciones = useMemo(() => {
+    const q = query.toLowerCase();
+    return armadosCombinaciones.filter((a) => !q || [a.cliente, a.obra, a.categoria].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [armadosCombinaciones, query]);
+
   const filteredPresupuestosReparacion = useMemo(() => {
     const q = query.toLowerCase();
     return presupuestosReparacion.filter((p) => !q || [p.cliente, p.obra, p.equipoAfectado].some((v) => (v || "").toLowerCase().includes(q)));
@@ -2974,6 +2987,7 @@ export default function App() {
     { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer },
     { key: "simulador", label: "Panel de simulación", icon: FlaskConical },
+    { key: "armado-combinaciones", label: "Armado de combinaciones", icon: Layers },
     // Clientes
     { key: "clientes", label: "Clientes", icon: Phone },
     // Reportes
@@ -3399,6 +3413,15 @@ export default function App() {
           />
         )}
 
+        {tab === "armado-combinaciones" && (
+          <ArmadoCombinacionesView
+            armados={filteredArmadosCombinaciones} productos={productos} query={query} onQuery={setQuery}
+            onNew={() => { setArmadoEditando(null); setDrawer("armado-combinacion"); }}
+            onDelete={deleteArmadoCombinacion}
+            onEditar={(a) => { setArmadoEditando(a); setDrawer("armado-combinacion"); }}
+          />
+        )}
+
         {tab === "presupuestos-reparacion" && (
           <PresupuestosReparacionView
             presupuestos={filteredPresupuestosReparacion} query={query} onQuery={setQuery}
@@ -3545,6 +3568,18 @@ export default function App() {
           onGuardarCliente={upsertClienteTelefono}
           onSave={(d) => { addCotizacion(d); setDrawer(null); setCotizacionPrefill(null); }}
           onGuardarEdicion={(id, d) => { updateCotizacion(id, d); setDrawer(null); setCotizacionEditando(null); }}
+        />
+      </Drawer>
+      <Drawer
+        open={drawer === "armado-combinacion"} onClose={() => { setDrawer(null); setArmadoEditando(null); }}
+        title={armadoEditando ? "Editar armado de combinaciones" : "Nuevo armado de combinaciones"}
+      >
+        <ArmadoCombinacionForm
+          productos={productos} clientes={clientes}
+          initial={armadoEditando}
+          editId={armadoEditando?.id}
+          onSave={(d) => { addArmadoCombinacion(d); setDrawer(null); }}
+          onGuardarEdicion={(id, d) => { updateArmadoCombinacion(id, d); setDrawer(null); setArmadoEditando(null); }}
         />
       </Drawer>
       <Drawer open={drawer === "presupuesto-reparacion"} onClose={() => setDrawer(null)} title="Nuevo presupuesto de reparación">
@@ -9801,6 +9836,308 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------- Armado de combinaciones ----------
+// Sección aparte de Cotizaciones: acá queda guardado el detalle depto-por-depto (piso,
+// tipología/ubicación, repeticiones y qué equipos se combinan en cada uno) que justifica las
+// cantidades totales de una cotización de multi-split — para explicarle al cliente cómo se
+// armó, y para poder revisar que cierre antes de mandarla. No tiene precios ni toca stock; es
+// puramente el razonamiento de la combinación, agrupado igual que Cotizaciones (cliente > obra).
+function agruparArmados(armados) {
+  const porCliente = new Map();
+  for (const a of armados) {
+    const clienteKey = (a.cliente || "").trim() || "(Sin cliente)";
+    const obraKey = (a.obra || "").trim() || "(Sin obra)";
+    if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, new Map());
+    const porObra = porCliente.get(clienteKey);
+    if (!porObra.has(obraKey)) porObra.set(obraKey, []);
+    porObra.get(obraKey).push(a);
+  }
+  const clientes = [];
+  for (const [cliente, porObra] of porCliente) {
+    const obras = [];
+    for (const [obra, armadosObra] of porObra) {
+      armadosObra.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      obras.push({ obra, armados: armadosObra });
+    }
+    obras.sort((a, b) => {
+      const masReciente = (o) => Math.max(...o.armados.map((x) => x.createdAt || 0));
+      return masReciente(b) - masReciente(a);
+    });
+    clientes.push({ cliente, obras });
+  }
+  clientes.sort((a, b) => {
+    const masReciente = (g) => Math.max(...g.obras.flatMap((o) => o.armados.map((x) => x.createdAt || 0)));
+    return masReciente(b) - masReciente(a);
+  });
+  return clientes;
+}
+
+function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, onDelete, onEditar }) {
+  const grupos = useMemo(() => agruparArmados(armados), [armados]);
+  const forzarExpandido = query.trim().length > 0;
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Armado de combinaciones</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            El detalle piso por piso y depto por depto de cómo se arma cada multi-split (qué exterior cubre qué interiores, y cuántas veces se repite) — para explicarle al cliente y para chequear que cierre antes de mandar la cotización. Queda guardado aparte, no tiene precios.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <SearchBox value={query} onChange={onQuery} />
+          <PrimaryButton onClick={onNew}><Plus size={15} /> Nuevo armado</PrimaryButton>
+        </div>
+      </div>
+
+      {armados.length === 0 ? (
+        <EmptyState icon={Layers} title="Todavía no hay armados de combinaciones" subtitle="Usá el botón de arriba para cargar el primero." />
+      ) : (
+        <div className="space-y-3">
+          {grupos.map((g) => (
+            <ClienteGrupoArmados key={g.cliente} grupo={g} productos={productos} onDelete={onDelete} onEditar={onEditar} forzarExpandido={forzarExpandido} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClienteGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpandido }) {
+  const [expandido, setExpandido] = useState(false);
+  const abierto = expandido || forzarExpandido;
+  const nObras = grupo.obras.length;
+  const nArmados = grupo.obras.reduce((acc, o) => acc + o.armados.length, 0);
+  return (
+    <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <button onClick={() => setExpandido(!expandido)} className="w-full flex items-start justify-between gap-3 p-3.5 text-left flex-wrap">
+        <div className="min-w-0">
+          <p className="text-lg font-bold truncate" style={{ color: INK }}>{grupo.cliente}</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>{nObras} obra{nObras > 1 ? "s" : ""} · {nArmados} armado{nArmados > 1 ? "s" : ""}</p>
+        </div>
+        {abierto ? <ChevronUp size={16} style={{ color: MUTED }} /> : <ChevronDown size={16} style={{ color: MUTED }} />}
+      </button>
+      {abierto && (
+        <div className="px-3.5 pb-3.5 space-y-3">
+          {grupo.obras.map((o) => (
+            <ObraGrupoArmados key={o.obra} grupo={o} productos={productos} onDelete={onDelete} onEditar={onEditar} forzarExpandido={forzarExpandido} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ObraGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpandido }) {
+  const [expandido, setExpandido] = useState(false);
+  const abierto = expandido || forzarExpandido;
+  const n = grupo.armados.length;
+  return (
+    <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <button onClick={() => setExpandido(!expandido)} className="w-full flex items-center justify-between gap-2 p-3 text-left">
+        <div className="min-w-0">
+          <p className="text-base font-bold truncate" style={{ color: INK }}>{grupo.obra}</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>{n} armado{n > 1 ? "s" : ""}</p>
+        </div>
+        {abierto ? <ChevronUp size={15} style={{ color: MUTED }} /> : <ChevronDown size={15} style={{ color: MUTED }} />}
+      </button>
+      {abierto && (
+        <div className="px-3 pb-3 space-y-3">
+          {grupo.armados.map((a) => (
+            <ArmadoCard key={a.id} a={a} onDelete={onDelete} onEditar={onEditar} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Suma los equipos de todas las filas × su repeticiones, por código — así se puede comparar
+// directo contra las cantidades totales que terminaron en la cotización real.
+function ArmadoCard({ a, onDelete, onEditar }) {
+  const filas = a.filas || [];
+  const totalesPorCodigo = useMemo(() => {
+    const map = new Map();
+    for (const f of filas) {
+      const rep = Number(f.repeticiones) || 0;
+      for (const e of (f.equipos || [])) {
+        const cant = (Number(e.cantidad) || 0) * rep;
+        const prev = map.get(e.codigo) || { descripcion: e.descripcion, cantidad: 0 };
+        map.set(e.codigo, { descripcion: prev.descripcion || e.descripcion, cantidad: prev.cantidad + cant });
+      }
+    }
+    return Array.from(map.entries()).map(([codigo, v]) => ({ codigo, ...v })).sort((x, y) => x.codigo.localeCompare(y.codigo));
+  }, [filas]);
+  const totalUnidades = totalesPorCodigo.reduce((acc, t) => acc + t.cantidad, 0);
+
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
+        <div>
+          {a.categoria && <CodeTag>{a.categoria}</CodeTag>}
+          <p className="text-xs mt-1" style={{ color: MUTED }}>
+            {fmtDate(a.fecha)} · {filas.length} fila{filas.length !== 1 ? "s" : ""} · {totalUnidades} unidad{totalUnidades !== 1 ? "es" : ""} consolidadas
+          </p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => onEditar(a)} className="p-1.5 rounded hover:bg-gray-100" title="Editar"><Pencil size={14} style={{ color: MUTED }} /></button>
+          <button onClick={() => onDelete(a.id)} className="p-1.5 rounded hover:bg-gray-100" title="Eliminar"><Trash2 size={14} style={{ color: MUTED }} /></button>
+        </div>
+      </div>
+
+      <div className="rounded border overflow-x-auto mb-2.5" style={{ borderColor: BORDER }}>
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ backgroundColor: "#F7F8FA" }}>
+              <th className="text-left px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Nivel</th>
+              <th className="text-left px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Ubicación / tipología</th>
+              <th className="text-center px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Rep.</th>
+              <th className="text-left px-2 py-1.5 font-medium" style={{ color: MUTED }}>Combinación (por unidad)</th>
+              <th className="text-left px-2 py-1.5 font-medium" style={{ color: MUTED }}>Notas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((f, i) => (
+              <tr key={i} className="border-t" style={{ borderColor: BORDER }}>
+                <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.nivel}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.ubicacion}</td>
+                <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>×{f.repeticiones}</td>
+                <td className="px-2 py-1.5" style={{ color: INK }}>
+                  {(f.equipos || []).map((e, j) => (
+                    <span key={j} className="inline-block mr-2 whitespace-nowrap">{e.cantidad}× {e.codigo}</span>
+                  ))}
+                </td>
+                <td className="px-2 py-1.5" style={{ color: MUTED }}>{f.notas}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[11px] font-medium mb-1" style={{ color: MUTED }}>Total consolidado (para comparar contra la cotización):</p>
+      <div className="flex flex-wrap gap-1.5">
+        {totalesPorCodigo.map((t) => (
+          <span key={t.codigo} className="text-[11px] px-2 py-1 rounded-full" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+            {t.codigo} × {t.cantidad}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FilaArmadoEditor({ fila, idx, productos, productosPorGrupo, onChange, onAgregarEquipo, onQuitarEquipo, onQuitarFila }) {
+  const [productoId, setProductoId] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+
+  const agregar = () => {
+    if (!productoId) return;
+    onAgregarEquipo(productoId, cantidad);
+    setProductoId("");
+    setCantidad(1);
+  };
+
+  return (
+    <div className="p-3 rounded-lg" style={{ backgroundColor: "#F7F8FA", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold" style={{ color: MUTED }}>Fila {idx + 1}</p>
+        <button onClick={onQuitarFila} className="p-1 rounded hover:bg-gray-200" title="Quitar fila"><X size={14} style={{ color: MUTED }} /></button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Nivel"><TextInput value={fila.nivel} onChange={(e) => onChange("nivel", e.target.value)} placeholder="Ej: PT1" /></Field>
+        <Field label="Ubicación / tipología"><TextInput value={fila.ubicacion} onChange={(e) => onChange("ubicacion", e.target.value)} placeholder="Ej: DPTO. A" /></Field>
+      </div>
+      <Field label="Repeticiones"><TextInput type="number" value={fila.repeticiones} onChange={(e) => onChange("repeticiones", e.target.value)} /></Field>
+
+      <p className="text-xs font-medium mt-1 mb-1" style={{ color: MUTED }}>Equipos (por una unidad, antes de multiplicar × repeticiones)</p>
+      {(fila.equipos || []).length > 0 && (
+        <div className="space-y-1 mb-2">
+          {fila.equipos.map((e, i) => (
+            <div key={i} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+              <span style={{ color: INK }}>{e.cantidad}× {e.codigo}</span>
+              <button onClick={() => onQuitarEquipo(i)} className="p-0.5 rounded hover:bg-gray-100"><X size={12} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-end gap-2">
+        <div className="flex-1"><SelectorProducto productos={productos} productosPorGrupo={productosPorGrupo} value={productoId} onChange={setProductoId} /></div>
+        <div style={{ width: 64 }}><Field label="Cant."><TextInput type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field></div>
+        <SecondaryButton onClick={agregar}>Agregar</SecondaryButton>
+      </div>
+
+      <Field label="Notas (opcional)"><TextInput value={fila.notas} onChange={(e) => onChange("notas", e.target.value)} placeholder="Ej: combo 12+24 (36K), tabla Midea" /></Field>
+    </div>
+  );
+}
+
+function ArmadoCombinacionForm({ productos, clientes, initial, editId, onSave, onGuardarEdicion }) {
+  const [cliente, setCliente] = useState(initial?.cliente || "");
+  const [obra, setObra] = useState(initial?.obra || "");
+  const [categoria, setCategoria] = useState(initial?.categoria || "");
+  const [fecha, setFecha] = useState(initial?.fecha || todayISO());
+  const [filas, setFilas] = useState(initial?.filas || []);
+  const [error, setError] = useState("");
+
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productos), [productos]);
+
+  const agregarFila = () => setFilas([...filas, { nivel: "", ubicacion: "", repeticiones: 1, equipos: [], notas: "" }]);
+  const quitarFila = (idx) => setFilas(filas.filter((_, i) => i !== idx));
+  const actualizarFila = (idx, campo, valor) => setFilas(filas.map((f, i) => (i === idx ? { ...f, [campo]: valor } : f)));
+
+  const agregarEquipo = (idxFila, productoId, cantidadNueva) => {
+    const p = productos.find((x) => x.id === productoId);
+    if (!p) return;
+    const equipos = [...(filas[idxFila].equipos || []), { codigo: p.nombre, descripcion: p.descripcion || "", cantidad: Number(cantidadNueva) || 1 }];
+    actualizarFila(idxFila, "equipos", equipos);
+  };
+  const quitarEquipo = (idxFila, idxEquipo) => {
+    const equipos = (filas[idxFila].equipos || []).filter((_, i) => i !== idxEquipo);
+    actualizarFila(idxFila, "equipos", equipos);
+  };
+
+  const guardar = () => {
+    if (!cliente.trim()) { setError("Ingresá el cliente."); return; }
+    if (filas.length === 0) { setError("Agregá al menos una fila (piso/depto)."); return; }
+    const data = {
+      cliente: cliente.trim(), obra: obra.trim(), categoria: categoria.trim(), fecha,
+      filas: filas.map((f) => ({ ...f, repeticiones: Number(f.repeticiones) || 0 })),
+    };
+    if (editId) onGuardarEdicion(editId, data);
+    else onSave(data);
+  };
+
+  return (
+    <div>
+      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Ej: CCI" /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Ej: EJE" /></Field>
+      <Field label="Categoría / título"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: Ejemplo 2 — usá el mismo título que la cotización" /></Field>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+
+      <div className="mt-2 space-y-3">
+        {filas.map((f, idx) => (
+          <FilaArmadoEditor
+            key={idx} fila={f} idx={idx}
+            productos={productos} productosPorGrupo={productosPorGrupo}
+            onChange={(campo, valor) => actualizarFila(idx, campo, valor)}
+            onAgregarEquipo={(productoId, cantidadNueva) => agregarEquipo(idx, productoId, cantidadNueva)}
+            onQuitarEquipo={(idxEquipo) => quitarEquipo(idx, idxEquipo)}
+            onQuitarFila={() => quitarFila(idx)}
+          />
+        ))}
+      </div>
+      <button onClick={agregarFila} className="mt-2 text-sm font-medium flex items-center gap-1" style={{ color: ACCENT }}>
+        <Plus size={15} /> Agregar fila (piso/depto)
+      </button>
+
+      {error && <p className="text-xs mt-3 mb-1" style={{ color: "#B91C1C" }}>{error}</p>}
+      <div className="mt-4">
+        <PrimaryButton onClick={guardar}>{editId ? "Guardar cambios" : "Guardar armado"}</PrimaryButton>
+      </div>
     </div>
   );
 }

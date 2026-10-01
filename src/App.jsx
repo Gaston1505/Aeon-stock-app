@@ -2244,11 +2244,11 @@ export default function App() {
     const filas = armado.filas || [];
     const rows = filas.map((f) => ({
       Nivel: f.nivel || "", Ubicación: f.ubicacion || "", Capacidad: f.capacidad || "",
-      "Tipo (cliente)": `${f.esAgregado ? "[AGREGADO] " : ""}${f.tipoOriginal || ""}`, Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
+      "Tipo (cliente)": f.tipoOriginal || "", Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
       "Cantidad total": (Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0),
       "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       "Grupo / exterior compartido": textoGrupoExterior(f),
-      Notas: `${f.validacionPendiente ? "[SIN VALIDAR POR FÁBRICA] " : ""}${f.notas || ""}`,
+      Notas: `${f.validacionPendiente ? "(Sujeto a validación — ver Referencias al pie) " : ""}${f.notas || ""}`,
     }));
 
     const totalesPorCodigo = new Map();
@@ -2263,6 +2263,17 @@ export default function App() {
     Array.from(totalesPorCodigo.entries()).sort((a, b) => a[0].localeCompare(b[0])).forEach(([codigo, cant]) => {
       rows.push({ Nivel: codigo, Ubicación: `× ${cant}` });
     });
+
+    if (filas.some((f) => f.esAgregado || f.validacionPendiente)) {
+      rows.push({});
+      rows.push({ Nivel: "Referencias" });
+      if (filas.some((f) => f.esAgregado)) {
+        rows.push({ Nivel: "Equipos resaltados en celeste:", Ubicación: 'Corresponden a la unidad exterior tipo Multi Split que agrupa dos o más líneas del presente listado en un mismo condensador, incorporada a la presente cotización.' });
+      }
+      if (filas.some((f) => f.validacionPendiente)) {
+        rows.push({ Nivel: "Combinaciones resaltadas en amarillo:", Ubicación: 'Cuentan con la aprobación de la fábrica de origen dentro de su tabla oficial de equipos, si bien esta recomienda su validación previa para la región de Sudamérica antes de confirmarlas comercialmente. Cuando sea posible, se sugiere aumentar la capacidad de la unidad exterior asociada a dicha combinación; de no resultar viable dicho incremento, se recomienda disolver la combinación y conformar una distribución alternativa de equipos.' });
+      }
+    }
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -9985,10 +9996,10 @@ function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, on
           <div className="flex items-center gap-1">
             <h2 className="text-xl font-bold" style={{ color: INK }}>Armado de combinaciones</h2>
             <InfoTip>
-              <p className="font-semibold">Línea "Agregado"</p>
-              <p>Es el exterior multi que combina varias líneas del pedido en un mismo condensador — no lo pidió el cliente así, lo agrega AEON para resolver la combinación. Se muestra como una línea propia (con fondo distinto) para que se vea como el producto real que es, no solo como una nota dentro de otra línea.</p>
-              <p className="font-semibold pt-1">Alerta roja "Sin validar por fábrica"</p>
-              <p>La combinación la arma la fábrica (sale de su tabla oficial), pero esa celda puntual todavía figura como "a probar" para Sudamérica. Cada armado con alertas trae su propio aviso explicando qué hacer en ese caso.</p>
+              <p className="font-semibold">Filas en celeste</p>
+              <p>Es la unidad exterior Multi Split que agrupa varias líneas del pedido en un mismo condensador, incorporada a la cotización. Se muestra como su propio producto (no solo como una nota dentro de otra línea).</p>
+              <p className="font-semibold pt-1">Filas en amarillo</p>
+              <p>La combinación cuenta con la aprobación de la fábrica de origen, pero esta recomienda validarla para Sudamérica antes de confirmarla comercialmente. Cada armado con alertas trae su propio aviso explicando la recomendación para ese caso.</p>
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
@@ -10117,18 +10128,17 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
         </div>
       </div>
       {gruposSinValidar.length > 0 && (
-        <div className="mb-2.5 px-2.5 py-2 rounded text-xs" style={{ backgroundColor: "#FDEDED", color: "#B91C1C" }}>
+        <div className="mb-2.5 px-2.5 py-2 rounded text-xs" style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}>
           <div className="flex items-start gap-1">
-            <b>⚠ {gruposSinValidar.length} combinación{gruposSinValidar.length !== 1 ? "es" : ""} sin validar por fábrica:</b>
+            <b>⚠ {gruposSinValidar.length} combinación{gruposSinValidar.length !== 1 ? "es" : ""} sujeta{gruposSinValidar.length !== 1 ? "s" : ""} a validación:</b>
             <InfoTip>
               <p className="font-semibold">¿Qué significa esta alerta?</p>
-              <p>La combinación en sí la arma la fábrica — sale literal de su tabla oficial, no es algo que inventamos. Lo que falta es que la fábrica termine de probarla/validarla para Sudamérica antes de poder ofrecerla con total seguridad al cliente.</p>
-              <p className="font-semibold pt-1">Si no se puede confirmar a tiempo:</p>
-              <p>1) Primero probar con una categoría de exterior mayor — si esa misma combinación está certificada ahí, resuelve el problema.</p>
-              <p>2) Si ni subiendo de categoría se certifica, lo más seguro es romper la combinación y vender esos splits sueltos, para no depender de algo sin probar.</p>
+              <p>La combinación cuenta con la aprobación de la fábrica de origen dentro de su tabla oficial de equipos, aunque esta recomienda su validación previa para la región de Sudamérica antes de confirmarla comercialmente.</p>
+              <p className="font-semibold pt-1">Recomendación:</p>
+              <p>Cuando sea posible, aumentar la capacidad de la unidad exterior asociada a la combinación. De no resultar viable dicho incremento, disolver la combinación y conformar una distribución alternativa de equipos.</p>
             </InfoTip>
           </div>
-          <span> {gruposSinValidar.join(", ")} — la tabla del fabricante las marca "a verificar/probar", no están 100% certificadas todavía.</span>
+          <span> {gruposSinValidar.join(", ")} — ver "Referencias" al pie del PDF/Excel para el texto completo a compartir con el cliente.</span>
         </div>
       )}
       <div className="flex items-center justify-end gap-1 mb-2 flex-wrap">
@@ -10160,14 +10170,11 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
           </thead>
           <tbody>
             {filas.map((f, i) => (
-              <tr key={i} className="border-t" style={{ borderColor: BORDER, backgroundColor: f.validacionPendiente ? "#FDEDED" : f.esAgregado ? "#FBF8EE" : "transparent" }}>
+              <tr key={i} className="border-t" style={{ borderColor: BORDER, backgroundColor: f.validacionPendiente ? "#FEF3C7" : f.esAgregado ? "#E8F1FC" : "transparent" }}>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.nivel}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.ubicacion}</td>
                 <td className="px-2 py-1.5 text-right whitespace-nowrap" style={{ color: INK }}>{f.capacidad}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: f.esAgregado ? "#B45309" : INK }}>
-                  {f.esAgregado && <span className="text-[9px] font-semibold uppercase mr-1 px-1 py-0.5 rounded" style={{ backgroundColor: "#FDF1E0", color: "#B45309" }}>Agregado</span>}
-                  {f.tipoOriginal}
-                </td>
+                <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.tipoOriginal}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>{f.cantidad}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>×{f.repeticiones}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap font-semibold" style={{ color: INK }}>{(Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)}</td>
@@ -10175,8 +10182,8 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: f.grupo ? INK : MUTED }}>
                   {textoGrupoExterior(f)}
                 </td>
-                <td className="px-2 py-1.5" style={{ color: f.validacionPendiente ? "#B91C1C" : MUTED }}>
-                  {f.validacionPendiente && <span className="block text-[9px] font-semibold uppercase mb-0.5" style={{ color: "#B91C1C" }}>⚠ Sin validar por fábrica (ver aviso arriba)</span>}
+                <td className="px-2 py-1.5" style={{ color: f.validacionPendiente ? "#92400E" : MUTED }}>
+                  {f.validacionPendiente && <span className="block text-[9px] font-semibold uppercase mb-0.5" style={{ color: "#92400E" }}>⚠ Sujeto a validación (ver aviso arriba)</span>}
                   {f.notas}
                 </td>
               </tr>

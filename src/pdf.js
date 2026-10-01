@@ -1725,14 +1725,14 @@ export async function generateArmadoCombinacionPdf(armado) {
       nivel: f.nivel || "",
       ubicacion: f.ubicacion || "",
       capacidad: f.capacidad || "",
-      tipoOriginal: `${f.esAgregado ? "[AGREGADO] " : ""}${f.tipoOriginal || ""}`,
+      tipoOriginal: f.tipoOriginal || "",
       cantidad: String(f.cantidad ?? ""),
       repeticiones: `×${f.repeticiones ?? ""}`,
       cantidadTotal: String((Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)),
       equipo: `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       grupo: !f.grupo ? "— sin combinar" : !f.exteriorCodigo ? f.grupo
         : `${f.grupo} — Ext: ${Number(f.exteriorCantidad) || 1}× ${f.exteriorCodigo} (×${f.repeticiones} rep = ${(Number(f.exteriorCantidad) || 1) * (Number(f.repeticiones) || 0)} u.)`,
-      notas: `${f.validacionPendiente ? "[SIN VALIDAR POR FÁBRICA] " : ""}${f.notas || ""}`,
+      notas: `${f.validacionPendiente ? "(Sujeto a validación — ver nota al pie) " : ""}${f.notas || ""}`,
     };
     const wrapped = {};
     let maxLines = 1;
@@ -1745,8 +1745,8 @@ export async function generateArmadoCombinacionPdf(armado) {
     ensureSpace(rowH + 20);
     if (y === AC_PAGE_H - AC_MARGIN) drawHeader();
 
-    if (f.validacionPendiente) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfd / 255, 0xed / 255, 0xed / 255) });
-    else if (f.esAgregado) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfb / 255, 0xf8 / 255, 0xee / 255) });
+    if (f.validacionPendiente) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xfe / 255, 0xf3 / 255, 0xc7 / 255) });
+    else if (f.esAgregado) rect(AC_MARGIN, y - rowH, AC_CONTENT_W, rowH, { fill: rgb(0xe8 / 255, 0xf1 / 255, 0xfc / 255) });
     let cx = AC_MARGIN;
     for (const c of cols) {
       rect(cx, y - rowH, c.w, rowH, { border: BORDER });
@@ -1779,6 +1779,34 @@ export async function generateArmadoCombinacionPdf(armado) {
     if (cx + chipW > AC_MARGIN + AC_CONTENT_W) { cx = AC_MARGIN; y -= 11; ensureSpace(20); }
     text(`${codigo} × ${cant}`, cx, y, { size: 7 });
     cx += chipW;
+  }
+
+  // Referencias — texto corrido al pie de la hoja, en el mismo lenguaje que se le puede pasar
+  // al cliente: qué significa cada color, sin tecnicismos internos.
+  const referencias = [
+    {
+      titulo: "Equipos resaltados en celeste",
+      texto: "Corresponden a la unidad exterior tipo Multi Split que agrupa dos o más líneas del presente listado en un mismo condensador, incorporada a la presente cotización.",
+    },
+    {
+      titulo: "Combinaciones resaltadas en amarillo",
+      texto: 'Cuentan con la aprobación de la fábrica de origen dentro de su tabla oficial de equipos, si bien esta recomienda su validación previa para la región de Sudamérica antes de confirmarlas comercialmente. Cuando sea posible, se sugiere aumentar la capacidad de la unidad exterior asociada a dicha combinación; de no resultar viable dicho incremento, se recomienda disolver la combinación y conformar una distribución alternativa de equipos.',
+    },
+  ];
+  ensureSpace(30);
+  y -= 16;
+  rect(AC_MARGIN, y, AC_CONTENT_W, 0.5, { fill: BORDER });
+  y -= 12;
+  text("Referencias", AC_MARGIN, y, { bold: true, size: 8 });
+  y -= 12;
+  for (const ref of referencias) {
+    const lines = wrapText(bold, `${ref.titulo}:`, 7, AC_CONTENT_W).concat(wrapText(font, ref.texto, 7, AC_CONTENT_W));
+    const tituloLineCount = wrapText(bold, `${ref.titulo}:`, 7, AC_CONTENT_W).length;
+    ensureSpace(lines.length * 9 + 6);
+    lines.forEach((line, i) => {
+      text(line, AC_MARGIN, y - i * 9, { size: 7, bold: i < tituloLineCount, color: i < tituloLineCount ? INK : MUTED });
+    });
+    y -= lines.length * 9 + 8;
   }
 
   return pdf.save();

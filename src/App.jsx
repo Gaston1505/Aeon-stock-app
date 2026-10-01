@@ -236,10 +236,6 @@ function calcularTotalCotizacion(c) {
   return desglosarTotalCotizacion(c).total;
 }
 
-// Comisión de Gastón como comercial: % fijo sobre el total vendido de cada cotización (no
-// sobre el margen) — se descuenta del margen bruto para mostrar cuánto le queda a la empresa.
-const COMISION_COMERCIAL_PCT = 1.5;
-
 // El monto de instalación de una cotización no es margen puro: AEON contrata a un técnico
 // externo para hacerla, y le suma este % aprox como margen propio — el resto es lo que se le
 // paga al técnico. Este % es el fallback para cotizaciones viejas / cargadas a mano sin el
@@ -825,23 +821,37 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     const costoTotal = cantidad * costoUnit;
     const margen = ventaNeta - costoTotal;
     const margenPct = ventaNeta > 0 ? (margen / ventaNeta) * 100 : 0;
-    // Banda de descuento: markup sobre Costo PY, contra el piso/ideal de la categoría — más
-    // exigente que el margen bruto de arriba (ventaNeta vs. costoUnit), que es la rentabilidad
-    // "empresa" sin descontar comisión de venta ni costo financiero.
+    // Margen "en limpio" por línea: al margen bruto (ventaNeta vs. Costo PY) se le restan los
+    // costos reales de comisión de venta y costo financiero (mismos % que la Matriz de costos,
+    // por categoría) — esto es lo que de verdad le queda a la empresa, y lo que determina el
+    // punto de equilibrio para negociar un descuento con el cliente.
+    let comisionVentaLinea = 0;
+    let costoFinancieroLinea = 0;
     let bandaCostoReal = null;
     const precioNeto = precioUnit * factorDescuento;
-    if (producto && precioNeto > 0) {
-      const costos = calcularCostosProducto(producto, matriz);
+    if (producto) {
       const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
       const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
-      const costoReal = costos ? costos.costoReal : costoUnit;
-      if (costoReal > 0 && costos) bandaCostoReal = bandaDescuento(((precioNeto - costos.costoPy) / costos.costoPy) * 100, catCfg, matriz.costoFinancieroPct);
+      comisionVentaLinea = costoTotal * (Number(catCfg.comisionVentaPct) || 0) / 100;
+      costoFinancieroLinea = costoTotal * (Number(matriz.costoFinancieroPct) || 0) / 100;
+      if (precioNeto > 0) {
+        const costos = calcularCostosProducto(producto, matriz);
+        const costoReal = costos ? costos.costoReal : costoUnit;
+        if (costoReal > 0 && costos) bandaCostoReal = bandaDescuento(((precioNeto - costos.costoPy) / costos.costoPy) * 100, catCfg, matriz.costoFinancieroPct);
+      }
     }
-    return { codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct, sinCosto, bandaCostoReal };
+    const margenNeto = margen - comisionVentaLinea - costoFinancieroLinea;
+    const margenNetoPct = ventaNeta > 0 ? (margenNeto / ventaNeta) * 100 : 0;
+    return {
+      codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct,
+      comisionVentaLinea, costoFinancieroLinea, margenNeto, margenNetoPct, sinCosto, bandaCostoReal,
+    };
   });
 
   const ventaProductos = filas.reduce((acc, f) => acc + f.ventaNeta, 0);
   const costoProductos = filas.reduce((acc, f) => acc + f.costoTotal, 0);
+  const comisionVentaTotal = filas.reduce((acc, f) => acc + f.comisionVentaLinea, 0);
+  const costoFinancieroTotal = filas.reduce((acc, f) => acc + f.costoFinancieroLinea, 0);
   const instalacionMonto = c.incluirInstalacion ? (Number(c.instalacionMonto) || 0) : 0;
   // Si algún servicio se agregó con el sugeridor (tabla de Luis), ya sabemos su costo real en
   // U$S — se usa ese en vez del 15% aproximado. El 15% solo se aplica al resto del monto de
@@ -855,13 +865,16 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   const costoTotal = costoProductos + costoInstalacion;
   const margenTotal = ventaTotal - costoTotal;
   const margenTotalPct = ventaTotal > 0 ? (margenTotal / ventaTotal) * 100 : 0;
-  const comision = ventaTotal * (COMISION_COMERCIAL_PCT / 100);
-  const margenEmpresa = margenTotal - comision;
+  // Margen empresa: margen bruto menos comisión de venta y costo financiero reales (por
+  // categoría, sobre Costo PY) — reemplaza a la vieja "Comisión Gastón" fija del 1,5% sobre
+  // venta, que se sacó del sistema por representar el mismo concepto que la comisión de venta
+  // de la Matriz de costos.
+  const margenEmpresa = margenTotal - comisionVentaTotal - costoFinancieroTotal;
   const margenEmpresaPct = ventaTotal > 0 ? (margenEmpresa / ventaTotal) * 100 : 0;
 
   return {
     filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, costoInstalacion, descuentoPct,
-    comision, margenEmpresa, margenEmpresaPct, serviciosAdicionales,
+    comisionVentaTotal, costoFinancieroTotal, margenEmpresa, margenEmpresaPct, serviciosAdicionales,
   };
 }
 
@@ -9426,13 +9439,17 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
         <div><p style={{ color: MUTED }}>Margen bruto</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>U$S {fmt(r.margenTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Margen bruto %</p><p className="font-semibold" style={{ color: colorMargen(r.margenTotal) }}>{fmtN(r.margenTotalPct, 1)}%</p></div>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-xs mb-2 p-2 rounded" style={{ backgroundColor: ACCENT_LIGHT }}>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2 p-2 rounded" style={{ backgroundColor: ACCENT_LIGHT }}>
         <div>
-          <p style={{ color: MUTED }}>Comisión Gastón ({COMISION_COMERCIAL_PCT}%)</p>
-          <p className="font-semibold" style={{ color: ACCENT }}>U$S {fmt(r.comision)}</p>
+          <p style={{ color: MUTED }}>Comisión venta</p>
+          <p className="font-semibold" style={{ color: ACCENT }}>U$S {fmt(r.comisionVentaTotal)}</p>
         </div>
         <div>
-          <p style={{ color: MUTED }}>Margen empresa</p>
+          <p style={{ color: MUTED }}>Costo financiero</p>
+          <p className="font-semibold" style={{ color: ACCENT }}>U$S {fmt(r.costoFinancieroTotal)}</p>
+        </div>
+        <div>
+          <p style={{ color: MUTED }}>Margen empresa (neto)</p>
           <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>U$S {fmt(r.margenEmpresa)}</p>
         </div>
         <div>
@@ -9440,6 +9457,9 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
           <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>{fmtN(r.margenEmpresaPct, 1)}%</p>
         </div>
       </div>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>
+        Comisión de venta y costo financiero calculados por línea con el % de categoría de la Matriz de costos (Aire Acondicionado vs. resto) sobre Costo PY — el margen empresa ya los tiene descontados.
+      </p>
       {r.descuentoPct > 0 && (
         <p className="text-xs mb-1.5" style={{ color: MUTED }}>Incluye el descuento del {r.descuentoPct}% prorrateado en todos los productos.</p>
       )}

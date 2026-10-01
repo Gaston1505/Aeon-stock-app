@@ -9438,6 +9438,19 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos }) {
   const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return (
     <div className="mt-2 p-2.5 rounded" style={{ backgroundColor: "#F7F8FA" }}>
+      <div className="flex items-center gap-1 mb-2">
+        <p className="text-xs font-medium" style={{ color: INK }}>Cómo se arma este cálculo</p>
+        <InfoTip>
+          <p className="font-semibold">1. Margen bruto</p>
+          <p>Venta (ya con descuento aplicado) menos Costo PY de cada línea.</p>
+          <p className="font-semibold pt-1">2. Markup bruto %</p>
+          <p>Margen bruto ÷ Costo PY (no ÷ venta) — misma base que el indicador de piso/ideal de cada línea y que la Matriz de costos, para poder comparar directo.</p>
+          <p className="font-semibold pt-1">3. Comisión venta + Costo financiero</p>
+          <p>Por línea: Costo PY × comisión de venta de la categoría (1,88% Aire Acondicionado / 2,5% resto) + Costo PY × costo financiero (12%) — los mismos % de la Matriz de costos.</p>
+          <p className="font-semibold pt-1">4. Margen empresa (neto)</p>
+          <p>Margen bruto menos esos dos costos — es lo que de verdad queda, y el punto de equilibrio para negociar un descuento.</p>
+        </InfoTip>
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2">
         <div><p style={{ color: MUTED }}>Venta</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.ventaTotal)}</p></div>
         <div><p style={{ color: MUTED }}>Costo</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.costoTotal)}</p></div>

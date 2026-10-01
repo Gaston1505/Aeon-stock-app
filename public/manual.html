@@ -257,6 +257,13 @@
 
       <section class="card"><h3>Cotizaciones</h3><p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por cliente y obra — volver a cotizar la misma obra crea una nueva versión con historial, no una cotización suelta. Cada línea muestra un indicador de color contra el Costo Real (ver Matriz de costos) para saber al toque si el descuento todavía deja margen.</p></section>
 
+      <section class="card" style="grid-column:1/-1"><h3>Rentabilidad de una cotización</h3>
+        <p class="desc">Botón "Rentabilidad" dentro de cada cotización (también tiene un ícono de info "i" adentro con el mismo detalle). Se recalcula al vuelo cada vez que se abre — no queda nada guardado, así que un cambio en el costo de un producto o en la Matriz de costos se refleja al toque en cotizaciones viejas también.</p>
+        <div class="chip-row"><span class="chip">Margen bruto = Venta − Costo PY</span><span class="chip">Markup bruto % = Margen bruto ÷ Costo PY</span><span class="chip">Comisión venta = Costo PY × 1,88%/2,5%</span><span class="chip">Costo financiero = Costo PY × 12%</span><span class="chip">Margen empresa = Margen bruto − Comisión venta − Costo financiero</span></div>
+        <div class="tip gray"><b>Por qué "sobre Costo PY" y no sobre venta.</b> Es la misma base que usa la Matriz de costos para el piso y el margen ideal por categoría (25-30% Aire Acondicionado, 60-65% resto) — así el % de Rentabilidad se puede comparar directo contra esos rangos, sin convertir nada. Un 30% de markup sobre costo equivale a 23,1% de margen sobre venta, no a 30% — son bases distintas para la misma plata.</div>
+        <div class="tip"><b>Qué reemplazó.</b> Antes había una "Comisión Gastón" fija del 1,5% sobre el total vendido, separada de la comisión de venta de la Matriz de costos. Se sacó del sistema porque duplicaba el mismo concepto — ahora el margen empresa descuenta la comisión de venta y el costo financiero reales de la Matriz, por categoría y por línea.</div>
+      </section>
+
       <section class="card"><h3>Presupuestos de reparación</h3><p class="desc">Vía separada de las cotizaciones de venta — para reparación, repuestos y mantenimiento de un equipo puntual (AA, termocalefón, campana).</p></section>
 
       <section class="card" style="grid-column:1/-1"><h3>Panel de simulación</h3><p class="desc">Un ejercicio de "si me piden esto, con qué lo cubro" — armás una lista de productos para ver disponibilidad y precio, sin que cuente como nada real todavía.</p>

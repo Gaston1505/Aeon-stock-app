@@ -60,7 +60,7 @@ const ESTADOS_RESULTANTES = ["Apto para venta", "Apto para venta con descuento",
 // Matriz de costos global (colección "configuracion", doc "matrizCostos") — de acá sale el Costo
 // Real de cada producto (ver calcularCostosProducto). "aires" = Aire Acondicionado, "otros" = todo
 // el resto del catálogo (Electrodomésticos). El flete y el m3 siempre se cotejan contra el
-// contenedor 40HQ — los demás tamaños (40/20HQ/20) solo se usan para combinar en Armado de pedido.
+// contenedor 40HQ — los demás tamaños (40/20HQ/20) solo se usan para combinar en Orden de Compra.
 const MATRIZ_COSTOS_DEFAULT = {
   comisionAgentePct: 5,
   costoFinancieroPct: 12,
@@ -779,7 +779,7 @@ function descuentoMaximoPct(precioLista, costoPy, margenMinimoPct) {
   return (lista - precioPiso) / lista * 100;
 }
 
-// Heurística de sugerencia de contenedores para Armado de pedido: NO es una optimización real de
+// Heurística de sugerencia de contenedores para Orden de Compra: NO es una optimización real de
 // bin-packing, es una sugerencia golosa (el contenedor más grande que todavía entre en lo que
 // falta, repetido hasta completar) para que Gastón la revise — nunca una asignación definitiva.
 function sugerirContenedores(m3Total, contenedores) {
@@ -2970,7 +2970,7 @@ export default function App() {
     // Stock / inventario
     { key: "deposito", label: "Depósito", icon: Warehouse, section: "Stock e inventario" },
     { key: "transito", label: "Tránsito", icon: Ship, section: "Stock e inventario" },
-    { key: "armado-pedido", label: "Armado de pedido", icon: ShoppingCart, section: "Stock e inventario" },
+    { key: "armado-pedido", label: "Orden de Compra", icon: ShoppingCart, section: "Stock e inventario" },
     { key: "playa", label: "Zona de playa", icon: Inbox, section: "Stock e inventario" },
     { key: "equipos", label: "Maestro de equipos", icon: Package, section: "Stock e inventario" },
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench, section: "Stock e inventario" },
@@ -7376,7 +7376,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
           <TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} />
         </Field>
       </div>
-      <Field label="Contenedor de referencia (para Flete y Armado de pedido)">
+      <Field label="Contenedor de referencia (para Flete y Orden de Compra)">
         <Select value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)}>
           {Object.keys((matrizCostos || MATRIZ_COSTOS_DEFAULT).contenedores).map((tipo) => (
             <option key={tipo} value={tipo}>{tipo}</option>
@@ -10978,7 +10978,7 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
       </div>
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Contenedores (m3 y flete)</p>
-      <p className="text-xs mb-2" style={{ color: MUTED }}>El Flete y el Costo Real siempre se calculan contra el 40HQ. Los demás tamaños son solo para combinar en Armado de pedido.</p>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>El Flete y el Costo Real siempre se calculan contra el 40HQ. Los demás tamaños son solo para combinar en Orden de Compra.</p>
       {Object.keys(form.contenedores).map((tipo) => (
         <div key={tipo} className="flex gap-2 items-end">
           <div className="text-sm font-medium pb-2.5" style={{ color: INK, width: 56 }}>{tipo}</div>
@@ -11794,7 +11794,7 @@ function ArmadoPedidoView({ ordenesCompra, productos, cotizaciones, comprometida
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl font-bold" style={{ color: INK }}>Armado de pedido</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Orden de Compra</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>Combiná productos por volumen (m3) para planificar una orden de compra a origen — la compra de la empresa a China, no una venta.</p>
         </div>
         <div className="flex items-center gap-2">

@@ -20,6 +20,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
+  downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   COMPANY, fmtFecha,
 } from "./pdf";
 
@@ -2212,6 +2213,52 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const handleDescargarArmadoPdf = async (armado) => {
+    setDescargandoId(armado.id + ":pdf");
+    setPdfError("");
+    try {
+      await downloadArmadoCombinacionPdf(armado);
+    } catch (e) {
+      console.error("Error generando PDF del armado de combinaciones", e);
+      setPdfError("No se pudo generar el PDF del armado. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  // Excel liviano con "xlsx" (ya cargado para el resto de la app) — a diferencia del de
+  // Cotizaciones no lleva fotos, así que no hace falta el exceljs más pesado.
+  const handleDescargarArmadoExcel = (armado) => {
+    const filas = armado.filas || [];
+    const rows = filas.map((f) => ({
+      Nivel: f.nivel || "", Ubicación: f.ubicacion || "", Capacidad: f.capacidad || "",
+      "Tipo (cliente)": f.tipoOriginal || "", Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
+      "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
+      "Grupo / exterior compartido": f.grupo ? `${f.grupo}${f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}` : "— sin combinar",
+      Notas: f.notas || "",
+    }));
+
+    const totalesPorCodigo = new Map();
+    for (const f of filas) {
+      const rep = Number(f.repeticiones) || 0;
+      if (f.equipoCodigo) totalesPorCodigo.set(f.equipoCodigo, (totalesPorCodigo.get(f.equipoCodigo) || 0) + (Number(f.cantidad) || 0) * rep);
+      if (f.exteriorCodigo) totalesPorCodigo.set(f.exteriorCodigo, (totalesPorCodigo.get(f.exteriorCodigo) || 0) + (Number(f.exteriorCantidad) || 1) * rep);
+    }
+    const totalUnidades = Array.from(totalesPorCodigo.values()).reduce((a, b) => a + b, 0);
+
+    rows.push({});
+    rows.push({ Nivel: `Total de equipos de la cotización: ${totalUnidades} unidades` });
+    Array.from(totalesPorCodigo.entries()).sort((a, b) => a[0].localeCompare(b[0])).forEach(([codigo, cant]) => {
+      rows.push({ Nivel: codigo, Ubicación: `× ${cant}` });
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 20 }, { wch: 9 }, { wch: 9 }, { wch: 22 }, { wch: 28 }, { wch: 45 }];
+    XLSX.utils.book_append_sheet(wb, ws, (armado.categoria || "Armado").slice(0, 31));
+    const safe = (s) => (s || "").toString().trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
+    XLSX.writeFile(wb, `Armado_combinaciones_${safe(armado.cliente) || "cliente"}_${safe(armado.obra) || "obra"}_${safe(armado.categoria) || armado.fecha || ""}.xlsx`);
+  };
+
   const handleDescargarFichas = async (cotizacion) => {
     setDescargandoId(cotizacion.id + ":fichas");
     setPdfError("");
@@ -3429,6 +3476,9 @@ export default function App() {
             onNew={() => { setArmadoEditando(null); setDrawer("armado-combinacion"); }}
             onDelete={deleteArmadoCombinacion}
             onEditar={(a) => { setArmadoEditando(a); setDrawer("armado-combinacion"); }}
+            onDescargarPdf={handleDescargarArmadoPdf}
+            onDescargarExcel={handleDescargarArmadoExcel}
+            descargandoId={descargandoId}
           />
         )}
 
@@ -9886,7 +9936,7 @@ function agruparArmados(armados) {
   return clientes;
 }
 
-function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, onDelete, onEditar }) {
+function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, onDelete, onEditar, onDescargarPdf, onDescargarExcel, descargandoId }) {
   const grupos = useMemo(() => agruparArmados(armados), [armados]);
   const forzarExpandido = query.trim().length > 0;
   return (
@@ -9909,7 +9959,11 @@ function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, on
       ) : (
         <div className="space-y-3">
           {grupos.map((g) => (
-            <ClienteGrupoArmados key={g.cliente} grupo={g} productos={productos} onDelete={onDelete} onEditar={onEditar} forzarExpandido={forzarExpandido} />
+            <ClienteGrupoArmados
+              key={g.cliente} grupo={g} productos={productos} onDelete={onDelete} onEditar={onEditar}
+              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} descargandoId={descargandoId}
+              forzarExpandido={forzarExpandido}
+            />
           ))}
         </div>
       )}
@@ -9917,7 +9971,7 @@ function ArmadoCombinacionesView({ armados, productos, query, onQuery, onNew, on
   );
 }
 
-function ClienteGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpandido }) {
+function ClienteGrupoArmados({ grupo, productos, onDelete, onEditar, onDescargarPdf, onDescargarExcel, descargandoId, forzarExpandido }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const nObras = grupo.obras.length;
@@ -9934,7 +9988,11 @@ function ClienteGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpan
       {abierto && (
         <div className="px-3.5 pb-3.5 space-y-3">
           {grupo.obras.map((o) => (
-            <ObraGrupoArmados key={o.obra} grupo={o} productos={productos} onDelete={onDelete} onEditar={onEditar} forzarExpandido={forzarExpandido} />
+            <ObraGrupoArmados
+              key={o.obra} grupo={o} productos={productos} onDelete={onDelete} onEditar={onEditar}
+              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} descargandoId={descargandoId}
+              forzarExpandido={forzarExpandido}
+            />
           ))}
         </div>
       )}
@@ -9942,7 +10000,7 @@ function ClienteGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpan
   );
 }
 
-function ObraGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpandido }) {
+function ObraGrupoArmados({ grupo, productos, onDelete, onEditar, onDescargarPdf, onDescargarExcel, descargandoId, forzarExpandido }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const n = grupo.armados.length;
@@ -9958,7 +10016,10 @@ function ObraGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpandid
       {abierto && (
         <div className="px-3 pb-3 space-y-3">
           {grupo.armados.map((a) => (
-            <ArmadoCard key={a.id} a={a} onDelete={onDelete} onEditar={onEditar} />
+            <ArmadoCard
+              key={a.id} a={a} onDelete={onDelete} onEditar={onEditar}
+              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} descargandoId={descargandoId}
+            />
           ))}
         </div>
       )}
@@ -9970,7 +10031,7 @@ function ObraGrupoArmados({ grupo, productos, onDelete, onEditar, forzarExpandid
 // no). El equipo AEON de esa línea se cuenta siempre; el exterior compartido de un grupo se
 // carga UNA sola vez (en cualquiera de las líneas de ese grupo) para no contarlo de más cuando
 // varias líneas comparten el mismo exterior — por eso el total no es una simple suma ingenua.
-function ArmadoCard({ a, onDelete, onEditar }) {
+function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, descargandoId }) {
   const filas = a.filas || [];
   const totalesPorCodigo = useMemo(() => {
     const map = new Map();
@@ -9994,6 +10055,12 @@ function ArmadoCard({ a, onDelete, onEditar }) {
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <SecondaryButton onClick={() => onDescargarExcel(a)}>
+            <Download size={13} /> Excel
+          </SecondaryButton>
+          <SecondaryButton onClick={() => onDescargarPdf(a)} disabled={descargandoId === a.id + ":pdf"}>
+            <Download size={13} /> {descargandoId === a.id + ":pdf" ? "Generando..." : "PDF"}
+          </SecondaryButton>
           <button onClick={() => onEditar(a)} className="p-1.5 rounded hover:bg-gray-100" title="Editar"><Pencil size={14} style={{ color: MUTED }} /></button>
           <button onClick={() => onDelete(a.id)} className="p-1.5 rounded hover:bg-gray-100" title="Eliminar"><Trash2 size={14} style={{ color: MUTED }} /></button>
         </div>

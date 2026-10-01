@@ -1644,6 +1644,152 @@ export async function downloadReporteFisicoPdf(filas, fecha, titulo) {
   downloadBlob(bytes, nombreArchivoReporteFisico(fecha), "application/pdf");
 }
 
+// ---------- Armado de combinaciones ----------
+// Apaisado (no vertical) porque son 9 columnas — una por cada línea del pedido del cliente, en
+// su mismo orden, para poder imprimir y comparar celda por celda contra el Excel original.
+const AC_PAGE_W = 841.89;
+const AC_PAGE_H = 595.28;
+const AC_MARGIN = 30;
+const AC_CONTENT_W = AC_PAGE_W - AC_MARGIN * 2;
+
+export async function generateArmadoCombinacionPdf(armado) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  const cols = [
+    { key: "nivel", label: "Nivel", w: 50 },
+    { key: "ubicacion", label: "Ubicación", w: 80 },
+    { key: "capacidad", label: "Capacidad", w: 48 },
+    { key: "tipoOriginal", label: "Tipo (cliente)", w: 90 },
+    { key: "cantidad", label: "Cant.", w: 30 },
+    { key: "repeticiones", label: "Rep.", w: 30 },
+    { key: "equipo", label: "Equipo AEON", w: 115 },
+    { key: "grupo", label: "Grupo / exterior compartido", w: 135 },
+    { key: "notas", label: "Notas", w: 0 },
+  ];
+  const fixedW = cols.slice(0, -1).reduce((acc, c) => acc + c.w, 0);
+  cols[cols.length - 1].w = AC_CONTENT_W - fixedW;
+
+  let page = pdf.addPage([AC_PAGE_W, AC_PAGE_H]);
+  let y = AC_PAGE_H - AC_MARGIN;
+
+  function newPage() { page = pdf.addPage([AC_PAGE_W, AC_PAGE_H]); y = AC_PAGE_H - AC_MARGIN; }
+  function ensureSpace(h) { if (y - h < AC_MARGIN) newPage(); }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 7, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+
+  if (logoImg) {
+    const w = 75;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: AC_MARGIN, y: y - h, width: w, height: h });
+  }
+  text(COMPANY.razonSocial, AC_MARGIN + 85, y - 10, { bold: true, size: 9 });
+  text(`Cliente: ${armado.cliente || "—"}`, AC_MARGIN + 85, y - 22, { size: 8 });
+  text(`Obra: ${armado.obra || "—"}`, AC_MARGIN + 85, y - 33, { size: 8 });
+  const fechaStr = `Fecha: ${fmtFecha(armado.fecha)}`;
+  text(fechaStr, AC_PAGE_W - AC_MARGIN - bold.widthOfTextAtSize(fechaStr, 8), y - 10, { size: 8 });
+  y -= 48;
+
+  rect(AC_MARGIN, y - 18, AC_CONTENT_W, 18, { fill: ACCENT });
+  const titulo = `ARMADO DE COMBINACIONES${armado.categoria ? " — " + armado.categoria : ""}`;
+  const titleW = bold.widthOfTextAtSize(titulo, 10);
+  text(titulo, AC_MARGIN + AC_CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
+  y -= 18;
+  y -= 8;
+
+  function drawHeader() {
+    rect(AC_MARGIN, y - 16, AC_CONTENT_W, 16, { fill: ACCENT_LIGHT });
+    let cx = AC_MARGIN;
+    cols.forEach((c) => {
+      const lw = bold.widthOfTextAtSize(c.label, 6.5);
+      text(c.label, cx + c.w / 2 - lw / 2, y - 11, { bold: true, size: 6.5, color: ACCENT });
+      cx += c.w;
+    });
+    y -= 16;
+  }
+  drawHeader();
+
+  const filas = armado.filas || [];
+  for (const f of filas) {
+    const values = {
+      nivel: f.nivel || "",
+      ubicacion: f.ubicacion || "",
+      capacidad: f.capacidad || "",
+      tipoOriginal: f.tipoOriginal || "",
+      cantidad: String(f.cantidad ?? ""),
+      repeticiones: `×${f.repeticiones ?? ""}`,
+      equipo: `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
+      grupo: f.grupo ? `${f.grupo}${f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}` : "— sin combinar",
+      notas: f.notas || "",
+    };
+    const wrapped = {};
+    let maxLines = 1;
+    for (const c of cols) {
+      const lines = wrapText(font, values[c.key], 6.5, c.w - 6);
+      wrapped[c.key] = lines;
+      maxLines = Math.max(maxLines, lines.length);
+    }
+    const rowH = Math.max(maxLines * 8 + 4, 16);
+    ensureSpace(rowH + 20);
+    if (y === AC_PAGE_H - AC_MARGIN) drawHeader();
+
+    let cx = AC_MARGIN;
+    for (const c of cols) {
+      rect(cx, y - rowH, c.w, rowH, { border: BORDER });
+      const lines = wrapped[c.key];
+      const blockH = lines.length * 8;
+      const top = y - (rowH - blockH) / 2 - 6;
+      lines.forEach((line, i) => text(line, cx + 3, top - i * 8, { size: 6.5 }));
+      cx += c.w;
+    }
+    y -= rowH;
+  }
+
+  // Total de equipos de la cotización — mismo cálculo que en la pantalla: el exterior de un
+  // grupo solo se cuenta en la línea que lo trae cargado, para no duplicarlo.
+  const totalesPorCodigo = new Map();
+  for (const f of filas) {
+    const rep = Number(f.repeticiones) || 0;
+    if (f.equipoCodigo) totalesPorCodigo.set(f.equipoCodigo, (totalesPorCodigo.get(f.equipoCodigo) || 0) + (Number(f.cantidad) || 0) * rep);
+    if (f.exteriorCodigo) totalesPorCodigo.set(f.exteriorCodigo, (totalesPorCodigo.get(f.exteriorCodigo) || 0) + (Number(f.exteriorCantidad) || 1) * rep);
+  }
+  const items = Array.from(totalesPorCodigo.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const totalUnidades = items.reduce((acc, [, cant]) => acc + cant, 0);
+
+  ensureSpace(50);
+  y -= 6;
+  text(`Total de equipos de la cotización: ${totalUnidades} unidades`, AC_MARGIN, y, { bold: true, size: 9 });
+  y -= 14;
+  let cx = AC_MARGIN;
+  const chipW = 135;
+  for (const [codigo, cant] of items) {
+    if (cx + chipW > AC_MARGIN + AC_CONTENT_W) { cx = AC_MARGIN; y -= 11; ensureSpace(20); }
+    text(`${codigo} × ${cant}`, cx, y, { size: 7 });
+    cx += chipW;
+  }
+
+  return pdf.save();
+}
+
+export function nombreArchivoArmadoCombinacion(armado) {
+  const safe = (s) => (s || "").toString().trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
+  return `Armado_combinaciones_${safe(armado.cliente) || "cliente"}_${safe(armado.obra) || "obra"}_${safe(armado.categoria) || armado.fecha || ""}.pdf`;
+}
+
+export async function downloadArmadoCombinacionPdf(armado) {
+  const bytes = await generateArmadoCombinacionPdf(armado);
+  downloadBlob(bytes, nombreArchivoArmadoCombinacion(armado), "application/pdf");
+}
+
 // ---------- Reporte para Joel: solo plata, sin modelos ni cantidades ----------
 // `filasFisicoPorCategoria`: [{ categoria, valorTotal }] — físico en Paraguay agrupado por categoría.
 // `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.

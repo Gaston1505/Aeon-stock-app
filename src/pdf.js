@@ -1662,14 +1662,15 @@ export async function generateArmadoCombinacionPdf(armado) {
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
 
   const cols = [
-    { key: "nivel", label: "Nivel", w: 50 },
-    { key: "ubicacion", label: "Ubicación", w: 80 },
-    { key: "capacidad", label: "Capacidad", w: 48 },
-    { key: "tipoOriginal", label: "Tipo (cliente)", w: 90 },
-    { key: "cantidad", label: "Cant.", w: 30 },
-    { key: "repeticiones", label: "Rep.", w: 30 },
-    { key: "equipo", label: "Equipo AEON", w: 115 },
-    { key: "grupo", label: "Grupo / exterior compartido", w: 135 },
+    { key: "nivel", label: "Nivel", w: 48 },
+    { key: "ubicacion", label: "Ubicación", w: 75 },
+    { key: "capacidad", label: "Capacidad", w: 45 },
+    { key: "tipoOriginal", label: "Tipo (cliente)", w: 85 },
+    { key: "cantidad", label: "Cant.", w: 26 },
+    { key: "repeticiones", label: "Rep.", w: 26 },
+    { key: "cantidadTotal", label: "Cant. total", w: 42 },
+    { key: "equipo", label: "Equipo AEON", w: 105 },
+    { key: "grupo", label: "Grupo / exterior compartido", w: 120 },
     { key: "notas", label: "Notas", w: 0 },
   ];
   const fixedW = cols.slice(0, -1).reduce((acc, c) => acc + c.w, 0);
@@ -1727,6 +1728,7 @@ export async function generateArmadoCombinacionPdf(armado) {
       tipoOriginal: f.tipoOriginal || "",
       cantidad: String(f.cantidad ?? ""),
       repeticiones: `×${f.repeticiones ?? ""}`,
+      cantidadTotal: String((Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)),
       equipo: `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       grupo: f.grupo ? `${f.grupo}${f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}` : "— sin combinar",
       notas: f.notas || "",

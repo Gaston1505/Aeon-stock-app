@@ -2232,6 +2232,7 @@ export default function App() {
     const rows = filas.map((f) => ({
       Nivel: f.nivel || "", Ubicación: f.ubicacion || "", Capacidad: f.capacidad || "",
       "Tipo (cliente)": f.tipoOriginal || "", Cantidad: f.cantidad ?? "", Repeticiones: f.repeticiones ?? "",
+      "Cantidad total": (Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0),
       "Equipo AEON": `${f.cantidad ?? ""}× ${f.equipoCodigo || ""}`,
       "Grupo / exterior compartido": f.grupo ? `${f.grupo}${f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}` : "— sin combinar",
       Notas: f.notas || "",
@@ -2253,7 +2254,7 @@ export default function App() {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 20 }, { wch: 9 }, { wch: 9 }, { wch: 22 }, { wch: 28 }, { wch: 45 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 20 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 22 }, { wch: 28 }, { wch: 45 }];
     XLSX.utils.book_append_sheet(wb, ws, (armado.categoria || "Armado").slice(0, 31));
     const safe = (s) => (s || "").toString().trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
     XLSX.writeFile(wb, `Armado_combinaciones_${safe(armado.cliente) || "cliente"}_${safe(armado.obra) || "obra"}_${safe(armado.categoria) || armado.fecha || ""}.xlsx`);
@@ -10076,6 +10077,7 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
               <th className="text-left px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Tipo (cliente)</th>
               <th className="text-center px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Cant.</th>
               <th className="text-center px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Rep.</th>
+              <th className="text-center px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Cant. total</th>
               <th className="text-left px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Equipo AEON</th>
               <th className="text-left px-2 py-1.5 font-medium whitespace-nowrap" style={{ color: MUTED }}>Grupo / exterior compartido</th>
               <th className="text-left px-2 py-1.5 font-medium" style={{ color: MUTED }}>Notas</th>
@@ -10090,6 +10092,7 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.tipoOriginal}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>{f.cantidad}</td>
                 <td className="px-2 py-1.5 text-center whitespace-nowrap" style={{ color: INK }}>×{f.repeticiones}</td>
+                <td className="px-2 py-1.5 text-center whitespace-nowrap font-semibold" style={{ color: INK }}>{(Number(f.cantidad) || 0) * (Number(f.repeticiones) || 0)}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: INK }}>{f.cantidad}× {f.equipoCodigo}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: f.grupo ? INK : MUTED }}>
                   {f.grupo ? f.grupo : "— sin combinar"}{f.exteriorCodigo ? ` (+ 1× ${f.exteriorCodigo})` : ""}
@@ -10132,6 +10135,9 @@ function FilaArmadoEditor({ fila, idx, productos, productosPorGrupo, onChange, o
         <Field label="Cantidad"><TextInput type="number" value={fila.cantidad} onChange={(e) => onChange("cantidad", e.target.value)} /></Field>
         <Field label="Repeticiones"><TextInput type="number" value={fila.repeticiones} onChange={(e) => onChange("repeticiones", e.target.value)} /></Field>
       </div>
+      <p className="text-xs -mt-2 mb-3" style={{ color: MUTED }}>
+        Cantidad total (como en el Excel del cliente): <b style={{ color: INK }}>{(Number(fila.cantidad) || 0) * (Number(fila.repeticiones) || 0)}</b>
+      </p>
 
       <Field label="Equipo AEON asignado a esta línea">
         <SelectorProducto

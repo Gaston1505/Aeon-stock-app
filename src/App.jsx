@@ -1033,6 +1033,24 @@ function compressImage(file, maxDim = 1280, quality = 0.72) {
     reader.readAsDataURL(file);
   });
 }
+// Dos entradas para la misma foto: "Sacar foto" abre la cámara directo (capture), "Galería / archivos"
+// deja elegir de la galería o de los archivos del dispositivo. Un solo <input capture> obligaba a usar la cámara.
+function FotoPicker({ onChange }) {
+  const camRef = useRef(null);
+  const galRef = useRef(null);
+  return (
+    <div className="flex gap-2 flex-wrap">
+      <input ref={camRef} type="file" accept="image/*" capture="environment" onChange={onChange} className="hidden" />
+      <input ref={galRef} type="file" accept="image/*" onChange={onChange} className="hidden" />
+      <button type="button" onClick={() => camRef.current?.click()} className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1" style={{ borderColor: BORDER, color: ACCENT }}>
+        <Camera size={13} /> Sacar foto
+      </button>
+      <button type="button" onClick={() => galRef.current?.click()} className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1" style={{ borderColor: BORDER, color: ACCENT }}>
+        <Upload size={13} /> Galería / archivos
+      </button>
+    </div>
+  );
+}
 // Subscribes to a Firestore collection in real time — every client sharing
 // the same Firebase project sees updates from everyone else immediately.
 function subscribeCollection(name, onData) {
@@ -5073,6 +5091,25 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
 function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onPago }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
   const totalMonto = pendientes.reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
+  const [abiertos, setAbiertos] = useState(() => new Set());
+  const toggle = (key) => setAbiertos((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  // Una ventana por cliente + obra (sin distinguir mayúsculas), con el detalle de cada producto adentro.
+  const grupos = useMemo(() => {
+    const map = new Map();
+    for (const c of comprometidas) {
+      const key = `${(c.razonSocial || "").trim().toLowerCase()}|${(c.obra || "").trim().toLowerCase()}`;
+      if (!map.has(key)) map.set(key, { key, razonSocial: (c.razonSocial || "").trim(), obra: (c.obra || "").trim(), items: [], monto: 0 });
+      const g = map.get(key);
+      g.items.push(c);
+      g.monto += Number(c.monto) || 0;
+    }
+    return Array.from(map.values());
+  }, [comprometidas]);
 
   return (
     <div>
@@ -5099,67 +5136,97 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
       {comprometidas.length === 0 ? (
         <EmptyState icon={Lock} title="No hay ventas comprometidas" subtitle="Cuando reservás mercadería vendida antes del retiro, va a aparecer acá." />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {comprometidas.map((c) => {
-            const retirado = Number(c.cantidadRetirada) || 0;
-            const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
-            const badge = COMPROMETIDA_BADGE[c.estado] || COMPROMETIDA_BADGE.Comprometida;
-            const pagado = (c.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
-            const saldoPago = Math.max(0, (Number(c.monto) || 0) - pagado);
+        <div className="space-y-3">
+          {grupos.map((g) => {
+            const abierto = !!query || abiertos.has(g.key);
+            const pendientesG = g.items.filter((c) => c.estado === "Comprometida").length;
+            const pagadoG = g.items.reduce((acc, c) => acc + (c.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
+            const saldoPagoG = Math.max(0, g.monto - pagadoG);
             return (
-              <div key={c.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-                <div className="flex items-start justify-between mb-1">
-                  <div>
-                    <p className="text-sm font-medium" style={{ color: INK }}>{c.razonSocial}</p>
-                    <p className="text-xs" style={{ color: MUTED }}>{c.obra}</p>
-                    {c.cotizacionId && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-block mt-1" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-                        Desde cotización
-                      </span>
-                    )}
+              <div key={g.key} className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <button onClick={() => toggle(g.key)} className="w-full flex items-center justify-between gap-3 p-4 text-left">
+                  <div className="min-w-0">
+                    <p className="text-base font-bold" style={{ color: INK }}>{g.razonSocial || "Sin cliente"}</p>
+                    <p className="text-sm" style={{ color: MUTED }}>{g.obra || "Sin obra"}</p>
+                    <p className="text-xs mt-1" style={{ color: MUTED }}>
+                      {g.items.length} producto{g.items.length !== 1 ? "s" : ""}
+                      {pendientesG > 0 ? ` · ${pendientesG} con saldo por retirar` : " · todo retirado"}
+                      {` · U$S ${g.monto.toLocaleString()}`}
+                      {saldoPagoG > 0 ? ` · saldo de pago U$S ${saldoPagoG.toLocaleString()}` : " · pagado por completo"}
+                    </p>
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded" style={{ color: badge.color, backgroundColor: badge.bg }}>
-                    {c.estado}
-                  </span>
-                </div>
-                <p className="text-sm mt-2" style={{ color: INK }}>
-                  {c.modelo} · {retirado} de {c.cantidad} retirado{retirado > 0 && c.estado !== "Retirada" ? ` · saldo ${saldo}` : ""}
-                </p>
-                <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-                  Monto: U$S {Number(c.monto || 0).toLocaleString()} · Entrega estimada: {fmtDate(c.fechaEntrega)}
-                </p>
-                <p className="text-xs mt-0.5" style={{ color: saldoPago > 0 ? "#B45309" : "#15803D" }}>
-                  Pagado: U$S {pagado.toLocaleString()} de U$S {Number(c.monto || 0).toLocaleString()}
-                  {saldoPago > 0 ? ` · saldo U$S ${saldoPago.toLocaleString()}` : " · pagado por completo"}
-                </p>
-                <div className="mt-2">
-                  <button onClick={() => onPago(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
-                    Pagos
-                  </button>
-                </div>
-                {c.estado === "Comprometida" && (
-                  <div className="flex gap-2 mt-3">
-                    <button onClick={() => onRetirar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
-                      Registrar retiro
-                    </button>
-                    {retirado === 0 && (
-                      <button onClick={() => onCancelar(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
-                        Cancelar
-                      </button>
-                    )}
-                  </div>
-                )}
-                {c.estado === "Completada" && (
-                  <div className="mt-3">
-                    <p className="text-xs mb-2" style={{ color: "#0D9488" }}>Todo lo comprometido ya se retiró.</p>
-                    <button onClick={() => onCerrar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
-                      Cerrar
-                    </button>
+                  <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                </button>
+                {abierto && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-4 pb-4">
+                    {g.items.map((c) => (
+                      <ComprometidaCard key={c.id} c={c} onPago={onPago} onRetirar={onRetirar} onCancelar={onCancelar} onCerrar={onCerrar} />
+                    ))}
                   </div>
                 )}
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar }) {
+  const retirado = Number(c.cantidadRetirada) || 0;
+  const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
+  const badge = COMPROMETIDA_BADGE[c.estado] || COMPROMETIDA_BADGE.Comprometida;
+  const pagado = (c.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+  const saldoPago = Math.max(0, (Number(c.monto) || 0) - pagado);
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between mb-1">
+        <div>
+          <p className="text-sm font-medium" style={{ color: INK }}>{c.modelo}</p>
+          {c.cotizacionId && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-block mt-1" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+              Desde cotización
+            </span>
+          )}
+        </div>
+        <span className="text-xs px-2 py-0.5 rounded" style={{ color: badge.color, backgroundColor: badge.bg }}>
+          {c.estado}
+        </span>
+      </div>
+      <p className="text-sm mt-2" style={{ color: INK }}>
+        {retirado} de {c.cantidad} retirado{retirado > 0 && c.estado !== "Retirada" ? ` · saldo ${saldo}` : ""}
+      </p>
+      <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+        Monto: U$S {Number(c.monto || 0).toLocaleString()} · Entrega estimada: {fmtDate(c.fechaEntrega)}
+      </p>
+      <p className="text-xs mt-0.5" style={{ color: saldoPago > 0 ? "#B45309" : "#15803D" }}>
+        Pagado: U$S {pagado.toLocaleString()} de U$S {Number(c.monto || 0).toLocaleString()}
+        {saldoPago > 0 ? ` · saldo U$S ${saldoPago.toLocaleString()}` : " · pagado por completo"}
+      </p>
+      <div className="mt-2">
+        <button onClick={() => onPago(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
+          Pagos
+        </button>
+      </div>
+      {c.estado === "Comprometida" && (
+        <div className="flex gap-2 mt-3">
+          <button onClick={() => onRetirar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+            Registrar retiro
+          </button>
+          {retirado === 0 && (
+            <button onClick={() => onCancelar(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
+              Cancelar
+            </button>
+          )}
+        </div>
+      )}
+      {c.estado === "Completada" && (
+        <div className="mt-3">
+          <p className="text-xs mb-2" style={{ color: "#0D9488" }}>Todo lo comprometido ya se retiró.</p>
+          <button onClick={() => onCerrar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+            Cerrar
+          </button>
         </div>
       )}
     </div>
@@ -5931,7 +5998,7 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
       <Field label="Firma — C.I. N°"><TextInput value={firmaCedula} onChange={(e) => setFirmaCedula(e.target.value)} /></Field>
 
       <Field label="Foto del remito en papel">
-        <input type="file" accept="image/*" capture="environment" onChange={handleFoto} className="text-xs" />
+        <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
       {fotoRemito && (
@@ -6411,7 +6478,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
       <Field label="Firma — C.I. N°"><TextInput value={firmaCedula} onChange={(e) => setFirmaCedula(e.target.value)} /></Field>
 
       <Field label="Foto del remito en papel">
-        <input type="file" accept="image/*" capture="environment" onChange={handleFoto} className="text-xs" />
+        <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
       {fotoRemito && (
@@ -7195,7 +7262,7 @@ function RetiroParcialForm({ comprometida, onSave }) {
       <Field label="Firma — C.I. N°"><TextInput value={firmaCedula} onChange={(e) => setFirmaCedula(e.target.value)} /></Field>
 
       <Field label="Foto del remito en papel">
-        <input type="file" accept="image/*" capture="environment" onChange={handleFoto} className="text-xs" />
+        <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
       {fotoRemito && (
@@ -7486,7 +7553,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
       </p>
 
       <Field label="Foto de referencia">
-        <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />
+        <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
       {foto && (
@@ -11350,7 +11417,7 @@ function PrecioMayoristaForm({ onSave }) {
       </Field>
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
       <Field label="Foto del producto (de la cotización del competidor)">
-        <input type="file" accept="image/*" onChange={handleFoto} className="text-xs" />
+        <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
       {foto && (

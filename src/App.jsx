@@ -934,8 +934,27 @@ function mismaObraCotizacion(a, b) {
   return norm(a.cliente) === norm(b.cliente) && norm(a.obra) === norm(b.obra);
 }
 
-// Entre los hilos de una obra, el que cuenta: el que el usuario marcó como principal (si sigue en
-// juego); si no hay marca, la cotización más reciente. Las "Sin efecto" nunca cuentan.
+// Rubro de una cotización: Categoría se elige con un click entre estos cuatro. Dentro de una obra,
+// cada rubro cuenta aparte (aires + cocina de la misma obra suman los dos); solo compiten entre sí
+// las cotizaciones del mismo rubro. Las cotizaciones viejas, de cuando Categoría era texto libre,
+// se interpretan por el texto mientras no se les haya asignado uno.
+const RUBROS_COTIZACION = ["Electrodomésticos", "Aire Acondicionado", "Cocina", "Termocalefón"];
+function rubroDeCotizacion(c) {
+  if (RUBROS_COTIZACION.includes(c.categoria)) return c.categoria;
+  const t = `${c.categoria || ""} ${c.nombre || ""}`.toLowerCase();
+  if (/electrodom/.test(t)) return "Electrodomésticos";
+  if (/\baa\b|aire|acondicionad/.test(t)) return "Aire Acondicionado";
+  if (/cocina|anafe|horno|campana/.test(t)) return "Cocina";
+  if (/termo|calef/.test(t)) return "Termocalefón";
+  return "Sin rubro";
+}
+function mismaObraYRubroCotizacion(a, b) {
+  return mismaObraCotizacion(a, b) && rubroDeCotizacion(a) === rubroDeCotizacion(b);
+}
+
+// Entre los hilos de un mismo rubro de una obra, el que cuenta: el que el usuario marcó como
+// principal (si sigue en juego); si no hay marca, la cotización más reciente. Las "Sin efecto"
+// nunca cuentan.
 function elegirHiloPrincipal(hilos) {
   const enJuego = hilos.filter((h) => h.activa.estado !== "Sin efecto");
   if (enJuego.length === 0) return null;
@@ -965,9 +984,12 @@ function agruparCotizaciones(cotizaciones) {
       // hiloId va aparte de categoria a propósito: dos hilos de la misma obra pueden compartir
       // categoría (ver el caso de "cotizaciones separadas, misma obra" en la nota de arriba) y
       // hacía falta algo único para usar de key en el render — la categoría sola colisionaba.
-      for (const [hiloKey, versiones] of porHilo) hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, versiones, activa: versiones[0] });
-      hilos.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
-      obras.push({ obra, hilos, principal: elegirHiloPrincipal(hilos) });
+      for (const [hiloKey, versiones] of porHilo) hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, rubro: rubroDeCotizacion(versiones[0]), versiones, activa: versiones[0] });
+      // Mismo rubro juntos (para que se vea cuáles compiten entre sí), y adentro lo más nuevo primero.
+      hilos.sort((a, b) => (RUBROS_COTIZACION.indexOf(a.rubro) - RUBROS_COTIZACION.indexOf(b.rubro)) || ((b.activa.createdAt || 0) - (a.activa.createdAt || 0)));
+      const rubros = [...new Set(hilos.map((h) => h.rubro))];
+      const principales = rubros.map((r) => elegirHiloPrincipal(hilos.filter((h) => h.rubro === r))).filter(Boolean);
+      obras.push({ obra, hilos, principales });
     }
     obras.sort((a, b) => {
       const masReciente = (o) => Math.max(...o.hilos.map((h) => h.activa.createdAt || 0));
@@ -993,12 +1015,12 @@ const ESTADO_COTIZACION_BADGE = {
   Perdida: { color: "#B91C1C", bg: "#FBEAEA" },
   "Sin efecto": { color: "#686D73", bg: "#F2F3F4" },
 };
-// Una cotización por obra: la principal (ver elegirHiloPrincipal), en su versión activa.
+// Una cotización por obra y por rubro: la principal (ver elegirHiloPrincipal), en su versión activa.
 function cotizacionesQueCuentan(clientes) {
-  return clientes.flatMap((g) => g.obras.map((o) => o.principal?.activa).filter(Boolean));
+  return clientes.flatMap((g) => g.obras.flatMap((o) => o.principales.map((h) => h.activa)));
 }
-// Resume Total cotizado / Ganadas / Perdidas / Pendientes contando una sola cotización por obra
-// (la principal), dentro de la lista de grupos de cliente que se le pase.
+// Resume Total cotizado / Ganadas / Perdidas / Pendientes contando una sola cotización por obra y
+// rubro (la principal), dentro de la lista de grupos de cliente que se le pase.
 function resumirCotizaciones(clientes) {
   const activas = cotizacionesQueCuentan(clientes);
   const resumen = { total: 0, Ganada: { n: 0, total: 0 }, Perdida: { n: 0, total: 0 }, Pendiente: { n: 0, total: 0 } };
@@ -2229,10 +2251,11 @@ export default function App() {
   const quitarFichaTecnica = (producto) =>
     updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
 
-  // Una sola cotización "principal" por obra: al marcar una, se le saca la marca a las demás de esa obra.
+  // Una sola cotización "principal" por obra y rubro: al marcar una, se le saca la marca a las demás
+  // de esa obra y ese mismo rubro (las de otros rubros siguen contando aparte).
   const quitarPrincipalDeObra = (ref, exceptoId) => {
     cotizaciones
-      .filter((x) => x.id !== exceptoId && x.principal && mismaObraCotizacion(x, ref))
+      .filter((x) => x.id !== exceptoId && x.principal && mismaObraYRubroCotizacion(x, ref))
       .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { principal: false }));
   };
   const addCotizacion = (data) => {
@@ -2251,7 +2274,7 @@ export default function App() {
       // Cambiar el estado a mano nunca es un "Sin efecto" automático.
       patch = { ...patch, sinEfectoAuto: false };
       const hilo = hiloKeyDeCotizacion(c);
-      const otras = cotizaciones.filter((x) => x.id !== id && mismaObraCotizacion(x, c) && hiloKeyDeCotizacion(x) !== hilo);
+      const otras = cotizaciones.filter((x) => x.id !== id && mismaObraYRubroCotizacion(x, c) && hiloKeyDeCotizacion(x) !== hilo);
       if (patch.estado === "Ganada" || patch.estado === "Perdida") {
         // Se definió la obra: esta pasa a ser la principal y el resto de lo que seguía en juego
         // queda "Sin efecto" — no como Perdida, para no ensuciar el historial de perdidas.
@@ -2936,12 +2959,12 @@ export default function App() {
 
   const filteredMovimientos = useMemo(() => {
     const q = query.toLowerCase();
-    return movimientos.filter((m) => !q || [m.codigo, m.cliente, m.motivo, m.categoriaLabel, m.modelo, m.responsable].some((v) => (v || "").toLowerCase().includes(q)));
+    return movimientos.filter((m) => !q || [m.codigo, m.cliente, m.obra, m.remito, m.motivo, m.categoriaLabel, m.modelo, m.responsable].some((v) => (v || "").toLowerCase().includes(q)));
   }, [movimientos, query]);
 
   const filteredEntradas = useMemo(() => {
     const q = query.toLowerCase();
-    return entradas.filter((e) => !q || [e.codigo, e.origen, e.tipo].some((v) => (v || "").toLowerCase().includes(q)));
+    return entradas.filter((e) => !q || [e.codigo, e.origen, e.tipo, e.remito].some((v) => (v || "").toLowerCase().includes(q)));
   }, [entradas, query]);
 
   const filteredVentas = useMemo(() => {
@@ -3446,31 +3469,9 @@ export default function App() {
               solicitudes={solicitudes} tipo="salida" esAdmin={esAdmin} uid={user?.uid}
               onAprobar={aprobarSolicitud} onRechazar={(id) => rechazarSolicitud(id)}
             />
-            <Table
-              columns={[
-                { key: "fecha", label: "Fecha" }, { key: "categoriaLabel", label: "Categoría de origen" },
-                { key: "codigo", label: "Código" }, { key: "cantidad", label: "Cant." },
-                { key: "motivo", label: "Motivo" }, { key: "cliente", label: "Cliente" },
-                { key: "remito", label: "N° remito" }, { key: "responsable", label: "Responsable" },
-              ]}
-              rows={filteredMovimientos}
-              onDelete={deleteMovimiento}
-              renderCell={(key, row) => {
-                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
-                if (key === "fecha") return fmtDate(row.fecha);
-                if (key === "motivo") return row.motivo || "—";
-                if (key === "remito") return (
-                  <div className="flex items-center gap-1.5">
-                    <span>{row.remito || "—"}</span>
-                    {row.fotoRemito && (
-                      <button onClick={() => setFotoView(row.fotoRemito)} title="Ver foto del remito">
-                        <Camera size={14} style={{ color: ACCENT }} />
-                      </button>
-                    )}
-                  </div>
-                );
-                return row[key] || "—";
-              }}
+            <SalidasPorRemito
+              movimientos={filteredMovimientos} productos={productos} equipos={equipos}
+              forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
             />
           </Section>
         )}
@@ -3487,20 +3488,9 @@ export default function App() {
               solicitudes={solicitudes} tipo="entrada" esAdmin={esAdmin} uid={user?.uid}
               onAprobar={aprobarSolicitud} onRechazar={(id) => rechazarSolicitud(id)}
             />
-            <Table
-              columns={[
-                { key: "fecha", label: "Fecha" }, { key: "codigo", label: "Código" },
-                { key: "tipo", label: "Tipo de entrada" }, { key: "origen", label: "Origen" },
-                { key: "estadoResultante", label: "Estado resultante" }, { key: "responsable", label: "Responsable" },
-              ]}
-              rows={filteredEntradas}
-              onDelete={deleteEntrada}
-              renderCell={(key, row) => {
-                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
-                if (key === "fecha") return fmtDate(row.fecha);
-                if (key === "estadoResultante") return <StatusBadge estado={row.estadoResultante} />;
-                return row[key] || "—";
-              }}
+            <EntradasPorRemito
+              entradas={filteredEntradas} productos={productos} equipos={equipos}
+              forzarAbierto={query.trim().length > 0} onDelete={deleteEntrada}
             />
           </Section>
         )}
@@ -3942,6 +3932,181 @@ function ServiceCell({ venta, field, label, onUpdate, onGestionar }) {
           {contactado ? "Seguimiento" : "Gestionar"}
         </button>
       )}
+    </div>
+  );
+}
+
+// Nombre legible del producto (lo que es, no solo el código) — se arma con la categoría del
+// catálogo: "Split Pared Inverter 24.000 BTU", "Anafe Inducción 3 zonas", "Termocalefón 80 Lt.".
+function nombreProducto(p) {
+  if (!p) return "";
+  if (p.categoriaPrincipal === "Repuestos") return p.descripcion || "";
+  const esCodigo = (s) => /^AE-|codigos/i.test(s || "");
+  const capacidad = /capacidad/i.test(p.especLabel || "") ? (p.especValor || "").trim() : "";
+  const n3 = (p.subcategoria3 || "").trim();
+  const sub3 = /^\d+$/.test(n3) ? (p.subcategoria === "Anafe" ? `${n3} ${p.subcategoria2 === "Inducción" ? "zonas" : "quemadores"}` : n3) : n3;
+  const partes = [p.subcategoria, esCodigo(p.subcategoria2) ? "" : p.subcategoria2, sub3, capacidad].filter(Boolean);
+  if (p.subcategoria === "Accesorios" || partes.length === 0) return p.descripcion || p.nombre;
+  return partes.join(" ");
+}
+
+// Producto del catálogo para un código de equipo/movimiento: por nombre exacto, por el modelo del
+// equipo, o por el código de catálogo más largo con el que empieza (equipos con sufijo de unidad).
+function productoDeCodigo(codigo, equipos, productos) {
+  if (!codigo) return null;
+  const directo = productos.find((p) => p.nombre === codigo);
+  if (directo) return directo;
+  const eq = (equipos || []).find((e) => e.codigo === codigo);
+  const porModelo = eq?.modelo ? productos.find((p) => p.nombre === eq.modelo) : null;
+  if (porModelo) return porModelo;
+  let mejor = null;
+  for (const p of productos) {
+    if (codigo.startsWith(p.nombre) && (!mejor || p.nombre.length > mejor.nombre.length)) mejor = p;
+  }
+  return mejor;
+}
+
+function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, children }) {
+  return (
+    <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 p-4 text-left">
+        <div className="min-w-0">
+          <p className="text-base font-bold" style={{ color: INK }}>{titulo}</p>
+          {linea && <p className="text-sm" style={{ color: MUTED }}>{linea}</p>}
+          <p className="text-xs mt-1" style={{ color: MUTED }}>{resumen}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {foto && (
+            <span role="button" title="Ver foto del remito" onClick={(e) => { e.stopPropagation(); onVerFoto(foto); }}>
+              <Camera size={16} style={{ color: ACCENT }} />
+            </span>
+          )}
+          <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </div>
+      </button>
+      {abierto && <div className="px-4 pb-4">{children}</div>}
+    </div>
+  );
+}
+
+// Agrupa filas por remito (o por un criterio de respaldo cuando no hay número), en el orden en
+// que vienen (ya más nuevo primero). Cada grupo trae el total de unidades y el desglose por rubro.
+function agruparPorRemito(filas, claveRespaldo, cantidadDe, rubroDe) {
+  const map = new Map();
+  for (const f of filas) {
+    const remito = (f.remito || "").trim();
+    const key = remito ? `r:${remito.toLowerCase()}` : `s:${claveRespaldo(f)}`;
+    if (!map.has(key)) map.set(key, { key, remito, items: [], unidades: 0, rubros: new Map() });
+    const g = map.get(key);
+    g.items.push(f);
+    const cant = cantidadDe(f);
+    g.unidades += cant;
+    const rubro = rubroDe(f) || "Otros";
+    g.rubros.set(rubro, (g.rubros.get(rubro) || 0) + cant);
+  }
+  return Array.from(map.values());
+}
+
+function resumenRemito(g, unidadLabel) {
+  const rubros = Array.from(g.rubros.entries()).map(([r, n]) => `${r} ${n}`).join(" · ");
+  return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${unidadLabel}${g.unidades !== 1 ? "s" : ""}${rubros ? " · " + rubros : ""}`;
+}
+
+function SalidasPorRemito({ movimientos, productos, equipos, forzarAbierto, onDelete, onVerFoto }) {
+  const [abiertos, setAbiertos] = useState(() => new Set());
+  const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const productoDe = (m) => productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
+  const grupos = useMemo(
+    () => agruparPorRemito(
+      movimientos,
+      (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
+      (m) => Number(m.cantidad) || 1,
+      (m) => productoDe(m)?.categoriaPrincipal,
+    ),
+    [movimientos, productos, equipos]
+  );
+  if (grupos.length === 0) return <EmptyState icon={Package} title="Todavía no hay registros" subtitle="Usá el botón de arriba para cargar el primero." />;
+  return (
+    <div className="space-y-3">
+      {grupos.map((g) => {
+        const m0 = g.items[0];
+        const motivos = [...new Set(g.items.map((m) => m.motivo).filter(Boolean))].join(", ");
+        const destino = [m0.cliente || m0.empresaCliente, m0.obra].filter(Boolean).join(" — ");
+        const foto = g.items.find((m) => m.fotoRemito)?.fotoRemito;
+        return (
+          <RemitoGrupoCard
+            key={g.key}
+            titulo={g.remito ? `Remito N° ${g.remito}` : "Sin N° de remito"}
+            linea={[fmtDate(m0.fecha), destino, motivos].filter(Boolean).join(" · ")}
+            resumen={resumenRemito(g, "unidad")}
+            abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
+            foto={foto} onVerFoto={onVerFoto}
+          >
+            <Table
+              columns={[
+                { key: "codigo", label: "Código" }, { key: "producto", label: "Producto" },
+                { key: "cantidad", label: "Cant." }, { key: "categoriaLabel", label: "Categoría de origen" },
+                { key: "responsable", label: "Responsable" },
+              ]}
+              rows={g.items}
+              onDelete={onDelete}
+              renderCell={(key, row) => {
+                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
+                if (key === "producto") return nombreProducto(productoDe(row)) || "—";
+                if (key === "cantidad") return row.cantidad || 1;
+                return row[key] || "—";
+              }}
+            />
+          </RemitoGrupoCard>
+        );
+      })}
+    </div>
+  );
+}
+
+function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDelete }) {
+  const [abiertos, setAbiertos] = useState(() => new Set());
+  const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const productoDe = (e) => productoDeCodigo(e.codigo, equipos, productos);
+  const grupos = useMemo(
+    () => agruparPorRemito(
+      entradas,
+      (e) => `${e.fecha || ""}|${(e.tipo || "").toLowerCase()}|${(e.origen || "").toLowerCase()}`,
+      () => 1,
+      (e) => productoDe(e)?.categoriaPrincipal,
+    ),
+    [entradas, productos, equipos]
+  );
+  if (grupos.length === 0) return <EmptyState icon={Package} title="Todavía no hay registros" subtitle="Usá el botón de arriba para cargar el primero." />;
+  return (
+    <div className="space-y-3">
+      {grupos.map((g) => {
+        const e0 = g.items[0];
+        return (
+          <RemitoGrupoCard
+            key={g.key}
+            titulo={g.remito ? `Remito N° ${g.remito}` : `Entrada del ${fmtDate(e0.fecha)}`}
+            linea={[g.remito ? fmtDate(e0.fecha) : "", e0.tipo, e0.origen].filter(Boolean).join(" · ")}
+            resumen={resumenRemito(g, "equipo")}
+            abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
+          >
+            <Table
+              columns={[
+                { key: "codigo", label: "Código" }, { key: "producto", label: "Producto" },
+                { key: "estadoResultante", label: "Estado resultante" }, { key: "responsable", label: "Responsable" },
+              ]}
+              rows={g.items}
+              onDelete={onDelete}
+              renderCell={(key, row) => {
+                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
+                if (key === "producto") return nombreProducto(productoDe(row)) || "—";
+                if (key === "estadoResultante") return <StatusBadge estado={row.estadoResultante} />;
+                return row[key] || "—";
+              }}
+            />
+          </RemitoGrupoCard>
+        );
+      })}
     </div>
   );
 }
@@ -6791,6 +6956,7 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
   const [codigos, setCodigos] = useState([]);
   const [tipo, setTipo] = useState(TIPOS_ENTRADA[0]);
   const [origen, setOrigen] = useState("");
+  const [remito, setRemito] = useState("");
   const [motivo, setMotivo] = useState("");
   const [estadoResultante, setEstadoResultante] = useState(ESTADOS_RESULTANTES[0]);
   const [responsable, setResponsable] = useState("");
@@ -6819,7 +6985,7 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
       return;
     }
     for (const c of codigos) {
-      onSave({ fecha, codigo: c, tipo, origen, motivo, estadoResultante, responsable });
+      onSave({ fecha, codigo: c, tipo, origen, remito: remito.trim(), motivo, estadoResultante, responsable });
     }
   };
 
@@ -6854,6 +7020,7 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
       <p className="text-base font-bold mt-5 mb-2" style={{ color: ACCENT }}>Datos de la entrada</p>
       <Field label="Tipo de entrada"><Select value={tipo} onChange={(e) => setTipo(e.target.value)}>{TIPOS_ENTRADA.map((t) => <option key={t}>{t}</option>)}</Select></Field>
       <Field label="Origen"><TextInput value={origen} onChange={(e) => setOrigen(e.target.value)} placeholder="Ej: Cliente, Fábrica, Técnico" /></Field>
+      <Field label="N° de remito (opcional — agrupa los equipos de un mismo remito)"><TextInput value={remito} onChange={(e) => setRemito(e.target.value)} /></Field>
       <Field label="Motivo"><TextInput value={motivo} onChange={(e) => setMotivo(e.target.value)} /></Field>
       <Field label="Estado resultante"><Select value={estadoResultante} onChange={(e) => setEstadoResultante(e.target.value)}>{ESTADOS_RESULTANTES.map((s) => <option key={s}>{s}</option>)}</Select></Field>
       <Field label="Responsable"><TextInput value={responsable} onChange={(e) => setResponsable(e.target.value)} /></Field>
@@ -8974,14 +9141,35 @@ const OBS_DEFAULT = "Productos a retirar de depósito.";
 // versión) o una cotización aparte para la misma obra (hilo propio). No decide solo: el usuario
 // eligió que se le pregunte cada vez, porque a veces sí es la misma línea evolucionando y a
 // veces es un servicio distinto (aires, cocina, termo) que solo comparte el edificio.
-function buscarCotizacionMismaObra(cotizaciones, cliente, obra) {
+function buscarCotizacionMismaObra(cotizaciones, cliente, obra, rubro) {
   const clienteKey = cliente.trim().toLowerCase();
   const obraKey = obra.trim().toLowerCase();
   if (!clienteKey || !obraKey) return null;
+  // Solo compite con las del mismo rubro: aires y cocina de la misma obra se cotizan y cuentan aparte.
   const candidatas = (cotizaciones || [])
-    .filter((c) => (c.cliente || "").trim().toLowerCase() === clienteKey && (c.obra || "").trim().toLowerCase() === obraKey)
+    .filter((c) => (c.cliente || "").trim().toLowerCase() === clienteKey && (c.obra || "").trim().toLowerCase() === obraKey && rubroDeCotizacion(c) === rubro)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   return candidatas[0] || null;
+}
+
+// Categoría de la cotización como botones de un click (en vez de texto libre).
+function SelectorRubro({ value, onChange }) {
+  return (
+    <div className="flex gap-2 flex-wrap">
+      {RUBROS_COTIZACION.map((r) => {
+        const activo = value === r;
+        return (
+          <button
+            key={r} type="button" onClick={() => onChange(r)}
+            className="text-sm px-3 py-1.5 rounded-lg border font-medium"
+            style={{ borderColor: activo ? ACCENT : BORDER, backgroundColor: activo ? ACCENT : "#FFFFFF", color: activo ? "#FFFFFF" : INK }}
+          >
+            {r}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // Estado + lógica de descuento/instalación/servicios adicionales, compartido entre CotizacionForm
@@ -9120,7 +9308,8 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
   const telefonoAutoRef = useRef(null);
   const [obra, setObra] = useState(initial?.obra || "");
   const [clienteReal, setClienteReal] = useState(initial?.clienteReal || "");
-  const [categoria, setCategoria] = useState(initial?.categoria || "");
+  const [categoria, setCategoria] = useState(initial && rubroDeCotizacion(initial) !== "Sin rubro" ? rubroDeCotizacion(initial) : "");
+  const [nombre, setNombre] = useState(initial?.nombre || (initial?.categoria && !RUBROS_COTIZACION.includes(initial.categoria) ? initial.categoria : ""));
   const [comentarios, setComentarios] = useState(initial?.comentarios || "");
   const dI = useDescuentoInstalacion(initial);
   const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(initial?.fechaEntregaEstimada || FECHA_ENTREGA_DEFAULT);
@@ -9240,7 +9429,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
       ...dI.serviciosAdicionales.map((s) => `${s.tipo}: ${s.descripcion}`),
     ].filter(Boolean).join(" | ");
     return {
-      fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, comentarios, lineas,
+      fecha, cliente, clienteTelefono: telefono.trim(), obra, categoria, nombre: nombre.trim(), comentarios, lineas,
       incluirDescuento: dI.incluirDescuento, descuento: Number(dI.descuento) || 0, descuentoEsPorcentaje: true,
       incluirInstalacion: dI.incluirInstalacion || dI.serviciosAdicionales.length > 0,
       instalacionDescripcion: descripcionFinal, instalacionMonto: montoFinal,
@@ -9270,6 +9459,10 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
       setError("Ingresá el cliente.");
       return;
     }
+    if (!RUBROS_COTIZACION.includes(categoria)) {
+      setError("Elegí la categoría de la cotización.");
+      return;
+    }
     if (lineas.length === 0) {
       setError("Agregá al menos un producto.");
       return;
@@ -9280,7 +9473,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
       return;
     }
     if (!conflictoResuelto) {
-      const existente = buscarCotizacionMismaObra(cotizaciones, cliente, obra);
+      const existente = buscarCotizacionMismaObra(cotizaciones, cliente, obra, categoria);
       if (existente) {
         setConflictoObra(existente);
         return;
@@ -9311,10 +9504,10 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
 
   const hilosObraExistente = useMemo(() => {
     if (!eligiendoPrincipal) return null;
-    const delaObra = (cotizaciones || []).filter((c) => mismaObraCotizacion(c, { cliente, obra }));
+    const delaObra = (cotizaciones || []).filter((c) => mismaObraYRubroCotizacion(c, { cliente, obra, categoria }));
     return agruparCotizaciones(delaObra)[0]?.obras[0] || null;
-  }, [eligiendoPrincipal, cotizaciones, cliente, obra]);
-  const hiloPrincipalActual = hilosObraExistente?.principal || null;
+  }, [eligiendoPrincipal, cotizaciones, cliente, obra, categoria]);
+  const hiloPrincipalActual = hilosObraExistente?.principales[0] || null;
 
   return (
     <div>
@@ -9343,7 +9536,8 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
         />
       </Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Usá el mismo nombre si es una obra que ya cotizaste" /></Field>
-      <Field label="Categoría (título de la cotización)"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: AIRES ACONDICIONADOS" /></Field>
+      <Field label="Categoría — cada una cuenta aparte dentro de la misma obra"><SelectorRubro value={categoria} onChange={setCategoria} /></Field>
+      <Field label="Nombre / referencia (opcional — ej: Opción 1, nombre del archivo)"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos (no aparecen en el PDF)</p>
       <Field label="Cliente real / inversor"><TextInput value={clienteReal} onChange={(e) => setClienteReal(e.target.value)} placeholder="Ej: Pepe Gómez" /></Field>
@@ -9599,7 +9793,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
         <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Opcional" /></Field>
-        <Field label="Categoría"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Categoría"><SelectorRubro value={categoria} onChange={setCategoria} /></Field>
       </div>
       <p className="text-xs mb-4" style={{ color: MUTED }}>El cliente es obligatorio solo para confirmar el ejercicio como cotización real.</p>
 
@@ -9833,7 +10027,10 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
           <Trash2 size={13} style={{ color: MUTED }} />
         </button>
       </div>
-      {c.categoria && <CodeTag>{c.categoria}</CodeTag>}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <CodeTag>{rubroDeCotizacion(c)}</CodeTag>
+        {(c.nombre || (c.categoria && !RUBROS_COTIZACION.includes(c.categoria))) && <CodeTag>{c.nombre || c.categoria}</CodeTag>}
+      </div>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         <p className="text-sm" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString()}</p>
         {badgeSalida && (
@@ -9969,11 +10166,11 @@ function HiloCategoriaGrupo({ hilo, esPrincipal, hayVarios, productos, matrizCos
         <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
           {esPrincipal ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
-              Principal — cuenta en el resumen
+              Principal de {hilo.rubro} — cuenta en el resumen
             </span>
           ) : (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#F2F3F4", color: "#686D73" }}>
-              {sinEfecto ? "Sin efecto — no cuenta" : "Otra opción — no cuenta en el resumen"}
+              {sinEfecto ? "Sin efecto — no cuenta" : `Otra opción de ${hilo.rubro} — no cuenta en el resumen`}
             </span>
           )}
           {!esPrincipal && !sinEfecto && (
@@ -10032,7 +10229,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
         <div className="px-3 pb-3 space-y-3">
           {grupo.hilos.map((h) => (
             <HiloCategoriaGrupo
-              key={h.hiloId} hilo={h} esPrincipal={grupo.principal === h} hayVarios={nHilos > 1} productos={productos} matrizCostos={matrizCostos}
+              key={h.hiloId} hilo={h} esPrincipal={grupo.principales.includes(h)} hayVarios={grupo.hilos.filter((x) => x.rubro === h.rubro).length > 1} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
@@ -12599,8 +12796,8 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
   // (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones) corresponde la plata cotizada
   // — cruzando cada línea contra el catálogo, mismas categorías que ya usa Catálogo de productos.
   const detalleCotizaciones = useMemo(
-    () => gruposCotizacion.flatMap((g) => g.obras.filter((o) => o.principal).map((o) => {
-      const c = o.principal.activa;
+    () => gruposCotizacion.flatMap((g) => g.obras.flatMap((o) => o.principales.map((h) => {
+      const c = h.activa;
       const categoriasMap = new Map();
       for (const l of c.lineas || []) {
         const p = productos.find((pp) => pp.nombre === l.codigo);
@@ -12610,11 +12807,11 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         categoriasMap.set(key, (categoriasMap.get(key) || 0) + monto);
       }
       return {
-        cliente: g.cliente, obra: o.obra, monto: calcularTotalCotizacion(c),
+        cliente: g.cliente, obra: o.principales.length > 1 ? `${o.obra} — ${h.rubro}` : o.obra, monto: calcularTotalCotizacion(c),
         estado: ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
         categorias: [...categoriasMap.entries()].map(([label, monto]) => ({ label, monto })),
       };
-    })),
+    }))),
     [gruposCotizacion, productos]
   );
 

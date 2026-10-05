@@ -14,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { downloadEtiquetasPdf, textoSerial, parsearSerial, claveCodigo, SERIAL_BASE_APP } from "./etiquetas";
 import { anchosCode128 } from "./code128";
+import { CENTROS_COSTO, centroCostoPorCodigo, centroCostoSugerido, totalLineaPedido, totalPedido } from "./centrosCosto";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
@@ -148,6 +149,7 @@ const COLLECTIONS = {
   productos: "productos",
   cotizaciones: "cotizaciones",
   armadosCombinaciones: "armadosCombinaciones",
+  pedidosFacturacion: "pedidosFacturacion",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
@@ -1921,6 +1923,8 @@ export default function App() {
   const [productos, setProductos] = useState([]);
   const [cotizaciones, setCotizaciones] = useState([]);
   const [armadosCombinaciones, setArmadosCombinaciones] = useState([]);
+  const [pedidosFacturacion, setPedidosFacturacion] = useState([]);
+  const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
@@ -1977,6 +1981,7 @@ export default function App() {
       [COLLECTIONS.productos]: setProductos,
       [COLLECTIONS.cotizaciones]: setCotizaciones,
       [COLLECTIONS.armadosCombinaciones]: setArmadosCombinaciones,
+      [COLLECTIONS.pedidosFacturacion]: setPedidosFacturacion,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
@@ -2305,6 +2310,18 @@ export default function App() {
     // que marcarla de verdad, o la nueva (que ahora es la más reciente) le ganaría el lugar.
     if (_mantenerPrincipalId) updateItem(COLLECTIONS.cotizaciones, _mantenerPrincipalId, { principal: true });
     addItem(COLLECTIONS.cotizaciones, resto);
+  };
+  // A diferencia de addItem/updateItem (que solo loguean el error), acá el error se propaga: si las
+  // reglas de Firestore todavía no incluyen "pedidosFacturacion", el formulario tiene que avisarlo.
+  const guardarPedidoFacturacion = async (pedido) => {
+    const { id, ...data } = pedido;
+    const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
+    if (id) {
+      await updateDoc(doc(db, COLLECTIONS.pedidosFacturacion, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() });
+      return id;
+    }
+    const ref = await addDoc(collection(db, COLLECTIONS.pedidosFacturacion), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
+    return ref.id;
   };
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   const updateCotizacion = (id, patch) => {
@@ -3511,8 +3528,9 @@ export default function App() {
               onAprobar={aprobarSolicitud} onRechazar={(id) => rechazarSolicitud(id)}
             />
             <SalidasPorRemito
-              movimientos={filteredMovimientos} productos={productos} equipos={equipos}
+              movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
+              onPedido={esAdmin ? ((g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }) : undefined}
             />
           </Section>
         )}
@@ -3643,9 +3661,11 @@ export default function App() {
         {tab === "clientes" && (
           <ClientesView
             clientes={filteredClientes} query={query} onQuery={setQuery}
+            cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidosFacturacion}
             onNew={() => setDrawer("cliente")}
             onDelete={deleteCliente}
             onUpdateField={(id, field, value) => updateCliente(id, { [field]: value })}
+            onPedido={(g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }}
           />
         )}
 
@@ -3887,6 +3907,18 @@ export default function App() {
           onGenerar={(cotizacion, lineas, remitoData) => { generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData); setDrawer(null); }}
         />
       </Drawer>
+      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); }} title="Pedido de facturación">
+        {pedidoTarget && (
+          <PedidoFacturacionForm
+            key={pedidoTarget.key}
+            grupo={pedidoTarget}
+            pedidoExistente={pedidosFacturacion.find((p) => p.remitoKey === pedidoTarget.key)}
+            pedidos={pedidosFacturacion}
+            productos={productos} equipos={equipos} cotizaciones={cotizaciones}
+            onGuardar={guardarPedidoFacturacion}
+          />
+        )}
+      </Drawer>
       <Drawer open={drawer === "comprometida-cotizacion"} onClose={() => setDrawer(null)} title="Generar venta comprometida desde cotización">
         <ComprometidaDesdeCotizacionForm
           cotizaciones={cotizaciones}
@@ -4011,7 +4043,24 @@ function productoDeCodigo(codigo, equipos, productos) {
   return mejor;
 }
 
-function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, children }) {
+// Código comercial (el del catálogo, AE-...-ON) de un movimiento o entrada. El código interno de la
+// unidad (AEO-0012) queda como dato secundario.
+function codigoComercial(registro, equipos, productos) {
+  const p = productoDeCodigo(registro.modelo || registro.codigo, equipos, productos) || productoDeCodigo(registro.codigo, equipos, productos);
+  return p?.nombre || registro.modelo || registro.codigo || "";
+}
+function CodigoComercialCell({ registro, equipos, productos }) {
+  const comercial = codigoComercial(registro, equipos, productos);
+  const interno = registro.codigo && registro.codigo !== comercial ? registro.codigo : "";
+  return (
+    <div>
+      <CodeTag>{comercial || "—"}</CodeTag>
+      {interno && <span className="block text-[10px] mt-0.5" style={{ color: MUTED }}>Interno: {interno}</span>}
+    </div>
+  );
+}
+
+function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, acciones, children }) {
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 p-4 text-left">
@@ -4021,6 +4070,7 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
           <p className="text-xs mt-1" style={{ color: MUTED }}>{resumen}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {acciones}
           {foto && (
             <span role="button" title="Ver foto del remito" onClick={(e) => { e.stopPropagation(); onVerFoto(foto); }}>
               <Camera size={16} style={{ color: ACCENT }} />
@@ -4057,7 +4107,7 @@ function resumenRemito(g, unidadSingular, unidadPlural) {
   return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${g.unidades !== 1 ? unidadPlural : unidadSingular}${rubros ? " · " + rubros : ""}`;
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, forzarAbierto, onDelete, onVerFoto }) {
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbierto, onDelete, onVerFoto, onPedido }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const productoDe = (m) => productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
@@ -4078,6 +4128,17 @@ function SalidasPorRemito({ movimientos, productos, equipos, forzarAbierto, onDe
         const motivos = [...new Set(g.items.map((m) => m.motivo).filter(Boolean))].join(", ");
         const destino = [m0.cliente || m0.empresaCliente, m0.obra].filter(Boolean).join(" — ");
         const foto = g.items.find((m) => m.fotoRemito)?.fotoRemito;
+        const pedido = (pedidos || []).find((p) => p.remitoKey === g.key);
+        const accionPedido = onPedido && (
+          <span
+            role="button" title="Pedido de facturación para Administración"
+            onClick={(e) => { e.stopPropagation(); onPedido(g); }}
+            className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium"
+            style={{ borderColor: pedido?.estado === "Enviado" ? "#15803D" : ACCENT, color: pedido?.estado === "Enviado" ? "#15803D" : ACCENT }}
+          >
+            <FileText size={12} /> {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Facturación"}
+          </span>
+        );
         return (
           <RemitoGrupoCard
             key={g.key}
@@ -4085,18 +4146,18 @@ function SalidasPorRemito({ movimientos, productos, equipos, forzarAbierto, onDe
             linea={[fmtDate(m0.fecha), destino, motivos].filter(Boolean).join(" · ")}
             resumen={resumenRemito(g, "unidad", "unidades")}
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
-            foto={foto} onVerFoto={onVerFoto}
+            foto={foto} onVerFoto={onVerFoto} acciones={accionPedido}
           >
             <Table
               columns={[
-                { key: "codigo", label: "Código" }, { key: "producto", label: "Producto" },
+                { key: "codigo", label: "Código comercial" }, { key: "producto", label: "Producto" },
                 { key: "cantidad", label: "Cant." }, { key: "categoriaLabel", label: "Categoría de origen" },
                 { key: "responsable", label: "Responsable" },
               ]}
               rows={g.items}
               onDelete={onDelete}
               renderCell={(key, row) => {
-                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
+                if (key === "codigo") return <CodigoComercialCell registro={row} equipos={equipos} productos={productos} />;
                 if (key === "producto") return nombreProducto(productoDe(row)) || "—";
                 if (key === "cantidad") return row.cantidad || 1;
                 return row[key] || "—";
@@ -4137,13 +4198,13 @@ function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDele
           >
             <Table
               columns={[
-                { key: "codigo", label: "Código" }, { key: "producto", label: "Producto" },
+                { key: "codigo", label: "Código comercial" }, { key: "producto", label: "Producto" },
                 { key: "estadoResultante", label: "Estado resultante" }, { key: "responsable", label: "Responsable" },
               ]}
               rows={g.items}
               onDelete={onDelete}
               renderCell={(key, row) => {
-                if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
+                if (key === "codigo") return <CodigoComercialCell registro={row} equipos={equipos} productos={productos} />;
                 if (key === "producto") return nombreProducto(productoDe(row)) || "—";
                 if (key === "estadoResultante") return <StatusBadge estado={row.estadoResultante} />;
                 return row[key] || "—";
@@ -4152,6 +4213,202 @@ function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDele
           </RemitoGrupoCard>
         );
       })}
+    </div>
+  );
+}
+
+// Arma el Pedido de Facturación de un remito: fecha, empresa que compró, RUC, obra y una línea por
+// código comercial con el precio de la cotización de la que salió (con el descuento ya aplicado).
+// Todo queda editable en el formulario — esto es solo el punto de partida.
+function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos }) {
+  const m0 = g.items[0] || {};
+  const porCodigo = new Map();
+  const cotizacionesUsadas = new Map();
+  for (const m of g.items) {
+    const prod = productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
+    const codigo = prod?.nombre || m.modelo || m.codigo || "";
+    const cantidad = Number(m.cantidad) || 1;
+    let precio = null;
+    const cot = m.cotizacionId ? cotizaciones.find((c) => c.id === m.cotizacionId) : null;
+    if (cot) {
+      const lin = (cot.lineas || []).find((l) => l.codigo === codigo);
+      if (lin) {
+        const d = desglosarTotalCotizacion(cot);
+        const factor = d.subtotal > 0 ? (d.subtotal - d.descuentoMonto) / d.subtotal : 1;
+        precio = Math.round((Number(lin.precioUnit) || 0) * factor * 100) / 100;
+        cotizacionesUsadas.set(cot.id, `${cot.nombre || cot.categoria || "Cotización"} (${fmtDate(cot.fecha)}${d.descuentoMonto > 0 ? `, con ${fmtN(d.descuentoPct || (d.descuentoMonto / d.subtotal) * 100)}% de descuento` : ""})`);
+      }
+    }
+    if (precio == null && Number(m.monto) > 0) precio = Math.round((Number(m.monto) / cantidad) * 100) / 100;
+    const previa = porCodigo.get(codigo);
+    if (previa) previa.cantidad += cantidad;
+    else porCodigo.set(codigo, {
+      cantidad, marca: "AEON", codigo,
+      producto: prod ? nombreProducto(prod) : (m.modelo || ""),
+      familia: prod?.categoriaPrincipal || "",
+      precioUnit: precio == null ? "" : precio,
+    });
+  }
+  const cliente = (m0.empresaCliente || m0.cliente || "").trim();
+  const previo = [...(pedidos || [])]
+    .filter((p) => p.cliente && p.cliente.trim().toLowerCase() === cliente.toLowerCase())
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const centro = centroCostoPorCodigo(centroCostoSugerido(m0.obra));
+  return {
+    remitoKey: g.key, remito: g.remito || "", fecha: m0.fecha || todayISO(),
+    cliente, ruc: (m0.rucCliente || previo?.ruc || "").trim(),
+    condicion: previo?.condicion || "Crédito", termino: "",
+    centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
+    obra: (m0.obra || "").trim(),
+    lineas: Array.from(porCodigo.values()),
+    origenPrecios: cotizacionesUsadas.size ? `Precios tomados de: ${[...cotizacionesUsadas.values()].join("; ")}.` : "Sin cotización vinculada: completá los precios.",
+    estado: "Borrador",
+  };
+}
+
+const MAIL_ADMIN_KEY = "aeon_mail_administracion";
+function leerMailAdmin() {
+  try { return localStorage.getItem(MAIL_ADMIN_KEY) || ""; } catch (e) { return ""; }
+}
+
+function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equipos, cotizaciones, onGuardar }) {
+  const inicial = useMemo(
+    () => pedidoExistente || armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos }),
+    [] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const [p, setP] = useState(inicial);
+  const [idDoc, setIdDoc] = useState(pedidoExistente?.id || null);
+  const [mailAdmin, setMailAdmin] = useState(leerMailAdmin());
+  const [msg, setMsg] = useState(null); // { tipo: "ok" | "error", texto }
+  const [ocupado, setOcupado] = useState("");
+
+  const set = (campo, valor) => setP((prev) => ({ ...prev, [campo]: valor }));
+  const setLinea = (i, campo, valor) => setP((prev) => ({ ...prev, lineas: prev.lineas.map((l, j) => (j === i ? { ...l, [campo]: valor } : l)) }));
+  const quitarLinea = (i) => setP((prev) => ({ ...prev, lineas: prev.lineas.filter((_, j) => j !== i) }));
+  const agregarLinea = () => setP((prev) => ({ ...prev, lineas: [...prev.lineas, { cantidad: 1, marca: "AEON", codigo: "", producto: "", familia: "", precioUnit: "" }] }));
+  const elegirCentro = (codigo) => {
+    const c = centroCostoPorCodigo(codigo);
+    setP((prev) => ({ ...prev, centroCostoCodigo: codigo, centroCostoNombre: c?.nombre || "" }));
+  };
+  const total = totalPedido(p);
+
+  const guardar = async (extra = {}) => {
+    const datos = { ...p, ...extra };
+    const id = await onGuardar({ ...datos, ...(idDoc ? { id: idDoc } : {}) });
+    setIdDoc(id);
+    setP(datos);
+    return id;
+  };
+  const accion = async (nombre, fn) => {
+    setMsg(null);
+    setOcupado(nombre);
+    try { await fn(); } catch (e) { setMsg({ tipo: "error", texto: e?.message || String(e) }); }
+    setOcupado("");
+  };
+  const textoErrorGuardar = (e) =>
+    e?.code === "permission-denied"
+      ? "No se pudo guardar: falta publicar la regla de Firestore para la colección pedidosFacturacion (ver firestore.rules)."
+      : `No se pudo guardar: ${e?.message || e}`;
+
+  const onGuardarClick = () => accion("guardar", async () => {
+    try { await guardar(); setMsg({ tipo: "ok", texto: "Pedido guardado." }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorGuardar(e) }); }
+  });
+  const onPdf = () => accion("pdf", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoPdf(p); });
+  const onExcel = () => accion("excel", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoExcel(p); });
+
+  const marcarEnviado = async () => {
+    try { await guardar({ estado: "Enviado", enviadoEn: Date.now(), enviadoA: mailAdmin.trim() }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorGuardar(e) }); return false; }
+    return true;
+  };
+  const recordarMail = () => { try { localStorage.setItem(MAIL_ADMIN_KEY, mailAdmin.trim()); } catch (e) { /* sin almacenamiento local: se pide de nuevo la próxima vez */ } };
+  const onEnviar = () => accion("enviar", async () => {
+    recordarMail();
+    const m = await import("./pedidoFacturacion");
+    const resultado = await m.enviarPedidoPorMail(p, mailAdmin.trim());
+    if (resultado === "cancelado") return;
+    const ok = await marcarEnviado();
+    if (ok) setMsg({ tipo: "ok", texto: resultado === "compartido" ? "Pedido compartido con PDF y Excel adjuntos." : "Se descargaron el PDF y el Excel y se abrió el mail: adjuntalos y enviá." });
+  });
+  const onOutlookWeb = () => accion("outlook", async () => {
+    recordarMail();
+    const m = await import("./pedidoFacturacion");
+    await m.abrirPedidoEnOutlookWeb(p, mailAdmin.trim());
+    const ok = await marcarEnviado();
+    if (ok) setMsg({ tipo: "ok", texto: "Se descargaron el PDF y el Excel y se abrió Outlook web: adjuntalos y enviá." });
+  });
+
+  const inputChico = { borderColor: BORDER, color: INK };
+  return (
+    <div>
+      <p className="text-xs mb-3 px-2.5 py-2 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+        {p.remito ? `Remito N° ${p.remito}. ` : ""}{p.origenPrecios} Todo se puede editar antes de guardar o enviar.
+        {p.estado === "Enviado" && pedidoExistente?.enviadoEn ? ` Enviado el ${new Date(pedidoExistente.enviadoEn).toLocaleDateString("es-PY")}.` : ""}
+      </p>
+
+      <Field label="Cliente (empresa que compró)"><TextInput value={p.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+      <Field label="RUC"><TextInput value={p.ruc} onChange={(e) => set("ruc", e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <div className="flex-1"><Field label="Condición/Plazo">
+          <Select value={p.condicion} onChange={(e) => set("condicion", e.target.value)}>
+            {["Contado", "Crédito"].map((o) => <option key={o}>{o}</option>)}
+          </Select>
+        </Field></div>
+        <div className="flex-1"><Field label="Término"><TextInput value={p.termino} onChange={(e) => set("termino", e.target.value)} placeholder="Ej: 30 días" /></Field></div>
+      </div>
+      <Field label="Fecha"><TextInput type="date" value={p.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+      <Field label="Centro de costo">
+        <Select value={p.centroCostoCodigo} onChange={(e) => elegirCentro(e.target.value)}>
+          {CENTROS_COSTO.map((c) => <option key={c.codigo} value={c.codigo}>{c.codigo} — {c.nombre} ({c.codigoLargo})</option>)}
+        </Select>
+        <p className="text-[11px] mt-1" style={{ color: MUTED }}>{centroCostoPorCodigo(p.centroCostoCodigo)?.detalle}</p>
+      </Field>
+      <Field label="Obra"><TextInput value={p.obra} onChange={(e) => set("obra", e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Detalle</p>
+      <div className="space-y-2 mb-2">
+        {p.lineas.map((l, i) => (
+          <div key={i} className="p-2 rounded-lg border" style={{ borderColor: BORDER }}>
+            <div className="flex items-center gap-2 mb-1.5">
+              <input type="number" min="0" value={l.cantidad} onChange={(e) => setLinea(i, "cantidad", e.target.value)} className="w-16 text-sm px-2 py-1.5 rounded border outline-none" style={inputChico} title="Cantidad" />
+              <input value={l.codigo} onChange={(e) => setLinea(i, "codigo", e.target.value)} placeholder="Código comercial" className="flex-1 min-w-0 text-sm px-2 py-1.5 rounded border outline-none" style={inputChico} />
+              <button onClick={() => quitarLinea(i)} className="p-1 rounded hover:bg-gray-100 shrink-0" title="Quitar línea"><X size={14} style={{ color: MUTED }} /></button>
+            </div>
+            <input value={l.producto} onChange={(e) => setLinea(i, "producto", e.target.value)} placeholder="Producto" className="w-full text-sm px-2 py-1.5 rounded border outline-none mb-1.5" style={inputChico} />
+            <div className="flex items-center gap-2">
+              <input value={l.marca} onChange={(e) => setLinea(i, "marca", e.target.value)} placeholder="Marca" className="w-20 text-sm px-2 py-1.5 rounded border outline-none" style={inputChico} />
+              <input value={l.familia} onChange={(e) => setLinea(i, "familia", e.target.value)} placeholder="Familia" className="flex-1 min-w-0 text-sm px-2 py-1.5 rounded border outline-none" style={inputChico} />
+              <input type="number" step="0.01" value={l.precioUnit} onChange={(e) => setLinea(i, "precioUnit", e.target.value)} placeholder="Precio unit." className="w-28 text-sm px-2 py-1.5 rounded border outline-none" style={{ ...inputChico, borderColor: l.precioUnit === "" ? "#F59E0B" : BORDER }} />
+            </div>
+            <p className="text-xs mt-1 text-right" style={{ color: MUTED }}>Total: U$S {fmtN(totalLineaPedido(l))}</p>
+          </div>
+        ))}
+      </div>
+      <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar línea (instalación, otro ítem…)</SecondaryButton>
+      <div className="flex justify-between items-center mt-3 mb-4 px-3 py-2 rounded-lg" style={{ backgroundColor: "#808080", color: "#FFFFFF" }}>
+        <span className="font-bold">TOTAL</span><span className="font-bold">U$S {fmtN(total)}</span>
+      </div>
+
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Enviar a Administración</p>
+      <Field label="Mail de Administración (se recuerda en este dispositivo)">
+        <TextInput type="email" value={mailAdmin} onChange={(e) => setMailAdmin(e.target.value)} placeholder="administracion@..." />
+      </Field>
+      <div className="flex gap-2 flex-wrap mb-2">
+        <PrimaryButton onClick={onEnviar} disabled={!!ocupado}><Send size={14} /> {ocupado === "enviar" ? "Preparando..." : "Enviar por mail"}</PrimaryButton>
+        <SecondaryButton onClick={onOutlookWeb} disabled={!!ocupado}>Abrir en Outlook web</SecondaryButton>
+      </div>
+      <p className="text-[11px] mb-4" style={{ color: MUTED }}>
+        Se envía desde el Outlook de tu usuario (ggibernau@aeon.com.py). Si tu dispositivo permite compartir archivos, el PDF y el Excel van adjuntos solos;
+        si no, se descargan y se abre el mail con el detalle ya escrito, para que los adjuntes.
+      </p>
+
+      <div className="flex gap-2 flex-wrap">
+        <PrimaryButton onClick={onGuardarClick} disabled={!!ocupado}>{ocupado === "guardar" ? "Guardando..." : "Guardar pedido"}</PrimaryButton>
+        <SecondaryButton onClick={onPdf} disabled={!!ocupado}><Download size={14} /> PDF</SecondaryButton>
+        <SecondaryButton onClick={onExcel} disabled={!!ocupado}><Download size={14} /> Excel</SecondaryButton>
+      </div>
+      {msg && (
+        <p className="text-xs mt-3" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>
+      )}
     </div>
   );
 }
@@ -7077,7 +7334,7 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
         <div className="mt-3 mb-1 rounded-lg border divide-y" style={{ borderColor: BORDER }}>
           {codigos.map((c, idx) => (
             <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-              <CodeTag>{c}</CodeTag>
+              <CodigoComercialCell registro={{ codigo: c, modelo: equipos.find((e) => e.codigo === c)?.modelo }} equipos={equipos} productos={productos} />
               <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
                 <X size={14} style={{ color: MUTED }} />
               </button>
@@ -11380,7 +11637,139 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
 // Nombre + WhatsApp de cada cliente — se completa solo al cargar un teléfono en una cotización
 // o presupuesto (ver upsertClienteTelefono), o se carga a mano acá. Reutilizado por el botón
 // "WhatsApp" de cotizaciones/presupuestos para no reescribir el número cada vez.
-function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField }) {
+// Ficha por cliente (empresa): agrupa por obra lo que ya está cargado en el resto de la app —
+// cotizaciones, remisiones (salidas agrupadas por remito) y su pedido de facturación. El campo de
+// facturas queda reservado para más adelante.
+function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, onPedido }) {
+  const [abiertos, setAbiertos] = useState(() => new Set());
+  const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const norm = (s) => (s || "").trim().toLowerCase();
+
+  const empresas = useMemo(() => {
+    const map = new Map();
+    const empresa = (nombre) => {
+      const k = norm(nombre);
+      if (!k) return null;
+      if (!map.has(k)) map.set(k, { key: k, nombre: nombre.trim(), contactos: [], obras: new Map(), ultimo: 0 });
+      return map.get(k);
+    };
+    const obraDe = (e, nombreObra) => {
+      const k = norm(nombreObra) || "(sin obra)";
+      if (!e.obras.has(k)) e.obras.set(k, { key: k, nombre: (nombreObra || "").trim() || "(Sin obra)", cotizaciones: [], movimientos: [], pedidos: [] });
+      return e.obras.get(k);
+    };
+    for (const c of cotizaciones) { const e = empresa(c.cliente); if (e) { obraDe(e, c.obra).cotizaciones.push(c); e.ultimo = Math.max(e.ultimo, c.createdAt || 0); } }
+    for (const m of movimientos) { const e = empresa(m.empresaCliente || m.cliente); if (e) { obraDe(e, m.obra).movimientos.push(m); e.ultimo = Math.max(e.ultimo, m.createdAt || 0); } }
+    for (const p of pedidos) { const e = empresa(p.cliente); if (e) { obraDe(e, p.obra).pedidos.push(p); e.ultimo = Math.max(e.ultimo, p.createdAt || 0); } }
+    for (const cl of clientes) { const e = empresa(cl.empresa); if (e) e.contactos.push(cl); }
+    return Array.from(map.values()).sort((a, b) => b.ultimo - a.ultimo);
+  }, [clientes, cotizaciones, movimientos, pedidos]);
+
+  const q = norm(query);
+  const visibles = empresas.filter((e) => !q || norm(e.nombre).includes(q) || Array.from(e.obras.values()).some((o) => norm(o.nombre).includes(q)));
+  if (visibles.length === 0) return <EmptyState icon={Phone} title="Sin clientes para mostrar" subtitle="Las fichas se arman solas con lo que cargues en cotizaciones y salidas." />;
+
+  return (
+    <div className="space-y-3">
+      {visibles.map((e) => {
+        const abierto = abiertos.has(e.key) || !!q;
+        const obras = Array.from(e.obras.values());
+        const totalRemitido = obras.reduce((acc, o) => acc + o.movimientos.reduce((a, m) => a + (Number(m.monto) || 0), 0), 0);
+        return (
+          <div key={e.key} className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+            <button onClick={() => toggle(e.key)} className="w-full flex items-center justify-between gap-3 p-4 text-left">
+              <div className="min-w-0">
+                <p className="text-base font-bold" style={{ color: INK }}>{e.nombre}</p>
+                <p className="text-xs mt-1" style={{ color: MUTED }}>
+                  {obras.length} obra{obras.length !== 1 ? "s" : ""}
+                  {totalRemitido > 0 ? ` · remitido U$S ${totalRemitido.toLocaleString()}` : ""}
+                  {e.contactos.length ? ` · ${e.contactos.map((c) => c.nombre).join(", ")}` : ""}
+                </p>
+              </div>
+              <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+            </button>
+            {abierto && (
+              <div className="px-4 pb-4 space-y-3">
+                {obras.map((o) => {
+                  const remisiones = agruparPorRemito(
+                    o.movimientos,
+                    (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
+                    (m) => Number(m.cantidad) || 1,
+                    () => ""
+                  );
+                  const resumenCot = resumirCotizaciones(agruparCotizaciones(o.cotizaciones));
+                  return (
+                    <div key={o.key} className="rounded-lg p-3" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+                      <p className="text-sm font-bold" style={{ color: INK }}>{o.nombre}</p>
+                      <p className="text-xs mb-2" style={{ color: MUTED }}>
+                        {o.cotizaciones.length
+                          ? `Cotizaciones: ${o.cotizaciones.length} · cuenta U$S ${resumenCot.total.toLocaleString()}`
+                          : "Sin cotizaciones vinculadas"}
+                      </p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Remisiones</p>
+                      {remisiones.length === 0 ? (
+                        <p className="text-xs mb-2" style={{ color: MUTED }}>Todavía no hay salidas para esta obra.</p>
+                      ) : (
+                        <div className="space-y-1 mb-2">
+                          {remisiones.map((g) => {
+                            const m0 = g.items[0];
+                            const monto = g.items.reduce((a, m) => a + (Number(m.monto) || 0), 0);
+                            const pedido = pedidos.find((p) => p.remitoKey === g.key);
+                            return (
+                              <div key={g.key} className="flex items-center justify-between gap-2 text-xs">
+                                <span style={{ color: INK }}>
+                                  <b>{g.remito ? `Remito ${g.remito}` : "Sin N° de remito"}</b> · {fmtDate(m0.fecha)} · {g.unidades} u.{monto > 0 ? ` · U$S ${monto.toLocaleString()}` : ""}
+                                </span>
+                                <button onClick={() => onPedido(g)} className="px-2 py-1 rounded border font-medium shrink-0" style={{ borderColor: pedido?.estado === "Enviado" ? "#15803D" : ACCENT, color: pedido?.estado === "Enviado" ? "#15803D" : ACCENT }}>
+                                  {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Preparar facturación"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Facturas</p>
+                      <p className="text-xs" style={{ color: MUTED }}>Pendiente — el registro de facturas se suma más adelante.</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ClientesView({ clientes, cotizaciones, movimientos, pedidos, query, onQuery, onNew, onDelete, onUpdateField, onPedido }) {
+  const [vista, setVista] = useState("fichas");
+  const toggleVista = (
+    <div className="flex gap-2 mb-3">
+      {[["fichas", "Fichas por cliente"], ["contactos", "Contactos"]].map(([k, label]) => (
+        <button
+          key={k} onClick={() => setVista(k)}
+          className="text-sm px-3 py-1.5 rounded-lg border font-medium"
+          style={{ borderColor: vista === k ? ACCENT : BORDER, backgroundColor: vista === k ? ACCENT : "#FFFFFF", color: vista === k ? "#FFFFFF" : INK }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+  if (vista === "fichas") {
+    return (
+      <Section
+        title="Clientes"
+        subtitle="Una ficha por cliente, con sus obras, remisiones y pedidos de facturación. Las facturas se suman más adelante."
+        query={query} onQuery={onQuery}
+        onNew={onNew} newLabel="Nuevo contacto"
+      >
+        {toggleVista}
+        <FichasClientes clientes={clientes} cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidos} query={query} onPedido={onPedido} />
+      </Section>
+    );
+  }
   return (
     <Section
       title="Clientes"
@@ -11388,6 +11777,7 @@ function ClientesView({ clientes, query, onQuery, onNew, onDelete, onUpdateField
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo cliente"
     >
+      {toggleVista}
       {clientes.length === 0 ? (
         <EmptyState icon={Phone} title="Todavía no hay clientes cargados" subtitle="Se agregan solos al poner un teléfono en una cotización, o cargalos acá directo." />
       ) : (

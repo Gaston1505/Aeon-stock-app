@@ -4007,9 +4007,9 @@ function agruparPorRemito(filas, claveRespaldo, cantidadDe, rubroDe) {
   return Array.from(map.values());
 }
 
-function resumenRemito(g, unidadLabel) {
+function resumenRemito(g, unidadSingular, unidadPlural) {
   const rubros = Array.from(g.rubros.entries()).map(([r, n]) => `${r} ${n}`).join(" · ");
-  return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${unidadLabel}${g.unidades !== 1 ? "s" : ""}${rubros ? " · " + rubros : ""}`;
+  return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${g.unidades !== 1 ? unidadPlural : unidadSingular}${rubros ? " · " + rubros : ""}`;
 }
 
 function SalidasPorRemito({ movimientos, productos, equipos, forzarAbierto, onDelete, onVerFoto }) {
@@ -4038,7 +4038,7 @@ function SalidasPorRemito({ movimientos, productos, equipos, forzarAbierto, onDe
             key={g.key}
             titulo={g.remito ? `Remito N° ${g.remito}` : "Sin N° de remito"}
             linea={[fmtDate(m0.fecha), destino, motivos].filter(Boolean).join(" · ")}
-            resumen={resumenRemito(g, "unidad")}
+            resumen={resumenRemito(g, "unidad", "unidades")}
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
             foto={foto} onVerFoto={onVerFoto}
           >
@@ -4087,7 +4087,7 @@ function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDele
             key={g.key}
             titulo={g.remito ? `Remito N° ${g.remito}` : `Entrada del ${fmtDate(e0.fecha)}`}
             linea={[g.remito ? fmtDate(e0.fecha) : "", e0.tipo, e0.origen].filter(Boolean).join(" · ")}
-            resumen={resumenRemito(g, "equipo")}
+            resumen={resumenRemito(g, "equipo", "equipos")}
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
           >
             <Table

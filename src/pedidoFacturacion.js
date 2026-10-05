@@ -147,8 +147,41 @@ export async function generatePedidoFacturacionPdf(p) {
     y -= 17;
   };
   drawHeader();
-  const RL = 20;
+  // Los códigos y nombres largos se parten en varias líneas (la fila crece) en vez de cortarse.
+  const partir = (texto, size, maxW) => {
+    const lineas = [];
+    let actual = "";
+    for (const palabra of String(texto ?? "").split(/\s+/).filter(Boolean)) {
+      let resto = palabra;
+      while (ancho(resto, size, false) > maxW) {
+        let corte = resto.length - 1;
+        while (corte > 1 && ancho(resto.slice(0, corte), size, false) > maxW) corte--;
+        const guion = resto.lastIndexOf("-", corte - 1);
+        if (guion > 2) corte = guion + 1;
+        if (actual) { lineas.push(actual); actual = ""; }
+        lineas.push(resto.slice(0, corte));
+        resto = resto.slice(corte);
+      }
+      const prueba = actual ? `${actual} ${resto}` : resto;
+      if (actual && ancho(prueba, size, false) > maxW) { lineas.push(actual); actual = resto; } else actual = prueba;
+    }
+    if (actual) lineas.push(actual);
+    return lineas.length ? lineas : [""];
+  };
+  const celdaLineas = (x, yTop, w, h, lineas, size, alignIzq) => {
+    caja(x, yTop, w, h, {});
+    const paso = size + 2;
+    const alto = lineas.length * paso;
+    lineas.forEach((t, i) => {
+      const tw = ancho(t, size, false);
+      text(t, alignIzq ? x + 4 : x + (w - tw) / 2, yTop - (h - alto) / 2 - size - i * paso + 1.5, { size });
+    });
+  };
   for (const l of p.lineas || []) {
+    const lCodigo = partir(l.codigo, 8, cw[2] - 8);
+    const lProducto = partir(l.producto, 8, cw[3] - 8);
+    const lFamilia = partir(l.familia, 8, cw[4] - 8);
+    const RL = Math.max(20, Math.max(lCodigo.length, lProducto.length, lFamilia.length) * 10 + 8);
     if (y - RL < M + 120) {
       page = pdf.addPage([PW, PH]);
       y = PH - M;
@@ -156,9 +189,9 @@ export async function generatePedidoFacturacionPdf(p) {
     }
     celda(cx[0], y, cw[0], RL, l.cantidad, { size: 9.5 });
     celda(cx[1], y, cw[1], RL, l.marca, { size: 9 });
-    celda(cx[2], y, cw[2], RL, l.codigo, { size: 8, align: "left" });
-    celda(cx[3], y, cw[3], RL, l.producto, { size: 8 });
-    celda(cx[4], y, cw[4], RL, l.familia, { size: 8 });
+    celdaLineas(cx[2], y, cw[2], RL, lCodigo, 8, true);
+    celdaLineas(cx[3], y, cw[3], RL, lProducto, 8, false);
+    celdaLineas(cx[4], y, cw[4], RL, lFamilia, 8, false);
     celda(cx[5], y, cw[5], RL, l.precioUnit === "" || l.precioUnit == null ? "" : fmtNum(l.precioUnit), { size: 9, color: GRIS_TXT });
     celda(cx[6], y, cw[6], RL, fmtNum(totalLineaPedido(l)), { size: 9, color: GRIS_TXT });
     y -= RL;
@@ -243,7 +276,8 @@ export async function generatePedidoFacturacionExcel(p) {
   etiqueta("A14", "CONDICIÓN/PLAZO:"); valor("B14", p.condicion || "", { align: "right" });
   valor("C14", "Término:", { size: 11 }); valor("D14", p.termino || "", { size: 11, align: "right" });
   valor("F14", "Fecha:", { font: "Gotham", size: 11, align: "right" });
-  const f = p.fecha ? new Date(`${p.fecha}T12:00:00`) : null;
+  const [fy, fm, fd] = (p.fecha || "").split("-").map(Number);
+  const f = fy ? new Date(Date.UTC(fy, fm - 1, fd)) : null; // sin hora: ExcelJS guarda las fechas en UTC
   valor("G14", f || "", { font: "Gotham", size: 11, align: "right", numFmt: "dd/mm/yyyy" });
   etiqueta("A15", "CENTRO DE COSTO:"); valor("B15", p.centroCostoCodigo || ""); valor("C15", p.centroCostoNombre || "", { size: 11 });
   etiqueta("A16", "OBRA:"); ws.mergeCells("B16:C16"); valor("B16", p.obra || ""); ws.getCell("C16").border = bordeG;

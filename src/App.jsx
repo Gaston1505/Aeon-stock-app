@@ -10,8 +10,10 @@ import {
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, onSnapshot, query, orderBy,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, onSnapshot, query, orderBy, runTransaction,
 } from "firebase/firestore";
+import { downloadEtiquetasPdf, textoSerial, parsearSerial, claveCodigo, SERIAL_BASE_APP } from "./etiquetas";
+import { anchosCode128 } from "./code128";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
@@ -157,6 +159,9 @@ const COLLECTIONS = {
   configuracion: "configuracion",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
+// Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
+// solo admin): { contadores: { AEAC2T30ON: 900012 }, lotes: [...] }.
+const SERIALES_ETIQUETAS_DOC_ID = "serialesEtiquetas";
 
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas,
 // Conteo de stock, Maestro de equipos y Banco de recuperables (los cards del Resumen de
@@ -2007,6 +2012,41 @@ export default function App() {
   }, [user]);
   const matrizCostosEfectiva = matrizCostos || MATRIZ_COSTOS_DEFAULT;
 
+  const [serialesEtiquetas, setSerialesEtiquetas] = useState(null);
+  useEffect(() => {
+    if (!user || !esAdmin) return;
+    const unsub = onSnapshot(
+      doc(db, COLLECTIONS.configuracion, SERIALES_ETIQUETAS_DOC_ID),
+      (snap) => setSerialesEtiquetas(snap.exists() ? snap.data() : null),
+      (err) => { console.error("Firestore subscribe error (serialesEtiquetas)", err); setSerialesEtiquetas(null); }
+    );
+    return () => unsub();
+  }, [user, esAdmin]);
+
+  // Reserva los próximos seriales de cada producto (en una transacción, para que nunca se repita
+  // uno ya usado) y devuelve las etiquetas listas para imprimir. items: [{ codigo, cantidad }]
+  const reservarSeriales = (items) => runTransaction(db, async (tx) => {
+    const ref = doc(db, COLLECTIONS.configuracion, SERIALES_ETIQUETAS_DOC_ID);
+    const snap = await tx.get(ref);
+    const previo = snap.exists() ? snap.data() : {};
+    const contadores = { ...(previo.contadores || {}) };
+    const etiquetas = [];
+    const rangos = [];
+    for (const it of items) {
+      const key = claveCodigo(it.codigo);
+      const cantidad = Number(it.cantidad) || 0;
+      const desde = Math.max(Number(contadores[key]) || 0, SERIAL_BASE_APP) + 1;
+      const hasta = desde + cantidad - 1;
+      if (hasta > 999999) throw new Error(`Se agotan los seriales de ${it.codigo} (máximo 999999).`);
+      contadores[key] = hasta;
+      for (let n = desde; n <= hasta; n++) etiquetas.push({ texto: textoSerial(it.codigo, n) });
+      rangos.push({ codigo: it.codigo, desde, hasta, cantidad });
+    }
+    const lotes = [...(previo.lotes || []), { fecha: todayISO(), createdAt: Date.now(), creadoPor: auth.currentUser?.email || null, rangos }].slice(-200);
+    tx.set(ref, { contadores, lotes }, { merge: true });
+    return { etiquetas, rangos };
+  });
+
   const addEquipo = (data) => addItem(COLLECTIONS.equipos, data);
   const updateEquipoEstado = (id, estado) => updateItem(COLLECTIONS.equipos, id, { estado });
   const updateEquipoField = (id, field, value) => updateItem(COLLECTIONS.equipos, id, { [field]: value });
@@ -3158,6 +3198,7 @@ export default function App() {
     { key: "catalogo", label: "Catálogo de productos", icon: Tag, section: "Stock e inventario" },
     { key: "matriz-costos", label: "Matriz de costos", icon: Calculator, section: "Stock e inventario" },
     { key: "conteo", label: "Conteo de stock", icon: Boxes, section: "Stock e inventario" },
+    { key: "etiquetas", label: "Etiquetas de cajas", icon: ScanLine, section: "Stock e inventario" },
     // Movimientos
     { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine, section: "Movimientos" },
     { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine, section: "Movimientos" },
@@ -3544,6 +3585,10 @@ export default function App() {
             esAdmin={esAdmin} query={query} onQuery={setQuery}
             onGuardar={guardarConteo} onBorrar={borrarConteo}
           />
+        )}
+
+        {tab === "etiquetas" && (
+          <EtiquetasView productos={productos} serialesEtiquetas={serialesEtiquetas} onReservar={reservarSeriales} />
         )}
 
         {tab === "cotizaciones" && (
@@ -5830,10 +5875,29 @@ function EscaneoUnidadesForm({ productos, onSave }) {
   const detectorRef = useRef(null);
   const intervalRef = useRef(null);
   const lastScanRef = useRef({ valor: "", ts: 0 });
+  // La lectura por cámara corre dentro de un intervalo creado una sola vez: sin esto vería el
+  // modelo y el catálogo del primer render.
+  const modeloRef = useRef(modelo);
+  modeloRef.current = modelo;
+  const productosRef = useRef(productos);
+  productosRef.current = productos;
 
   const agregarCodigo = (valor) => {
     const v = (valor || "").trim();
     if (!v) return;
+    // Etiqueta con el formato de serie (código sin guiones + 6 dígitos): ya dice de qué producto es.
+    // Sirve de control — si es de otro modelo que el de la tanda, no se suma.
+    const parsed = parsearSerial(v, productosRef.current);
+    if (parsed) {
+      const actual = modeloRef.current.trim();
+      if (!actual) {
+        modeloRef.current = parsed.producto.nombre;
+        setModelo(parsed.producto.nombre);
+      } else if (actual !== parsed.producto.nombre) {
+        setError(`"${v}" corresponde a ${parsed.producto.nombre}, no a ${actual} — no se agregó a esta carga.`);
+        return;
+      }
+    }
     setSeries((prev) => {
       if (prev.includes(v)) {
         setError(`"${v}" ya fue escaneado en esta carga.`);
@@ -6282,7 +6346,12 @@ function EscanearEquipoForm({ equipos, playa, productos, onSalida, onReubicar, o
     const match = equipos.find((e) => (e.codigo || "").toLowerCase() === v.toLowerCase())
       || equipos.find((e) => (e.serie || "").toLowerCase() === v.toLowerCase());
     if (!match) {
-      setError(`No se encontró ningún equipo con código o N° de serie "${v}".`);
+      const parsed = parsearSerial(v, productos);
+      setError(
+        parsed
+          ? `Ese serial corresponde a ${parsed.producto.nombre} (unidad ${String(parsed.numero).padStart(6, "0")}), pero no hay ningún equipo cargado con ese N° de serie.`
+          : `No se encontró ningún equipo con código o N° de serie "${v}".`
+      );
       return;
     }
     setError("");
@@ -8977,6 +9046,149 @@ function ConteoRowDeposito({ item, onGuardar }) {
       <div style={{ width: 18 }}>
         {guardando ? <Clock size={15} style={{ color: MUTED }} /> : guardado ? <CheckCircle2 size={15} style={{ color: "#15803D" }} /> : null}
       </div>
+    </div>
+  );
+}
+
+// Vista previa de una etiqueta (misma codificación que el PDF) para ver cómo queda antes de imprimir.
+function EtiquetaPreview({ texto }) {
+  const anchos = useMemo(() => anchosCode128(texto), [texto]);
+  const quiet = 10;
+  const total = anchos.reduce((a, b) => a + b, 0) + quiet * 2;
+  let x = quiet;
+  const barras = [];
+  anchos.forEach((m, i) => {
+    if (i % 2 === 0) barras.push(<rect key={i} x={x} y={0} width={m} height={40} fill="#000" />);
+    x += m;
+  });
+  return (
+    <div className="inline-block rounded border px-2 pt-1.5 pb-1 bg-white" style={{ borderColor: BORDER, width: 280 }}>
+      <svg viewBox={`0 0 ${total} 40`} width="100%" preserveAspectRatio="none" style={{ height: 44, display: "block" }}>{barras}</svg>
+      <p className="text-center text-[11px] mt-0.5 tracking-wide" style={{ color: INK }}>{texto}</p>
+    </div>
+  );
+}
+
+const ETIQUETAS_POR_HOJA = 28;
+
+function EtiquetasView({ productos, serialesEtiquetas, onReservar }) {
+  const [productoId, setProductoId] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+  const [lineas, setLineas] = useState([]);
+  const [generando, setGenerando] = useState(false);
+  const [error, setError] = useState("");
+  const [resultado, setResultado] = useState(null);
+
+  const disponibles = useMemo(() => productos.filter((p) => p.categoriaPrincipal !== "Repuestos" && !p.noDisponible), [productos]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(disponibles), [disponibles]);
+  const productoSel = productos.find((p) => p.id === productoId);
+  const contadores = serialesEtiquetas?.contadores || {};
+  const proximoSerial = (codigo) => Math.max(Number(contadores[claveCodigo(codigo)]) || 0, SERIAL_BASE_APP) + 1;
+
+  const agregar = () => {
+    setError("");
+    if (!productoSel) { setError("Elegí un producto."); return; }
+    const cant = Math.floor(Number(cantidad) || 0);
+    if (cant <= 0) { setError("La cantidad debe ser mayor a 0."); return; }
+    const existente = lineas.findIndex((l) => l.codigo === productoSel.nombre);
+    if (existente >= 0) setLineas(lineas.map((l, i) => (i === existente ? { ...l, cantidad: l.cantidad + cant } : l)));
+    else setLineas([...lineas, { codigo: productoSel.nombre, cantidad: cant }]);
+    setProductoId("");
+    setCantidad(1);
+  };
+
+  const total = lineas.reduce((acc, l) => acc + l.cantidad, 0);
+  const hojas = Math.ceil(total / ETIQUETAS_POR_HOJA);
+
+  const generar = async () => {
+    setError("");
+    if (lineas.length === 0) { setError("Agregá al menos un producto."); return; }
+    setGenerando(true);
+    try {
+      const { etiquetas, rangos } = await onReservar(lineas);
+      await downloadEtiquetasPdf(etiquetas, `Etiquetas_AEON_${todayISO()}`);
+      setResultado(rangos);
+      setLineas([]);
+    } catch (err) {
+      setError(`No se pudieron generar las etiquetas: ${err.message || err}`);
+    }
+    setGenerando(false);
+  };
+
+  const lotes = [...(serialesEtiquetas?.lotes || [])].reverse().slice(0, 10);
+
+  return (
+    <div>
+      <div className="mb-4">
+        <div className="flex items-center gap-1">
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Etiquetas de cajas</h2>
+          <InfoTip>
+            <p>Mismo formato que la etiqueta de serie de fábrica: 70×20 mm, código de barras (Code 128) con el código del producto sin guiones y 6 dígitos de serial.</p>
+            <p>Los seriales de fábrica arrancan en 000001 en cada pedido; los que genera la app arrancan en {SERIAL_BASE_APP + 1} y la app lleva la cuenta por producto, así nunca se repite uno.</p>
+            <p>Se imprimen 28 por hoja A4 (2 columnas × 14 filas) con el borde marcado para recortar. Cada lectura identifica el producto y la unidad.</p>
+          </InfoTip>
+        </div>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+          Armá los pegotines para pegar en las cajas y controlar por código de barras. Elegís producto y cantidad, y se genera el PDF listo para imprimir.
+        </p>
+      </div>
+
+      <div className="p-3 rounded-lg mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        <Field label="Producto">
+          <SelectorProducto productos={disponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={setProductoId} placeholder="Buscar producto..." />
+        </Field>
+        {productoSel && (
+          <>
+            <p className="text-xs mb-2" style={{ color: MUTED }}>Próxima etiqueta de este producto:</p>
+            <div className="mb-3"><EtiquetaPreview texto={textoSerial(productoSel.nombre, proximoSerial(productoSel.nombre))} /></div>
+            <Field label="Cantidad de etiquetas"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+            <SecondaryButton onClick={agregar}><Plus size={14} /> Agregar</SecondaryButton>
+          </>
+        )}
+      </div>
+
+      {lineas.length > 0 && (
+        <div className="mb-3">
+          <div className="rounded-lg border divide-y mb-2" style={{ borderColor: BORDER }}>
+            {lineas.map((l, i) => {
+              const desde = proximoSerial(l.codigo);
+              return (
+                <div key={l.codigo} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.codigo}</span>
+                    <span className="text-xs ml-1.5" style={{ color: MUTED }}>{String(desde).padStart(6, "0")} a {String(desde + l.cantidad - 1).padStart(6, "0")}</span>
+                  </div>
+                  <button onClick={() => setLineas(lineas.filter((_, j) => j !== i))} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                    <X size={14} style={{ color: MUTED }} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs mb-2" style={{ color: MUTED }}>{total} etiqueta{total !== 1 ? "s" : ""} · {hojas} hoja{hojas !== 1 ? "s" : ""} A4</p>
+          <PrimaryButton onClick={generar} disabled={generando}><Download size={14} /> {generando ? "Generando..." : "Generar PDF de etiquetas"}</PrimaryButton>
+        </div>
+      )}
+      {error && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{error}</p>}
+      {resultado && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+          PDF generado. Seriales reservados: {resultado.map((r) => `${r.codigo} ${String(r.desde).padStart(6, "0")}–${String(r.hasta).padStart(6, "0")}`).join(" · ")}. Si reimprimís, volvé a generar solo lo que falta: esos números ya quedan usados.
+        </div>
+      )}
+
+      {lotes.length > 0 && (
+        <div>
+          <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Últimos lotes generados</p>
+          <div className="rounded-lg border divide-y" style={{ borderColor: BORDER }}>
+            {lotes.map((l, i) => (
+              <div key={i} className="px-3 py-2 text-xs" style={{ color: INK }}>
+                <span className="font-medium">{fmtDate(l.fecha)}</span>
+                <span style={{ color: MUTED }}> · {(l.rangos || []).map((r) => `${r.cantidad}× ${r.codigo} (${String(r.desde).padStart(6, "0")}–${String(r.hasta).padStart(6, "0")})`).join(" · ")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

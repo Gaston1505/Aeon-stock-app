@@ -918,33 +918,56 @@ function estadoSalidaCotizacion(c) {
 // — para esas se sigue usando la categoría como aproximación (mismo comportamiento que había).
 // La versión más nueva de cada hilo (ya vienen ordenadas desc por createdAt) es la "activa": la
 // que cuenta para los totales y cuyo estado se puede editar. Las anteriores quedan de historial.
+// Cliente y obra se agrupan sin distinguir mayúsculas (así "Eje" y "EJE" son la misma obra, igual
+// que ya hacía el aviso de "ya hay una cotización para esta obra"); se muestra la grafía de la
+// cotización más nueva. Dentro de cada obra, `principal` es el hilo que cuenta en los resúmenes
+// (ver elegirHiloPrincipal): una sola cotización por obra.
+function hiloKeyDeCotizacion(c) {
+  // Sin .toLowerCase() a propósito: es exactamente la misma comparación (case-sensitive) que
+  // ya se usaba antes de que existiera hiloId — cambiarla ahora fusionaría de nuevo cotizaciones
+  // viejas que quedaron separadas justamente por una diferencia de mayúsculas en la categoría.
+  return c.hiloId || `legacy:${(c.categoria || "").trim()}`;
+}
+
+function mismaObraCotizacion(a, b) {
+  const norm = (s) => (s || "").trim().toLowerCase();
+  return norm(a.cliente) === norm(b.cliente) && norm(a.obra) === norm(b.obra);
+}
+
+// Entre los hilos de una obra, el que cuenta: el que el usuario marcó como principal (si sigue en
+// juego); si no hay marca, la cotización más reciente. Las "Sin efecto" nunca cuentan.
+function elegirHiloPrincipal(hilos) {
+  const enJuego = hilos.filter((h) => h.activa.estado !== "Sin efecto");
+  if (enJuego.length === 0) return null;
+  return enJuego.find((h) => h.versiones.some((v) => v.principal)) || enJuego[0];
+}
+
 function agruparCotizaciones(cotizaciones) {
   const porCliente = new Map();
   for (const c of cotizaciones) {
-    const clienteKey = (c.cliente || "").trim() || "(Sin cliente)";
-    const obraKey = (c.obra || "").trim() || "(Sin obra)";
-    // Sin .toLowerCase() a propósito: es exactamente la misma comparación (case-sensitive) que
-    // ya se usaba antes de que existiera hiloId — cambiarla ahora fusionaría de nuevo cotizaciones
-    // viejas que quedaron separadas justamente por una diferencia de mayúsculas en la categoría.
-    const hiloKey = c.hiloId || `legacy:${(c.categoria || "").trim()}`;
-    if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, new Map());
-    const porObra = porCliente.get(clienteKey);
-    if (!porObra.has(obraKey)) porObra.set(obraKey, new Map());
-    const porHilo = porObra.get(obraKey);
+    const clienteNombre = (c.cliente || "").trim() || "(Sin cliente)";
+    const obraNombre = (c.obra || "").trim() || "(Sin obra)";
+    const clienteKey = clienteNombre.toLowerCase();
+    const obraKey = obraNombre.toLowerCase();
+    const hiloKey = hiloKeyDeCotizacion(c);
+    if (!porCliente.has(clienteKey)) porCliente.set(clienteKey, { nombre: clienteNombre, porObra: new Map() });
+    const { porObra } = porCliente.get(clienteKey);
+    if (!porObra.has(obraKey)) porObra.set(obraKey, { nombre: obraNombre, porHilo: new Map() });
+    const { porHilo } = porObra.get(obraKey);
     if (!porHilo.has(hiloKey)) porHilo.set(hiloKey, []);
     porHilo.get(hiloKey).push(c);
   }
   const clientes = [];
-  for (const [cliente, porObra] of porCliente) {
+  for (const { nombre: cliente, porObra } of porCliente.values()) {
     const obras = [];
-    for (const [obra, porHilo] of porObra) {
+    for (const { nombre: obra, porHilo } of porObra.values()) {
       const hilos = [];
       // hiloId va aparte de categoria a propósito: dos hilos de la misma obra pueden compartir
       // categoría (ver el caso de "cotizaciones separadas, misma obra" en la nota de arriba) y
       // hacía falta algo único para usar de key en el render — la categoría sola colisionaba.
       for (const [hiloKey, versiones] of porHilo) hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, versiones, activa: versiones[0] });
       hilos.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
-      obras.push({ obra, hilos });
+      obras.push({ obra, hilos, principal: elegirHiloPrincipal(hilos) });
     }
     obras.sort((a, b) => {
       const masReciente = (o) => Math.max(...o.hilos.map((h) => h.activa.createdAt || 0));
@@ -959,16 +982,25 @@ function agruparCotizaciones(cotizaciones) {
   return clientes;
 }
 
-const ESTADOS_COTIZACION = ["Pendiente", "Ganada", "Perdida"];
+// "Sin efecto": cotizaciones de una obra que quedaron de lado porque otra de la misma obra se
+// definió (ganó o perdió). No son una pérdida — por eso no suman al historial de Perdidas ni a
+// ningún total.
+const ESTADOS_COTIZACION = ["Pendiente", "Ganada", "Perdida", "Sin efecto"];
+const ESTADOS_RESUMEN = ["Pendiente", "Ganada", "Perdida"];
 const ESTADO_COTIZACION_BADGE = {
   Pendiente: { color: "#B45309", bg: "#FDF1E0" },
   Ganada: { color: "#15803D", bg: "#E9F7EF" },
   Perdida: { color: "#B91C1C", bg: "#FBEAEA" },
+  "Sin efecto": { color: "#686D73", bg: "#F2F3F4" },
 };
-// Resume Total cotizado / Ganadas / Perdidas / Pendientes tomando solo la versión activa
-// de cada hilo (obra + categoría) dentro de la lista de grupos de cliente que se le pase.
+// Una cotización por obra: la principal (ver elegirHiloPrincipal), en su versión activa.
+function cotizacionesQueCuentan(clientes) {
+  return clientes.flatMap((g) => g.obras.map((o) => o.principal?.activa).filter(Boolean));
+}
+// Resume Total cotizado / Ganadas / Perdidas / Pendientes contando una sola cotización por obra
+// (la principal), dentro de la lista de grupos de cliente que se le pase.
 function resumirCotizaciones(clientes) {
-  const activas = clientes.flatMap((g) => g.obras.flatMap((o) => o.hilos.map((h) => h.activa)));
+  const activas = cotizacionesQueCuentan(clientes);
   const resumen = { total: 0, Ganada: { n: 0, total: 0 }, Perdida: { n: 0, total: 0 }, Pendiente: { n: 0, total: 0 } };
   for (const c of activas) {
     const monto = calcularTotalCotizacion(c);
@@ -2197,9 +2229,45 @@ export default function App() {
   const quitarFichaTecnica = (producto) =>
     updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
 
-  const addCotizacion = (data) => addItem(COLLECTIONS.cotizaciones, data);
+  // Una sola cotización "principal" por obra: al marcar una, se le saca la marca a las demás de esa obra.
+  const quitarPrincipalDeObra = (ref, exceptoId) => {
+    cotizaciones
+      .filter((x) => x.id !== exceptoId && x.principal && mismaObraCotizacion(x, ref))
+      .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { principal: false }));
+  };
+  const addCotizacion = (data) => {
+    const { _mantenerPrincipalId, ...resto } = data;
+    if (resto.principal) quitarPrincipalDeObra(resto);
+    // "Mantener la actual": la principal vigente puede ser solo implícita (la más reciente) — hay
+    // que marcarla de verdad, o la nueva (que ahora es la más reciente) le ganaría el lugar.
+    if (_mantenerPrincipalId) updateItem(COLLECTIONS.cotizaciones, _mantenerPrincipalId, { principal: true });
+    addItem(COLLECTIONS.cotizaciones, resto);
+  };
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
-  const updateCotizacion = (id, patch) => updateItem(COLLECTIONS.cotizaciones, id, patch);
+  const updateCotizacion = (id, patch) => {
+    const c = cotizaciones.find((x) => x.id === id);
+    if (c && patch.principal === true) quitarPrincipalDeObra(c, id);
+    if (c && patch.estado !== undefined) {
+      // Cambiar el estado a mano nunca es un "Sin efecto" automático.
+      patch = { ...patch, sinEfectoAuto: false };
+      const hilo = hiloKeyDeCotizacion(c);
+      const otras = cotizaciones.filter((x) => x.id !== id && mismaObraCotizacion(x, c) && hiloKeyDeCotizacion(x) !== hilo);
+      if (patch.estado === "Ganada" || patch.estado === "Perdida") {
+        // Se definió la obra: esta pasa a ser la principal y el resto de lo que seguía en juego
+        // queda "Sin efecto" — no como Perdida, para no ensuciar el historial de perdidas.
+        quitarPrincipalDeObra(c, id);
+        patch = { ...patch, principal: true };
+        otras
+          .filter((x) => (x.estado || "Pendiente") === "Pendiente")
+          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Sin efecto", sinEfectoAuto: true }));
+      } else if (patch.estado === "Pendiente") {
+        otras
+          .filter((x) => x.sinEfectoAuto)
+          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Pendiente", sinEfectoAuto: false }));
+      }
+    }
+    updateItem(COLLECTIONS.cotizaciones, id, patch);
+  };
 
   const addArmadoCombinacion = (data) => addItem(COLLECTIONS.armadosCombinaciones, data);
   const deleteArmadoCombinacion = (id) => deleteItem(COLLECTIONS.armadosCombinaciones, id);
@@ -9066,6 +9134,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
   const [error, setError] = useState("");
   const [conflictoObra, setConflictoObra] = useState(null);
   const [conflictoResuelto, setConflictoResuelto] = useState(false);
+  const [eligiendoPrincipal, setEligiendoPrincipal] = useState(false);
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
@@ -9181,9 +9250,11 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
     };
   };
 
-  const guardarFinal = (hiloId) => {
+  // `principal`: true si esta nueva pasa a ser la que cuenta para la obra; `mantenerPrincipalId`
+  // si se elige dejar la actual (hay que marcarla de verdad, ver addCotizacion en App).
+  const guardarFinal = (hiloId, extra = {}) => {
     if (onGuardarCliente) onGuardarCliente(cliente, telefono);
-    onSave({ ...datosComunes(), estado: "Pendiente", hiloId });
+    onSave({ ...datosComunes(), estado: "Pendiente", hiloId, ...extra });
   };
 
   // A diferencia de crear (guardarFinal), acá no se toca estado/hiloId/fecha de creación —
@@ -9225,11 +9296,25 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
     guardarFinal(hiloId);
   };
 
+  // Es aparte: antes de guardar hay que decidir cuál de las cotizaciones de la obra es la que
+  // cuenta para el resumen — se muestra un resumen de las otras para poder comparar.
   const elegirEsAparte = () => {
     setConflictoObra(null);
     setConflictoResuelto(true);
-    guardarFinal(randId());
+    setEligiendoPrincipal(true);
   };
+
+  const guardarComoPrincipal = (esLaNueva) => {
+    setEligiendoPrincipal(false);
+    guardarFinal(randId(), esLaNueva ? { principal: true } : { _mantenerPrincipalId: hiloPrincipalActual?.activa.id });
+  };
+
+  const hilosObraExistente = useMemo(() => {
+    if (!eligiendoPrincipal) return null;
+    const delaObra = (cotizaciones || []).filter((c) => mismaObraCotizacion(c, { cliente, obra }));
+    return agruparCotizaciones(delaObra)[0]?.obras[0] || null;
+  }, [eligiendoPrincipal, cotizaciones, cliente, obra]);
+  const hiloPrincipalActual = hilosObraExistente?.principal || null;
 
   return (
     <div>
@@ -9360,7 +9445,32 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
           </div>
         </div>
       )}
-      {!conflictoObra && <PrimaryButton onClick={submit}>{editId ? "Guardar cambios" : "Guardar cotización"}</PrimaryButton>}
+      {eligiendoPrincipal && (
+        <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
+          <p className="text-sm font-medium mb-1" style={{ color: INK }}>¿Cuál queda como cotización principal de "{obra || cliente}"?</p>
+          <p className="text-xs mb-2" style={{ color: MUTED }}>
+            Solo la principal cuenta en el resumen de cotizaciones. Estas son las otras de la obra:
+          </p>
+          <div className="space-y-1 mb-3">
+            {(hilosObraExistente?.hilos || []).filter((h) => h.activa.estado !== "Sin efecto").map((h) => (
+              <p key={h.hiloId} className="text-xs" style={{ color: INK }}>
+                · {h.activa.categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(h.activa).toLocaleString()} · {fmtDate(h.activa.fecha)} · {h.activa.estado || "Pendiente"}
+                {h === hiloPrincipalActual && <b style={{ color: ACCENT }}> — la principal hoy</b>}
+              </p>
+            ))}
+            <p className="text-xs" style={{ color: INK }}>
+              · <b>Esta nueva</b> · {categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(datosComunes()).toLocaleString()}
+            </p>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <PrimaryButton onClick={() => guardarComoPrincipal(true)}>Esta nueva es la principal</PrimaryButton>
+            {hiloPrincipalActual && (
+              <SecondaryButton onClick={() => guardarComoPrincipal(false)}>Mantener la actual</SecondaryButton>
+            )}
+          </div>
+        </div>
+      )}
+      {!conflictoObra && !eligiendoPrincipal && <PrimaryButton onClick={submit}>{editId ? "Guardar cambios" : "Guardar cotización"}</PrimaryButton>}
     </div>
   );
 }
@@ -9600,7 +9710,7 @@ function ResumenCotizaciones({ resumen }) {
         <p className="text-xs" style={{ color: ACCENT }}>Total cotizado</p>
         <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {resumen.total.toLocaleString()}</p>
       </div>
-      {ESTADOS_COTIZACION.map((estado) => {
+      {ESTADOS_RESUMEN.map((estado) => {
         const badge = ESTADO_COTIZACION_BADGE[estado];
         return (
           <div key={estado} className="px-3 py-2 rounded-lg" style={{ backgroundColor: badge.bg }}>
@@ -9849,11 +9959,30 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
 
 // Una obra puede tener varias categorías en paralelo (aires, cocina, termo) — cada una es su
 // propio hilo con su propia versión activa e historial, no una revisión de las otras.
-function HiloCategoriaGrupo({ hilo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
+function HiloCategoriaGrupo({ hilo, esPrincipal, hayVarios, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
+  const sinEfecto = hilo.activa.estado === "Sin efecto";
   return (
     <div>
+      {hayVarios && (
+        <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+          {esPrincipal ? (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+              Principal — cuenta en el resumen
+            </span>
+          ) : (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#F2F3F4", color: "#686D73" }}>
+              {sinEfecto ? "Sin efecto — no cuenta" : "Otra opción — no cuenta en el resumen"}
+            </span>
+          )}
+          {!esPrincipal && !sinEfecto && (
+            <button onClick={() => onUpdate(hilo.activa.id, { principal: true })} className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: ACCENT, color: ACCENT }}>
+              Hacer principal
+            </button>
+          )}
+        </div>
+      )}
       <CotizacionCard
         c={hilo.activa} esActiva productos={productos} matrizCostos={matrizCostos}
         historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
@@ -9903,7 +10032,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
         <div className="px-3 pb-3 space-y-3">
           {grupo.hilos.map((h) => (
             <HiloCategoriaGrupo
-              key={h.hiloId} hilo={h} productos={productos} matrizCostos={matrizCostos}
+              key={h.hiloId} hilo={h} esPrincipal={grupo.principal === h} hayVarios={nHilos > 1} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
@@ -9933,7 +10062,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
         </div>
         <div className="flex items-center gap-3 text-xs flex-wrap shrink-0">
           <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString()}</span>
-          {ESTADOS_COTIZACION.map((estado) => (
+          {ESTADOS_RESUMEN.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
               {estado}: {resumen[estado].n}
             </span>
@@ -11844,7 +11973,7 @@ function AgregarRepuestoTransitoForm({ productos, onGuardar }) {
 // app intente adivinar solo cuánto pedir (eso queda a su criterio).
 function resumenPendientePorProducto(cotizaciones, comprometidas) {
   const grupos = agruparCotizaciones(cotizaciones || []);
-  const activas = grupos.flatMap((g) => g.obras.flatMap((o) => o.hilos.map((h) => h.activa)));
+  const activas = cotizacionesQueCuentan(grupos);
   const map = new Map();
   const agregar = (codigo, cantidad) => {
     if (!codigo) return;
@@ -12470,8 +12599,8 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
   // (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones) corresponde la plata cotizada
   // — cruzando cada línea contra el catálogo, mismas categorías que ya usa Catálogo de productos.
   const detalleCotizaciones = useMemo(
-    () => gruposCotizacion.flatMap((g) => g.obras.flatMap((o) => o.hilos.map((h) => {
-      const c = h.activa;
+    () => gruposCotizacion.flatMap((g) => g.obras.filter((o) => o.principal).map((o) => {
+      const c = o.principal.activa;
       const categoriasMap = new Map();
       for (const l of c.lineas || []) {
         const p = productos.find((pp) => pp.nombre === l.codigo);
@@ -12485,7 +12614,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         estado: ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
         categorias: [...categoriasMap.entries()].map(([label, monto]) => ({ label, monto })),
       };
-    }))),
+    })),
     [gruposCotizacion, productos]
   );
 
@@ -12658,7 +12787,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
           <p className="text-base font-bold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString()}</p>
         </div>
         <div className="flex items-center gap-3 text-xs mb-2 flex-wrap">
-          {ESTADOS_COTIZACION.map((estado) => (
+          {ESTADOS_RESUMEN.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
               {estado}: {resumenCot[estado].n} · U$S {resumenCot[estado].total.toLocaleString()}
             </span>

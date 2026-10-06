@@ -8712,11 +8712,15 @@ function tituloGrupoLista(p) {
 }
 // Devuelve las secciones { categoria, grupos: [{ titulo, filas }] } de las categorías elegidas. Quedan
 // afuera los productos marcados como no disponibles y los que no tienen precio de lista cargado.
-function construirListaPrecios(productos, categoriasElegidas) {
+const esProductoUsado = (p) => /usado/i.test(p.nombre || "");
+function entraEnListaPrecios(p, categoria, incluirUsados) {
+  return p.categoriaPrincipal === categoria && !p.noDisponible && Number(p.precioLista) > 0 && (incluirUsados || !esProductoUsado(p));
+}
+function construirListaPrecios(productos, categoriasElegidas, incluirUsados = false) {
   const secciones = [];
   for (const cat of CATEGORIAS_LISTA_PRECIOS) {
     if (!categoriasElegidas.includes(cat.key)) continue;
-    const items = productos.filter((p) => p.categoriaPrincipal === cat.key && !p.noDisponible && Number(p.precioLista) > 0);
+    const items = productos.filter((p) => entraEnListaPrecios(p, cat.key, incluirUsados));
     if (items.length === 0) continue;
     const grupos = [];
     for (const entry of agruparProductosPorCategoria(items)) {
@@ -8746,8 +8750,10 @@ function ListaPreciosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
   const [ocupado, setOcupado] = useState("");
   const [msg, setMsg] = useState(null);
-  const secciones = useMemo(() => construirListaPrecios(productos, elegidas), [productos, elegidas]);
-  const cuentaPorCategoria = (key) => productos.filter((p) => p.categoriaPrincipal === key && !p.noDisponible && Number(p.precioLista) > 0).length;
+  const [incluirUsados, setIncluirUsados] = useState(false);
+  const secciones = useMemo(() => construirListaPrecios(productos, elegidas, incluirUsados), [productos, elegidas, incluirUsados]);
+  const cuentaPorCategoria = (key) => productos.filter((p) => entraEnListaPrecios(p, key, incluirUsados)).length;
+  const cantidadUsados = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && Number(p.precioLista) > 0 && esProductoUsado(p)).length;
   const sinPrecio = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && !(Number(p.precioLista) > 0));
   const total = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
   const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
@@ -8781,6 +8787,12 @@ function ListaPreciosPanel({ productos, onCerrar }) {
           );
         })}
       </div>
+      {cantidadUsados > 0 && (
+        <label className="flex items-center gap-2 text-xs mb-3" style={{ color: INK }}>
+          <input type="checkbox" checked={incluirUsados} onChange={(e) => setIncluirUsados(e.target.checked)} />
+          Incluir equipos usados ({cantidadUsados}, los que tienen "USADO" en el código)
+        </label>
+      )}
       {secciones.length > 0 && (
         <div className="mb-3 space-y-0.5">
           {secciones.map((s) => (

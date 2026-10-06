@@ -26,6 +26,7 @@ import {
   downloadListaPdf, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
+  downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
   COMPANY, fmtFecha,
 } from "./pdf";
 
@@ -8686,6 +8687,135 @@ function agruparProductosPorCategoria(productos) {
   return entries;
 }
 
+// ---------- Lista de precios para clientes ----------
+// Catálogo armado con los productos reales cargados: por categoría (Aire Acondicionado, Cocina,
+// Termocalefón), agrupado por tipo dentro de cada una, y solo código, capacidad y precio de lista.
+const CATEGORIAS_LISTA_PRECIOS = [
+  { key: "Aire Acondicionado", label: "Aire Acondicionado" },
+  { key: "Cocina", label: "Cocina" },
+  { key: "Termocalefones", label: "Termocalefón" },
+];
+function capacidadDeProducto(p) {
+  const v = (p.especValor || "").trim();
+  if (v) return v;
+  const n3 = (p.subcategoria3 || "").trim();
+  // Anafes: la cantidad de zonas/quemadores es lo que hace de capacidad.
+  if (p.subcategoria === "Anafe" && /^\d+$/.test(n3)) return `${n3} ${p.subcategoria2 === "Inducción" ? "zonas" : "quemadores"}`;
+  return "";
+}
+function tituloGrupoLista(p) {
+  const n3 = (p.subcategoria3 || "").trim();
+  const partes = [p.subcategoria, p.subcategoria2, /^\d+$/.test(n3) ? "" : n3].map((s) => (s || "").trim()).filter(Boolean);
+  // En termocalefones la subcategoría es siempre "Termocalefón": lo que agrupa es la línea del modelo.
+  const lista = p.categoriaPrincipal === "Termocalefones" && partes.length > 1 ? partes.slice(1) : partes;
+  return lista.join(" — ") || "Otros";
+}
+// Devuelve las secciones { categoria, grupos: [{ titulo, filas }] } de las categorías elegidas. Quedan
+// afuera los productos marcados como no disponibles y los que no tienen precio de lista cargado.
+function construirListaPrecios(productos, categoriasElegidas) {
+  const secciones = [];
+  for (const cat of CATEGORIAS_LISTA_PRECIOS) {
+    if (!categoriasElegidas.includes(cat.key)) continue;
+    const items = productos.filter((p) => p.categoriaPrincipal === cat.key && !p.noDisponible && Number(p.precioLista) > 0);
+    if (items.length === 0) continue;
+    const grupos = [];
+    for (const entry of agruparProductosPorCategoria(items)) {
+      const titulo = tituloGrupoLista(entry.items[0]);
+      const filas = entry.items.map((p) => ({ codigo: p.nombre, capacidad: capacidadDeProducto(p), precio: Number(p.precioLista) }));
+      const anterior = grupos[grupos.length - 1];
+      if (anterior && anterior.titulo === titulo) anterior.filas.push(...filas); // p. ej. anafes de 2, 3 y 4 zonas: un solo grupo
+      else grupos.push({ titulo, filas });
+    }
+    secciones.push({ categoria: cat.label, grupos });
+  }
+  return secciones;
+}
+function downloadListaPreciosExcel(secciones, fecha) {
+  const wb = XLSX.utils.book_new();
+  for (const sec of secciones) {
+    const filas = [["Grupo", "Código", "Capacidad", "Precio de lista U$S"]];
+    for (const g of sec.grupos) for (const f of g.filas) filas.push([g.titulo, f.codigo, f.capacidad || "", f.precio]);
+    const ws = XLSX.utils.aoa_to_sheet(filas);
+    ws["!cols"] = [{ wch: 34 }, { wch: 30 }, { wch: 16 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, ws, sec.categoria.slice(0, 31));
+  }
+  XLSX.writeFile(wb, `Lista_de_precios_AEON_${fecha}.xlsx`);
+}
+
+function ListaPreciosPanel({ productos, onCerrar }) {
+  const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
+  const [ocupado, setOcupado] = useState("");
+  const [msg, setMsg] = useState(null);
+  const secciones = useMemo(() => construirListaPrecios(productos, elegidas), [productos, elegidas]);
+  const cuentaPorCategoria = (key) => productos.filter((p) => p.categoriaPrincipal === key && !p.noDisponible && Number(p.precioLista) > 0).length;
+  const sinPrecio = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && !(Number(p.precioLista) > 0));
+  const total = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
+  const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  const hoy = todayISO();
+  const accion = async (nombre, fn) => {
+    setOcupado(nombre);
+    setMsg(null);
+    try { await fn(); } catch (e) { console.error("Lista de precios", e); setMsg("No se pudo generar la lista. Probá de nuevo."); }
+    setOcupado("");
+  };
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <p className="text-base font-bold" style={{ color: INK }}>Lista de precios para clientes</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Sale de los productos cargados hoy.</p>
+        </div>
+        <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
+      </div>
+      <div className="flex gap-2 flex-wrap mb-3">
+        {CATEGORIAS_LISTA_PRECIOS.map((c) => {
+          const activo = elegidas.includes(c.key);
+          return (
+            <button
+              key={c.key} type="button" onClick={() => alternar(c.key)}
+              className="text-sm px-3 py-1.5 rounded-lg border font-medium"
+              style={{ borderColor: activo ? ACCENT : BORDER, backgroundColor: activo ? ACCENT : "#FFFFFF", color: activo ? "#FFFFFF" : INK }}
+            >
+              {c.label} ({cuentaPorCategoria(c.key)})
+            </button>
+          );
+        })}
+      </div>
+      {secciones.length > 0 && (
+        <div className="mb-3 space-y-0.5">
+          {secciones.map((s) => (
+            <p key={s.categoria} className="text-xs" style={{ color: MUTED }}>
+              <b style={{ color: INK }}>{s.categoria}:</b> {s.grupos.map((g) => `${g.titulo} (${g.filas.length})`).join(" · ")}
+            </p>
+          ))}
+        </div>
+      )}
+      {sinPrecio.length > 0 && (
+        <p className="text-xs mb-3" style={{ color: "#B45309" }}>{sinPrecio.length} producto(s) sin precio de lista cargado no entran en la lista.</p>
+      )}
+      <div className="flex gap-2 flex-wrap">
+        <PrimaryButton onClick={() => accion("pdf", () => downloadListaPreciosPdf(secciones, hoy))} disabled={total === 0 || !!ocupado}>
+          <Download size={14} /> {ocupado === "pdf" ? "Generando..." : "PDF"}
+        </PrimaryButton>
+        <SecondaryButton onClick={() => accion("excel", async () => downloadListaPreciosExcel(secciones, hoy))} disabled={total === 0 || !!ocupado}>
+          <Download size={14} /> Excel
+        </SecondaryButton>
+        <SecondaryButton
+          onClick={() => accion("compartir", async () => {
+            const bytes = await generateListaPreciosPdf(secciones, hoy);
+            const ok = await compartirArchivo(bytes, nombreArchivoListaPrecios(hoy), "Lista de precios — AEON Home Tech");
+            if (!ok) await downloadListaPreciosPdf(secciones, hoy);
+          })}
+          disabled={total === 0 || !!ocupado}
+        >
+          <Share2 size={14} /> {ocupado === "compartir" ? "Generando..." : "Compartir"}
+        </SecondaryButton>
+      </div>
+      {msg && <p className="text-xs mt-2" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
 function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo }) {
@@ -8775,6 +8905,7 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
   const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
   const [verTablaMulti, setVerTablaMulti] = useState(false);
+  const [verListaPrecios, setVerListaPrecios] = useState(false);
 
   // Stock vendible por modelo, para mostrarlo directo en la tarjeta del producto — misma
   // cuenta que usa Depósito (todo menos Vendido/Dado de baja, que ya salieron del circuito).
@@ -8845,6 +8976,7 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
+          <SecondaryButton onClick={() => setVerListaPrecios((v) => !v)}><FileText size={14} /> Lista de precios</SecondaryButton>
           <SecondaryButton onClick={descargarPlantillaCatalogo}><Download size={14} /> Plantilla</SecondaryButton>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="hidden" />
           <SecondaryButton onClick={() => fileInputRef.current?.click()}>
@@ -8868,6 +9000,8 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
           </button>
         ))}
       </div>
+
+      {verListaPrecios && <ListaPreciosPanel productos={productos} onCerrar={() => setVerListaPrecios(false)} />}
 
       {importResultado && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultado}</div>

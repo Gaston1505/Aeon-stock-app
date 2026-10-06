@@ -2362,6 +2362,18 @@ export default function App() {
     const ref = await addDoc(collection(db, COLLECTIONS.pedidosFacturacion), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
     return ref.id;
   };
+  // Clientes con sus obras y la cuenta de cada una (contrato, entregado, cobrado, facturado): se calcula
+  // una sola vez acá y se reparte a las fichas de Clientes, al Resumen y al Reporte Financiero.
+  const empresasObras = useMemo(
+    () => construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos: pedidosFacturacion }),
+    [clientes, cotizaciones, movimientos, pedidosFacturacion]
+  );
+  const cuentasObras = useMemo(
+    () => calcularCuentasObras(empresasObras, { fichasObras, facturasObra, comprometidas, productos, equipos }),
+    [empresasObras, fichasObras, facturasObra, comprometidas, productos, equipos]
+  );
+  const listaObrasCuenta = useMemo(() => listaCuentasObras(empresasObras, cuentasObras), [empresasObras, cuentasObras]);
+
   // Ficha de obra (contrato y pagos): un documento por cliente+obra, con merge para ir sumando campos.
   // Los errores se propagan para poder avisar si falta la regla de Firestore.
   const guardarFichaObra = async (id, base, patch) => {
@@ -3465,7 +3477,7 @@ export default function App() {
         {tab === "resumen" && (
           <Resumen
             equipos={equipos} transito={transito} cotizaciones={cotizaciones} comprometidas={comprometidas}
-            clientes={clientes}
+            clientes={clientes} cuentasObras={listaObrasCuenta}
             proximosServices={proximosServices} alertasContacto={alertasContacto}
             seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
             playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
@@ -3486,7 +3498,7 @@ export default function App() {
         {tab === "panel" && (
           <PanelView
             ventasCerradas={ventasCerradas} cotizaciones={cotizaciones} comprometidas={comprometidas}
-            presupuestosReparacion={presupuestosReparacion}
+            presupuestosReparacion={presupuestosReparacion} cuentasObras={listaObrasCuenta}
           />
         )}
 
@@ -3720,8 +3732,8 @@ export default function App() {
         {tab === "clientes" && (
           <ClientesView
             clientes={filteredClientes} query={query} onQuery={setQuery}
-            cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidosFacturacion}
-            fichasObras={fichasObras} facturasObra={facturasObra} comprometidas={comprometidas} productos={productos} equipos={equipos}
+            empresas={empresasObras} cuentas={cuentasObras} pedidos={pedidosFacturacion}
+            fichasObras={fichasObras} facturasObra={facturasObra}
             onGuardarFicha={guardarFichaObra} onGuardarFactura={guardarFacturaObra} onBorrarFactura={borrarFacturaObra}
             onNew={() => setDrawer("cliente")}
             onDelete={deleteCliente}
@@ -3780,7 +3792,7 @@ export default function App() {
         {tab === "reporte-joel" && (
           <ReporteJoelView
             mercaderia={mercaderiaFisicaParaguay} transito={transito} productos={productos}
-            comprometidas={comprometidas} cotizaciones={cotizaciones}
+            comprometidas={comprometidas} cotizaciones={cotizaciones} cuentasObras={listaObrasCuenta}
           />
         )}
         </div>
@@ -4780,7 +4792,59 @@ function VentasCerradasPanel({ ventasCerradas }) {
   );
 }
 
-function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate, onNuevaCotizacion }) {
+// Cuenta por obra para los resúmenes: una fila por obra con contrato, entregado, cobrado y lo entregado
+// sin pagar, más el total. Viene de las fichas de Clientes (contrato, pagos y facturas de cada obra).
+function totalesCuentasObras(lista) {
+  return sumarCuentas(lista.map((f) => f.cuenta));
+}
+function CuentaObrasTabla({ lista, onNavigate, compacta = false }) {
+  const tot = totalesCuentasObras(lista);
+  const cols = ["Cliente / obra", "Contratado", "Entregado", "Cobrado", "Entregado sin pagar", "Falta cobrar"];
+  return (
+    <div className="overflow-x-auto rounded-lg border" style={{ borderColor: BORDER }}>
+      <table className="w-full text-sm">
+        <thead>
+          <tr style={{ backgroundColor: "#FAFBFC" }}>
+            {cols.map((h, i) => (
+              <th key={h} className={`font-medium px-3 py-2 border-b ${i === 0 ? "text-left" : "text-right"}`} style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lista.map((f, i) => (
+            <tr
+              key={i} className={`border-b last:border-0 ${onNavigate ? "cursor-pointer hover:bg-gray-50" : ""}`} style={{ borderColor: BORDER }}
+              onClick={onNavigate ? () => onNavigate("clientes") : undefined}
+            >
+              <td className="px-3 py-2" style={{ color: INK }}>
+                <span className="font-medium">{f.cliente}</span>
+                <span className="block text-xs" style={{ color: MUTED }}>{f.obra}</span>
+              </td>
+              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.contrato > 0 ? usd(f.cuenta.contrato) : "—"}</td>
+              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.montoEntregado > 0 ? usd(f.cuenta.montoEntregado) : "—"}</td>
+              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.cobrado > 0 ? usd(f.cuenta.cobrado) : "—"}</td>
+              <td className="px-3 py-2 text-right font-medium" style={{ color: f.cuenta.entregadoNoPagado > 0 ? "#B91C1C" : INK }}>{f.cuenta.entregadoNoPagado > 0 ? usd(f.cuenta.entregadoNoPagado) : "—"}</td>
+              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.restanteCobro > 0 ? usd(f.cuenta.restanteCobro) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ backgroundColor: ACCENT_LIGHT }}>
+            <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>Total</td>
+            {[tot.contrato, tot.montoEntregado, tot.cobrado, tot.entregadoNoPagado, tot.restanteCobro].map((v, i) => (
+              <td key={i} className="px-3 py-2 text-sm font-medium text-right" style={{ color: ACCENT }}>{usd(v)}</td>
+            ))}
+          </tr>
+        </tfoot>
+      </table>
+      {!compacta && tot.adelantoSinConsumir > 0 && (
+        <p className="text-xs px-3 py-2" style={{ color: "#B45309" }}>Adelantos cobrados todavía sin consumir en entregas: {usd(tot.adelantoSinConsumir)}</p>
+      )}
+    </div>
+  );
+}
+
+function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate, onNuevaCotizacion }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
 
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
@@ -4792,10 +4856,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, pro
 
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
-  const porCobrar = useMemo(
-    () => comprometidas.map(clasificarComprometida).reduce((acc, c) => acc + c.saldoPago, 0),
-    [comprometidas]
-  );
+  const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
 
   // Un mini-resumen por cada área de la barra de menú, para navegar directo — los números
   // grandes (stock, historial, detalle) viven en su propia pestaña, acá solo el estado general.
@@ -4814,7 +4875,8 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, pro
     {
       label: "Ventas", icon: FileSignature, tab: "cotizaciones",
       value: `U$S ${resumenCot.Pendiente.total.toLocaleString()} pendiente`,
-      sub: `Por cobrar: U$S ${porCobrar.toLocaleString()}`,
+      sub: `Entregado sin pagar: U$S ${totalCobranza.entregadoNoPagado.toLocaleString()}`,
+      subColor: totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : undefined,
     },
     {
       label: "Clientes", icon: Phone, tab: "clientes",
@@ -4890,6 +4952,25 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, pro
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <TrendingUp size={15} style={{ color: ACCENT }} />
+            <h3 className="text-base font-bold" style={{ color: INK }}>Cobranza por obra</h3>
+            <InfoTip>
+              <p>Sale de la ficha de cada cliente (Clientes → obra): lo cerrado por contrato, lo entregado en mercadería, lo cobrado y lo que se entregó sin que esté pagado.</p>
+              <p>Los pagos se cargan en la ficha de la obra; los de Ventas comprometidas se suman solos.</p>
+            </InfoTip>
+          </div>
+          <button type="button" onClick={() => onNavigate("clientes")} className="text-xs underline" style={{ color: ACCENT }}>Ver fichas de clientes</button>
+        </div>
+        {cuentasObras.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>Todavía no hay obras con contrato, entregas o pagos cargados.</p>
+        ) : (
+          <CuentaObrasTabla lista={cuentasObras} onNavigate={onNavigate} />
         )}
       </div>
 
@@ -5235,7 +5316,8 @@ function ReparacionMantenimientoCard({ presupuestos }) {
   );
 }
 
-function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion }) {
+function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion, cuentasObras }) {
+  const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
   const hoy = todayISO();
   const mesActual = mesPrefijo(hoy);
   const [yActual, mActual] = mesActual.split("-").map(Number);
@@ -5305,6 +5387,12 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
           label="Producto más vendido (90 días)"
           value={topProductos[0] ? topProductos[0][0] : "—"}
           sub={topProductos[0] ? `${topProductos[0][1]} unidad(es)` : "Sin ventas registradas"}
+        />
+        <IndicadorCard
+          label="Entregado sin pagar"
+          value={`U$S ${totalCobranza.entregadoNoPagado.toLocaleString()}`}
+          sub={`Cobrado U$S ${totalCobranza.cobrado.toLocaleString()} de U$S ${totalCobranza.contrato.toLocaleString()} contratados`}
+          subColor={totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : MUTED}
         />
       </div>
 
@@ -12247,50 +12335,62 @@ function FacturasObra({ facturas, remisiones, pedidos, empresa, obra, onGuardar,
   );
 }
 
-// Ficha por cliente (empresa): agrupa por obra lo que ya está cargado en el resto de la app —
-// cotizaciones, remisiones (salidas agrupadas por remito) y su pedido de facturación — y suma el
-// contrato, los pagos y las facturas de cada obra, con la cuenta de lo entregado y lo cobrado.
-function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, fichasObras, facturasObra, comprometidas, productos, equipos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
+// Clientes (empresas) con sus obras: junta cotizaciones, salidas y pedidos de facturación por empresa y
+// obra (sin distinguir mayúsculas). Lo usan las fichas de Clientes y los resúmenes.
+const normClave = (s) => (s || "").trim().toLowerCase();
+function construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos }) {
+  const map = new Map();
+  const empresa = (nombre) => {
+    const k = normClave(nombre);
+    if (!k) return null;
+    if (!map.has(k)) map.set(k, { key: k, nombre: nombre.trim(), contactos: [], obras: new Map(), ultimo: 0 });
+    return map.get(k);
+  };
+  const obraDe = (e, nombreObra) => {
+    const k = normClave(nombreObra) || "(sin obra)";
+    if (!e.obras.has(k)) e.obras.set(k, { key: k, nombre: (nombreObra || "").trim() || "(Sin obra)", cotizaciones: [], movimientos: [], pedidos: [] });
+    return e.obras.get(k);
+  };
+  for (const c of cotizaciones) { const e = empresa(c.cliente); if (e) { obraDe(e, c.obra).cotizaciones.push(c); e.ultimo = Math.max(e.ultimo, c.createdAt || 0); } }
+  for (const m of movimientos) { const e = empresa(m.empresaCliente || m.cliente); if (e) { obraDe(e, m.obra).movimientos.push(m); e.ultimo = Math.max(e.ultimo, m.createdAt || 0); } }
+  for (const p of pedidos) { const e = empresa(p.cliente); if (e) { obraDe(e, p.obra).pedidos.push(p); e.ultimo = Math.max(e.ultimo, p.createdAt || 0); } }
+  for (const cl of clientes) { const e = empresa(cl.empresa); if (e) e.contactos.push(cl); }
+  return Array.from(map.values()).sort((a, b) => b.ultimo - a.ultimo);
+}
+// Cuenta de cada obra (clave `${empresa.key}|${obra.key}`): contrato / entregado / cobrado / facturado.
+function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometidas, productos, equipos }) {
+  const out = new Map();
+  for (const e of empresas) {
+    for (const o of e.obras.values()) {
+      out.set(`${e.key}|${o.key}`, calcularCuentaObra({
+        cotizaciones: o.cotizaciones, movimientos: o.movimientos,
+        ficha: fichasObras.find((f) => f.id === idFichaObra(e.key, o.key)),
+        facturas: facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key),
+        comprometidas: comprometidas.filter((c) => normClave(c.razonSocial) === e.key && (normClave(c.obra) || "(sin obra)") === o.key),
+        productos, equipos,
+      }));
+    }
+  }
+  return out;
+}
+// Lista plana para los resúmenes: una fila por obra con movimiento (contrato, entrega o cobro); primero
+// las que más plata entregada sin pagar tienen.
+function listaCuentasObras(empresas, cuentas) {
+  const filas = [];
+  for (const e of empresas) {
+    for (const o of e.obras.values()) {
+      const cuenta = cuentas.get(`${e.key}|${o.key}`);
+      if (cuenta && (cuenta.contrato > 0 || cuenta.montoEntregado > 0 || cuenta.cobrado > 0)) filas.push({ cliente: e.nombre, obra: o.nombre, cuenta });
+    }
+  }
+  return filas.sort((a, b) => b.cuenta.entregadoNoPagado - a.cuenta.entregadoNoPagado || b.cuenta.contrato - a.cuenta.contrato);
+}
+
+// Ficha por cliente (empresa): una tarjeta por obra con la cuenta, el contrato, los pagos y las facturas.
+function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
-  const norm = (s) => (s || "").trim().toLowerCase();
-
-  const empresas = useMemo(() => {
-    const map = new Map();
-    const empresa = (nombre) => {
-      const k = norm(nombre);
-      if (!k) return null;
-      if (!map.has(k)) map.set(k, { key: k, nombre: nombre.trim(), contactos: [], obras: new Map(), ultimo: 0 });
-      return map.get(k);
-    };
-    const obraDe = (e, nombreObra) => {
-      const k = norm(nombreObra) || "(sin obra)";
-      if (!e.obras.has(k)) e.obras.set(k, { key: k, nombre: (nombreObra || "").trim() || "(Sin obra)", cotizaciones: [], movimientos: [], pedidos: [] });
-      return e.obras.get(k);
-    };
-    for (const c of cotizaciones) { const e = empresa(c.cliente); if (e) { obraDe(e, c.obra).cotizaciones.push(c); e.ultimo = Math.max(e.ultimo, c.createdAt || 0); } }
-    for (const m of movimientos) { const e = empresa(m.empresaCliente || m.cliente); if (e) { obraDe(e, m.obra).movimientos.push(m); e.ultimo = Math.max(e.ultimo, m.createdAt || 0); } }
-    for (const p of pedidos) { const e = empresa(p.cliente); if (e) { obraDe(e, p.obra).pedidos.push(p); e.ultimo = Math.max(e.ultimo, p.createdAt || 0); } }
-    for (const cl of clientes) { const e = empresa(cl.empresa); if (e) e.contactos.push(cl); }
-    return Array.from(map.values()).sort((a, b) => b.ultimo - a.ultimo);
-  }, [clientes, cotizaciones, movimientos, pedidos]);
-
-  // Cuenta (contrato / entregado / cobrado / facturado) de cada obra, calculada una sola vez.
-  const cuentas = useMemo(() => {
-    const out = new Map();
-    for (const e of empresas) {
-      for (const o of e.obras.values()) {
-        out.set(`${e.key}|${o.key}`, calcularCuentaObra({
-          cotizaciones: o.cotizaciones, movimientos: o.movimientos,
-          ficha: fichasObras.find((f) => f.id === idFichaObra(e.key, o.key)),
-          facturas: facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key),
-          comprometidas: comprometidas.filter((c) => norm(c.razonSocial) === e.key && (norm(c.obra) || "(sin obra)") === o.key),
-          productos, equipos,
-        }));
-      }
-    }
-    return out;
-  }, [empresas, fichasObras, facturasObra, comprometidas, productos, equipos]);
+  const norm = normClave;
 
   const q = norm(query);
   const visibles = empresas.filter((e) => !q || norm(e.nombre).includes(q) || Array.from(e.obras.values()).some((o) => norm(o.nombre).includes(q)));
@@ -12411,7 +12511,7 @@ function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, fichasOb
   );
 }
 
-function ClientesView({ clientes, cotizaciones, movimientos, pedidos, fichasObras, facturasObra, comprometidas, productos, equipos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
+function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
   const [vista, setVista] = useState("fichas");
   const toggleVista = (
     <div className="flex gap-2 mb-3">
@@ -12436,8 +12536,7 @@ function ClientesView({ clientes, cotizaciones, movimientos, pedidos, fichasObra
       >
         {toggleVista}
         <FichasClientes
-          clientes={clientes} cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidos}
-          fichasObras={fichasObras} facturasObra={facturasObra} comprometidas={comprometidas} productos={productos} equipos={equipos}
+          empresas={empresas} cuentas={cuentas} pedidos={pedidos} fichasObras={fichasObras} facturasObra={facturasObra}
           query={query} onPedido={onPedido} onGuardarFicha={onGuardarFicha} onGuardarFactura={onGuardarFactura} onBorrarFactura={onBorrarFactura}
         />
       </Section>
@@ -14039,7 +14138,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
 // Reporte para Joel — físico en Paraguay + en tránsito (modelos y costos, por separado), más
 // el resumen de cotizaciones y plata por cobrar. Reutiliza la misma cuenta de mercadería física
 // que el reporte de seguro, así los dos reportes nunca dan números distintos para lo mismo.
-function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotizaciones }) {
+function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotizaciones, cuentasObras }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [compartiendo, setCompartiendo] = useState(false);
   const [error, setError] = useState("");
@@ -14102,6 +14201,12 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     }).filter((g) => g.items.length > 0);
   }, [comprometidas]);
 
+  // Cuenta por obra (de las fichas de Clientes) en el formato plano que usan el PDF y el Excel.
+  const cuentaObrasData = useMemo(() => cuentasObras.map((f) => ({
+    cliente: f.cliente, obra: f.obra, contrato: f.cuenta.contrato, entregado: f.cuenta.montoEntregado,
+    cobrado: f.cuenta.cobrado, sinPagar: f.cuenta.entregadoNoPagado, faltaCobrar: f.cuenta.restanteCobro,
+  })), [cuentasObras]);
+
   const handleExcel = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasFisicoPorCategoria.map((f) => ({
@@ -14138,6 +14243,12 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         "Categoría": CATEGORIAS_PLATA_COBRAR.find((cat) => cat.key === c.categoria)?.label || "Cerrado",
         "Cliente": c.razonSocial, "Obra": c.obra, "Saldo por cobrar U$S": c.saldoPago,
       }))), "Plata por cobrar");
+    const totObras = totalesCuentasObras(cuentasObras);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Cliente", "Obra", "Contratado U$S", "Entregado U$S", "Cobrado U$S", "Entregado sin pagar U$S", "Falta cobrar U$S"],
+      ...cuentaObrasData.map((d) => [d.cliente, d.obra, d.contrato, d.entregado, d.cobrado, d.sinPagar, d.faltaCobrar]),
+      ["TOTAL", "", totObras.contrato, totObras.montoEntregado, totObras.cobrado, totObras.entregadoNoPagado, totObras.restanteCobro],
+    ]), "Cuenta por obra");
     XLSX.writeFile(wb, `Reporte_Financiero_${todayISO()}.xlsx`);
   };
 
@@ -14145,7 +14256,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO(), cuentaObrasData);
     } catch (e) {
       console.error("Error generando reporte para Joel", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
@@ -14157,9 +14268,9 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     setCompartiendo(true);
     setError("");
     try {
-      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO(), cuentaObrasData);
       const ok = await compartirArchivo(bytes, nombreArchivoReporteJoel(todayISO()), "Reporte Financiero");
-      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO());
+      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO(), cuentaObrasData);
     } catch (e) {
       console.error("Error compartiendo reporte para Joel", e);
       setError("No se pudo compartir el PDF. Probá de nuevo.");
@@ -14304,6 +14415,18 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
             }}
           />
         )}
+      </div>
+
+      <div className="mb-6">
+        <div className="flex items-center gap-1 mb-2">
+          <p className="text-base font-bold" style={{ color: ACCENT }}>Cuenta por obra — contratado, entregado y cobrado</p>
+          <InfoTip>
+            <p>Sale de la ficha de cada cliente (Clientes → obra): lo cerrado por contrato, la mercadería entregada (solo salidas por venta, valuadas con la cotización), lo cobrado y lo entregado sin pagar.</p>
+          </InfoTip>
+        </div>
+        {cuentasObras.length === 0
+          ? <p className="text-sm" style={{ color: MUTED }}>Todavía no hay obras con contrato, entregas o pagos cargados.</p>
+          : <CuentaObrasTabla lista={cuentasObras} />}
       </div>
 
       <PlataPorCobrarSection comprometidas={comprometidas} />

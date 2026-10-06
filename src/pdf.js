@@ -2010,7 +2010,7 @@ export async function downloadRentabilidadPdf(cotizacion, r) {
 // `resumenCot`: { total, Pendiente: {n,total}, Ganada: {n,total}, Perdida: {n,total} }
 // `detalleCotizaciones`: [{ cliente, obra, monto, estado, categorias: [{label, monto}] }]
 // `plataPorCobrar`: [{ label, total, items: [{ razonSocial, obra, saldoPago }] }] — solo grupos con saldo.
-export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha) {
+export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha, cuentaObras = []) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -2285,6 +2285,61 @@ export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTran
     }
   }
 
+  // Sección 5: cuenta por obra (contrato, entregado, cobrado) — sale de las fichas de Clientes
+  if (cuentaObras.length > 0) {
+    const colNombre = 95;
+    const colNum = (CONTENT_W - colNombre * 2) / 5;
+    const recortar = (str, w, size) => {
+      let t = String(str ?? "");
+      while (t.length > 1 && font.widthOfTextAtSize(t, size) > w - 6) t = t.slice(0, -1);
+      return t;
+    };
+    const sumas = { contrato: 0, entregado: 0, cobrado: 0, sinPagar: 0, faltaCobrar: 0 };
+    const drawHeaderObras = () => {
+      rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+      let cx = MARGIN;
+      [["Cliente", colNombre], ["Obra", colNombre], ["Contratado", colNum], ["Entregado", colNum], ["Cobrado", colNum], ["Entregado sin pagar", colNum], ["Falta cobrar", colNum]].forEach(([label, w]) => {
+        const lw = bold.widthOfTextAtSize(label, 6.5);
+        text(label, cx + w / 2 - lw / 2, y - 13, { bold: true, size: 6.5, color: ACCENT });
+        cx += w;
+      });
+      y -= 20;
+    };
+    ensureSpace(60);
+    text("Cuenta por obra — contratado, entregado y cobrado", MARGIN, y, { bold: true, size: 9 });
+    y -= 14;
+    drawHeaderObras();
+    for (const d of cuentaObras) {
+      const rowH = 16;
+      ensureSpace(rowH + 4);
+      if (y === PAGE_H - MARGIN) drawHeaderObras();
+      for (const k of Object.keys(sumas)) sumas[k] += Number(d[k]) || 0;
+      let cx = MARGIN;
+      rect(cx, y - rowH, colNombre, rowH, { border: BORDER });
+      text(recortar(d.cliente, colNombre, 6.5), cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+      cx += colNombre;
+      rect(cx, y - rowH, colNombre, rowH, { border: BORDER });
+      text(recortar(d.obra, colNombre, 6.5), cx + 3, y - rowH / 2 - 3, { size: 6.5 });
+      cx += colNombre;
+      [d.contrato, d.entregado, d.cobrado, d.sinPagar, d.faltaCobrar].forEach((v, i) => {
+        rect(cx, y - rowH, colNum, rowH, { border: BORDER });
+        centerText(Number(v) > 0 ? `U$S ${fmtNum(v)}` : "—", cx, y, colNum, rowH, { size: 6.5, color: i === 3 && Number(v) > 0 ? ROJO : INK });
+        cx += colNum;
+      });
+      y -= rowH;
+    }
+    ensureSpace(20);
+    rect(MARGIN, y - 16, colNombre * 2, 16, { fill: ACCENT_LIGHT });
+    text("TOTAL", MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+    let cxT = MARGIN + colNombre * 2;
+    [sumas.contrato, sumas.entregado, sumas.cobrado, sumas.sinPagar, sumas.faltaCobrar].forEach((v) => {
+      rect(cxT, y - 16, colNum, 16, { fill: ACCENT_LIGHT });
+      centerText(`U$S ${fmtNum(v)}`, cxT, y, colNum, 16, { bold: true, size: 6.5, color: ACCENT });
+      cxT += colNum;
+    });
+    y -= 26;
+  }
+
   return pdf.save();
 }
 
@@ -2292,8 +2347,8 @@ export function nombreArchivoReporteJoel(fecha) {
   return `Reporte_Financiero_${fecha || ""}.pdf`;
 }
 
-export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha) {
-  const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha);
+export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha, cuentaObras = []) {
+  const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, plataPorCobrar, fecha, cuentaObras);
   downloadBlob(bytes, nombreArchivoReporteJoel(fecha), "application/pdf");
 }
 

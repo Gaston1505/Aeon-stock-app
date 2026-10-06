@@ -2125,12 +2125,27 @@ export default function App() {
     if (!cat) return;
     const cantidadRetirada = Number(data.cantidad) || 1;
 
+    // Salida para una venta comprometida elegida en el formulario: se descuenta de esa reserva y del
+    // comprometido del equipo (igual que un retiro parcial desde Ventas comprometidas).
+    const reserva = data.reservaId ? comprometidas.find((c) => c.id === data.reservaId) : null;
+    if (reserva) {
+      const retirada = (Number(reserva.cantidadRetirada) || 0) + cantidadRetirada;
+      updateItem(COLLECTIONS.ventasComprometidas, reserva.id, {
+        cantidadRetirada: retirada,
+        ...(retirada >= Number(reserva.cantidad) ? { estado: "Completada" } : {}),
+      });
+    }
+
     if (cat.type === "equipo") {
       const source = equipos.find((e) => e.id === data.sourceId);
       if (source) {
         const restante = (Number(source.cantidad) || 1) - cantidadRetirada;
-        if (restante > 0) updateItem(COLLECTIONS.equipos, source.id, { cantidad: restante });
-        else deleteItem(COLLECTIONS.equipos, source.id);
+        if (restante > 0) {
+          updateItem(COLLECTIONS.equipos, source.id, {
+            cantidad: restante,
+            ...(reserva ? { comprometido: Math.max(0, (Number(source.comprometido) || 0) - cantidadRetirada) } : {}),
+          });
+        } else deleteItem(COLLECTIONS.equipos, source.id);
       }
       const motivo = MOTIVOS_SALIDA.find((m) => m.value === data.motivo);
       if (motivo && motivo.trackea) {
@@ -3807,7 +3822,7 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "escanear-equipo"} onClose={() => setDrawer(null)} title="Buscar equipo por escaneo">
         <EscanearEquipoForm
-          equipos={equipos} playa={playa} productos={productos}
+          equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas}
           onSalida={addMovimiento}
           onReubicar={reubicarEquipoPorEscaneo}
           onEnviarPlaya={enviarEquipoAPlayaPorEscaneo}
@@ -3815,7 +3830,7 @@ export default function App() {
         />
       </Drawer>
       <Drawer open={drawer === "movimiento"} onClose={() => setDrawer(null)} title="Nueva salida">
-        <MovimientoForm equipos={equipos} playa={playa} productos={productos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addMovimiento(d) : crearSolicitud("salida", d); setDrawer(null); }} />
+        <MovimientoForm equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addMovimiento(d) : crearSolicitud("salida", d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "entrada"} onClose={() => setDrawer(null)} title="Nueva entrada">
         <EntradaForm equipos={equipos} productos={productos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addEntrada(d) : crearSolicitud("entrada", d); setDrawer(null); }} />
@@ -6466,8 +6481,21 @@ function categoriaOrigenParaEquipo(equipo) {
 
 // `preset` (opcional): { categoria, sourceId } — precarga categoría y producto ya elegidos (ej.
 // viniendo de "Buscar por escaneo"), sin bloquear los selects por si el usuario quiere cambiarlos.
-function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = true }) {
+// Reservas (ventas comprometidas) que todavía tienen mercadería pendiente de retirar de un equipo.
+function reservasPendientesDeEquipo(comprometidas, equipoId) {
+  return (comprometidas || [])
+    .filter((c) => c.equipoId === equipoId && c.estado !== "Retirada")
+    .map((c) => ({ ...c, pendiente: Math.max(0, (Number(c.cantidad) || 0) - (Number(c.cantidadRetirada) || 0)) }))
+    .filter((c) => c.pendiente > 0);
+}
+const textoReserva = (r) => `${r.razonSocial || "Sin cliente"}${r.obra ? ` — ${r.obra}` : ""}`;
+
+function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave, preset, esAdmin = true }) {
   const [fecha, setFecha] = useState(todayISO());
+  // Qué hacer con el stock comprometido: "libre" (solo lo no comprometido), "reserva" (la salida es
+  // para una de las ventas comprometidas) o "igual" (sacar usando lo comprometido a otros).
+  const [decisionComp, setDecisionComp] = useState("libre");
+  const [reservaId, setReservaId] = useState("");
   const [categoria, setCategoria] = useState(preset ? preset.categoria : "");
   const [sourceId, setSourceId] = useState(preset ? preset.sourceId : "");
   const [cantidad, setCantidad] = useState(1);
@@ -6503,19 +6531,50 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
 
   const source = opciones.find((o) => o.id === sourceId);
   const comprometido = source && cat.type === "equipo" ? (Number(source.comprometido) || 0) : 0;
+  const reservas = source && cat.type === "equipo" ? reservasPendientesDeEquipo(comprometidas, source.id) : [];
+  const reservaElegida = decisionComp === "reserva" ? reservas.find((r) => r.id === reservaId) : null;
   // Lo ya agregado en este mismo lote (todavía no guardado en Firestore) también hay que
   // descontarlo del disponible, para no dejar cargar de más entre varias líneas del mismo producto.
-  const yaEnLote = source ? lineas.filter((l) => l.sourceId === source.id).reduce((acc, l) => acc + l.cantidad, 0) : 0;
-  const disponible = !source ? 0
+  const lotesDeSource = source ? lineas.filter((l) => l.sourceId === source.id) : [];
+  const yaEnLote = lotesDeSource.reduce((acc, l) => acc + l.cantidad, 0);
+  const enLoteLibreOIgual = lotesDeSource.filter((l) => l.decisionComp !== "reserva").reduce((acc, l) => acc + l.cantidad, 0);
+  const enLoteDeReserva = reservaElegida ? lotesDeSource.filter((l) => l.reservaId === reservaElegida.id).reduce((acc, l) => acc + l.cantidad, 0) : 0;
+  const fisicoRestante = !source ? 0
     : cat.type === "producto-repuesto" ? Math.max(0, (Number(source.stockDisponible) || 0) - yaEnLote)
-    : Math.max(0, (Number(source.cantidad) || 1) - comprometido - yaEnLote);
+    : Math.max(0, (Number(source.cantidad) || 1) - yaEnLote);
+  const libres = !source ? 0
+    : cat.type === "producto-repuesto" ? fisicoRestante
+    : Math.max(0, (Number(source.cantidad) || 1) - comprometido - enLoteLibreOIgual);
+  // Con "sacar igual" se puede llegar a todo el stock físico; con "para esa venta", solo a lo que a esa reserva le falta.
+  const disponible = decisionComp === "igual" ? fisicoRestante
+    : decisionComp === "reserva" ? (reservaElegida ? Math.min(reservaElegida.pendiente - enLoteDeReserva, fisicoRestante) : 0)
+    : Math.min(libres, fisicoRestante);
 
+  const resetDecision = () => { setDecisionComp("libre"); setReservaId(""); };
   const handleCategoria = (v) => {
     setCategoria(v);
     setSourceId("");
     setCantidad(1);
     setMotivo(MOTIVO_DEFAULT[v] || "");
     setMonto("");
+    resetDecision();
+  };
+  const elegirDecision = (d) => {
+    setDecisionComp(d);
+    setReservaId("");
+    setCantidad(1);
+    if (d === "reserva") setMotivo("Venta");
+  };
+  const elegirReserva = (id) => {
+    setReservaId(id);
+    setCantidad(1);
+    const r = reservas.find((x) => x.id === id);
+    // Completa el remito con los datos de esa venta si todavía están vacíos (se pueden cambiar).
+    if (r) {
+      if (!cliente) setCliente(r.razonSocial || "");
+      if (!empresaCliente) setEmpresaCliente(r.razonSocial || "");
+      if (!obra) setObra(r.obra || "");
+    }
   };
 
   const handleFoto = async (e) => {
@@ -6538,16 +6597,24 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
       return;
     }
     const cant = Number(cantidad) || 0;
+    if (decisionComp === "reserva" && !reservaElegida) {
+      setError("Elegí para cuál de las ventas comprometidas es esta salida.");
+      return;
+    }
     if (cant <= 0 || cant > disponible) {
       setError(
-        comprometido > 0
-          ? `Solo hay ${disponible} libres — ${comprometido} de este producto ya están comprometidas a otra venta y no se pueden retirar para esto.`
+        decisionComp === "libre" && comprometido > 0
+          ? `Solo hay ${disponible} libres — ${comprometido} de este producto están comprometidas. Elegí abajo qué querés hacer con lo comprometido si necesitás más.`
           : `La cantidad debe ser mayor a 0 y no puede superar lo disponible (${disponible}).`
       );
       return;
     }
     if (cat.type === "equipo" && !motivo) {
       setError("Elegí el motivo de la salida.");
+      return;
+    }
+    if (decisionComp === "reserva" && motivo !== "Venta") {
+      setError("Una salida para una venta comprometida tiene que ser por Venta.");
       return;
     }
     const modelo = cat.type === "equipo" ? source.modelo
@@ -6561,20 +6628,26 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
     // Si el mismo producto ya está en el lote, se suma a esa línea en vez de duplicarla — cada
     // línea dispara su propia resta de stock contra un snapshot que no se actualiza entre
     // líneas, así que dos líneas separadas del mismo producto calcularían mal el remanente.
-    const existenteIdx = lineas.findIndex((l) => l.sourceId === sourceId);
+    // "Sacar igual": lo que pasa de lo libre se toma de lo comprometido — queda anotado a quiénes.
+    const usaComprometido = decisionComp === "igual" ? Math.max(0, cant - libres) : 0;
+    const existenteIdx = lineas.findIndex((l) => l.sourceId === sourceId && (l.decisionComp || "libre") === decisionComp && (l.reservaId || "") === (reservaElegida?.id || ""));
     if (existenteIdx >= 0) {
-      setLineas(lineas.map((l, i) => i === existenteIdx ? { ...l, cantidad: l.cantidad + cant, monto: l.monto + nuevoMonto } : l));
+      setLineas(lineas.map((l, i) => i === existenteIdx ? { ...l, cantidad: l.cantidad + cant, monto: l.monto + nuevoMonto, usaComprometido: (l.usaComprometido || 0) + usaComprometido } : l));
     } else {
       setLineas([...lineas, {
         categoria: cat.value, categoriaLabel: cat.label, sourceId, codigo, modelo,
         cantidad: cant, motivo: cat.type === "equipo" ? motivo : "",
         monto: nuevoMonto,
+        decisionComp, reservaId: reservaElegida?.id || "", reservaTexto: reservaElegida ? textoReserva(reservaElegida) : "",
+        cotizacionId: reservaElegida?.cotizacionId || "", usaComprometido,
+        comprometidosA: usaComprometido > 0 ? reservas.map((r) => `${textoReserva(r)} (${r.pendiente})`).join(", ") : "",
       }]);
     }
     setSourceId("");
     setCantidad(1);
     setMotivo(MOTIVO_DEFAULT[categoria] || "");
     setMonto("");
+    resetDecision();
   };
 
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
@@ -6594,12 +6667,16 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
       return;
     }
     for (const l of lineas) {
+      const aviso = l.usaComprometido > 0 ? `Salió usando ${l.usaComprometido} u. comprometida(s) a: ${l.comprometidosA}.` : "";
       onSave({
         fecha, categoria: l.categoria, categoriaLabel: l.categoriaLabel, sourceId: l.sourceId,
         codigo: l.codigo, modelo: l.modelo, cantidad: l.cantidad, motivo: l.motivo,
         cliente, obra, monto: l.monto,
-        remito, responsable, observaciones,
+        remito, responsable, observaciones: [observaciones, aviso].filter(Boolean).join(" · "),
         lugarSalida, empresaCliente, rucCliente, firmaNombre, firmaCedula, fotoRemito,
+        // Si la salida es para una venta comprometida, se descuenta de esa reserva (ver addMovimiento).
+        ...(l.reservaId ? { reservaId: l.reservaId, cotizacionId: l.cotizacionId } : {}),
+        ...(l.usaComprometido > 0 ? { usaComprometido: l.usaComprometido, comprometidosA: l.comprometidosA } : {}),
       });
     }
   };
@@ -6619,17 +6696,17 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
         <Field label="Producto">
           {cat.type === "equipo" ? (
             <SelectorEquipo
-              equiposDisponibles={opciones} productos={productos}
-              value={sourceId} onChange={(id) => { setSourceId(id); setCantidad(1); }}
+              equiposDisponibles={opciones} productos={productos} comprometidas={comprometidas}
+              value={sourceId} onChange={(id) => { setSourceId(id); setCantidad(1); resetDecision(); }}
             />
           ) : cat.type === "producto-repuesto" ? (
             <SelectorProducto
               productos={opciones} productosPorGrupo={opcionesPorGrupo}
-              value={sourceId} onChange={(id) => { setSourceId(id); setCantidad(1); }}
+              value={sourceId} onChange={(id) => { setSourceId(id); setCantidad(1); resetDecision(); }}
               placeholder="Repuesto..."
             />
           ) : (
-            <Select value={sourceId} onChange={(e) => { setSourceId(e.target.value); setCantidad(1); }}>
+            <Select value={sourceId} onChange={(e) => { setSourceId(e.target.value); setCantidad(1); resetDecision(); }}>
               <option value="">Seleccionar...</option>
               {opciones.map((o) => (
                 <option key={o.id} value={o.id}>{o.descripcion} (disponible: {o.cantidad || 1})</option>
@@ -6642,11 +6719,60 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
         </Field>
       )}
       {comprometido > 0 && (
-        <div className="flex items-start gap-1.5 mb-3 p-2 rounded" style={{ backgroundColor: "#FEF3E2" }}>
-          <AlertTriangle size={14} style={{ color: "#B45309", marginTop: 2 }} />
-          <p className="text-xs" style={{ color: "#92400E" }}>
-            {comprometido} unidad(es) de este producto ya están comprometidas a otra venta (ver pestaña "Ventas comprometidas") — solo quedan {disponible} libres.
-          </p>
+        <div className="mb-3 p-2.5 rounded" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
+          <div className="flex items-start gap-1.5">
+            <AlertTriangle size={14} style={{ color: "#B45309", marginTop: 2 }} />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold" style={{ color: "#92400E" }}>
+                {comprometido} unidad(es) de este producto están comprometidas — libres: {libres} de {Number(source.cantidad) || 1}.
+              </p>
+              {reservas.length > 0 ? (
+                <ul className="mt-1 space-y-0.5">
+                  {reservas.map((r) => (
+                    <li key={r.id} className="text-xs" style={{ color: "#92400E" }}>
+                      · <b>{textoReserva(r)}</b> — {r.pendiente} pendiente{r.pendiente !== 1 ? "s" : ""}{r.fecha ? ` (comprometida el ${fmtDate(r.fecha)})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs mt-0.5" style={{ color: "#92400E" }}>No se pudo ver a quién (ver pestaña "Ventas comprometidas").</p>
+              )}
+            </div>
+          </div>
+          {reservas.length > 0 && esAdmin && (
+            <div className="mt-2.5">
+              <p className="text-xs font-medium mb-1.5" style={{ color: "#92400E" }}>¿Qué querés hacer?</p>
+              <div className="flex gap-1.5 flex-wrap">
+                {[
+                  ["libre", `Sacar solo lo libre (${libres})`],
+                  ["reserva", "Es para una de esas ventas"],
+                  ["igual", "Sacar igual, usando lo comprometido"],
+                ].map(([k, label]) => (
+                  <button
+                    key={k} type="button" onClick={() => elegirDecision(k)}
+                    className="text-xs px-2.5 py-1.5 rounded-lg border font-medium text-left"
+                    style={{ borderColor: decisionComp === k ? ACCENT : "#F5D9A8", backgroundColor: decisionComp === k ? ACCENT : "#FFFFFF", color: decisionComp === k ? "#FFFFFF" : INK }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {decisionComp === "reserva" && (
+                <div className="mt-2">
+                  <Select value={reservaId} onChange={(e) => elegirReserva(e.target.value)}>
+                    <option value="">¿Para cuál venta?</option>
+                    {reservas.map((r) => <option key={r.id} value={r.id}>{textoReserva(r)} — {r.pendiente} pendiente(s)</option>)}
+                  </Select>
+                  <p className="text-[11px] mt-1" style={{ color: "#92400E" }}>La salida se descuenta de esa reserva y completa el remito con sus datos.</p>
+                </div>
+              )}
+              {decisionComp === "igual" && (
+                <p className="text-xs mt-2 font-medium" style={{ color: "#B91C1C" }}>
+                  Lo que pase de {libres} libre(s) se saca de lo comprometido y esas ventas quedan sin cubrir. Queda anotado en el remito.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
       {source && (
@@ -6675,6 +6801,8 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
                 <span className="text-xs ml-1.5" style={{ color: MUTED }}>
                   {l.categoriaLabel}{l.motivo ? ` · ${l.motivo}` : ""}{l.monto > 0 ? ` · U$S ${fmtN(l.monto)}` : ""}
                 </span>
+                {l.reservaTexto && <span className="block text-xs" style={{ color: "#15803D" }}>Para la venta comprometida: {l.reservaTexto}</span>}
+                {l.usaComprometido > 0 && <span className="block text-xs" style={{ color: "#B91C1C" }}>Usa {l.usaComprometido} u. comprometida(s) a: {l.comprometidosA}</span>}
               </div>
               <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
                 <X size={14} style={{ color: MUTED }} />
@@ -6722,7 +6850,7 @@ function MovimientoForm({ equipos, playa, productos, onSave, preset, esAdmin = t
 
 // Buscar un equipo ya cargado por código o N° de serie (pistola o cámara) y, una vez
 // encontrado, elegir qué hacer: darle salida (reusa MovimientoForm) o reubicarlo.
-function EscanearEquipoForm({ equipos, playa, productos, onSalida, onReubicar, onEnviarPlaya, onClose }) {
+function EscanearEquipoForm({ equipos, playa, productos, comprometidas, onSalida, onReubicar, onEnviarPlaya, onClose }) {
   const [paso, setPaso] = useState("scan"); // scan | encontrado | salida | reubicar
   const [scanInput, setScanInput] = useState("");
   const [equipo, setEquipo] = useState(null);
@@ -6877,7 +7005,7 @@ function EscanearEquipoForm({ equipos, playa, productos, onSalida, onReubicar, o
       <div>
         <button onClick={() => setPaso("encontrado")} className="text-xs mb-3" style={{ color: ACCENT }}>← Volver</button>
         <MovimientoForm
-          equipos={equipos} playa={playa} productos={productos}
+          equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas}
           preset={{ categoria: cat.value, sourceId: equipo.id }}
           onSave={(data) => { onSalida(data); onClose(); }}
         />
@@ -8992,7 +9120,7 @@ function SelectorProducto({ productos, productosPorGrupo, value, onChange, place
 // de las unidades disponibles de ESE modelo — nunca una lista plana de todas las unidades juntas.
 // `equiposDisponibles` ya viene filtrado por quien llama (mismo filtro de estado que usaba antes
 // de este componente) — acá solo se agrupa y se presenta.
-function SelectorEquipo({ equiposDisponibles, productos, value, onChange, placeholder }) {
+function SelectorEquipo({ equiposDisponibles, productos, comprometidas, value, onChange, placeholder }) {
   const lista = equiposDisponibles || [];
   const equipoSel = lista.find((e) => e.id === value);
   const [modeloElegido, setModeloElegido] = useState(equipoSel?.modelo || "");
@@ -9071,6 +9199,7 @@ function SelectorEquipo({ equiposDisponibles, productos, value, onChange, placeh
           {unidades.map((e) => {
             const disponible = Math.max(0, (Number(e.cantidad) || 1) - (Number(e.comprometido) || 0));
             const elegida = e.id === value;
+            const reservasDeUnidad = reservasPendientesDeEquipo(comprometidas, e.id);
             return (
               <button
                 key={e.id}
@@ -9078,8 +9207,15 @@ function SelectorEquipo({ equiposDisponibles, productos, value, onChange, placeh
                 className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 border-b last:border-0"
                 style={{ backgroundColor: elegida ? ACCENT_LIGHT : "#FFFFFF", borderColor: BORDER }}
               >
-                <span style={{ color: INK }}>{e.codigo}</span>
-                <span className="text-xs" style={{ color: MUTED }}>disponible: {disponible}</span>
+                <span style={{ color: INK }}>
+                  {e.codigo}
+                  {(Number(e.comprometido) || 0) > 0 && (
+                    <span className="block text-[11px]" style={{ color: "#B45309" }}>
+                      Comprometido {Number(e.comprometido)}{reservasDeUnidad.length > 0 ? `: ${reservasDeUnidad.map((r) => `${textoReserva(r)} ×${r.pendiente}`).join(", ")}` : ""}
+                    </span>
+                  )}
+                </span>
+                <span className="text-xs shrink-0" style={{ color: MUTED }}>disponible: {disponible}</span>
               </button>
             );
           })}

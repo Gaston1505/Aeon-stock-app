@@ -11964,15 +11964,18 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   const productosLista = Array.from(filas.values()).sort((a, b) => b.contratado - a.contratado || a.codigo.localeCompare(b.codigo));
   const unidadesContratadas = productosLista.reduce((a, f) => a + f.contratado, 0);
 
+  // Todo a centavos: restar sumas de decimales deja restos tipo 4e-13 que aparecerían como saldo.
+  const c2 = (n) => Math.round(n * 100) / 100;
+  const entregado = c2(montoEntregado);
   return {
-    contrato, contratoOrigen, totalGanadas, montoEntregado, unidadesEntregadas, unidadesContratadas, cobrado, facturado, pagos,
+    contrato: c2(contrato), contratoOrigen, totalGanadas, montoEntregado: entregado, unidadesEntregadas, unidadesContratadas, cobrado: c2(cobrado), facturado: c2(facturado), pagos,
     productos: productosLista, ganadas,
-    entregadoYPagado: Math.min(montoEntregado, cobrado),
-    entregadoNoPagado: Math.max(0, montoEntregado - cobrado),
-    adelantoSinConsumir: Math.max(0, cobrado - montoEntregado),
-    restanteEntrega: Math.max(0, contrato - montoEntregado),
-    restanteCobro: Math.max(0, contrato - cobrado),
-    sinFacturar: Math.max(0, montoEntregado - facturado),
+    entregadoYPagado: c2(Math.min(entregado, cobrado)),
+    entregadoNoPagado: c2(Math.max(0, entregado - cobrado)),
+    adelantoSinConsumir: c2(Math.max(0, cobrado - entregado)),
+    restanteEntrega: c2(Math.max(0, contrato - entregado)),
+    restanteCobro: c2(Math.max(0, contrato - cobrado)),
+    sinFacturar: c2(Math.max(0, entregado - facturado)),
   };
 }
 

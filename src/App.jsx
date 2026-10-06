@@ -1043,6 +1043,35 @@ function resumirCotizaciones(clientes) {
   return resumen;
 }
 
+// Al marcar una cotización como Ganada / Perdida / Sin efecto se pide el motivo (un click) y un
+// comentario, para poder ver con el tiempo si se repite — por ejemplo, que se pierda por precio.
+const MOTIVO_OTRO = "Otro";
+const MOTIVO_SIN_EFECTO_AUTO = "Se definió otra cotización de la obra";
+const MOTIVOS_ESTADO_COTIZACION = {
+  Perdida: ["Precio", "Competencia (otra marca o proveedor)", "Plazo de entrega", "Condiciones de pago / financiación", "Cliente postergó o canceló la obra", "El producto no cumplía lo pedido", "Sin respuesta del cliente", MOTIVO_OTRO],
+  Ganada: ["Precio", "Confianza / relación con el cliente", "Marca / calidad del producto", "Plazo de entrega / disponibilidad en stock", "Condiciones de pago / financiación", MOTIVO_OTRO],
+  "Sin efecto": [MOTIVO_SIN_EFECTO_AUTO, "Cliente cambió el alcance", "Obra postergada", "Cargada por error", MOTIVO_OTRO],
+};
+// Cuántas veces se repite cada motivo, por estado. Mira todas las cotizaciones definidas (no solo la
+// principal de cada obra); los "Sin efecto" automáticos no se cuentan porque no son una decisión.
+function analizarMotivosCotizaciones(clientes) {
+  const out = {};
+  for (const estado of Object.keys(MOTIVOS_ESTADO_COTIZACION)) out[estado] = { n: 0, sinMotivo: 0, motivos: new Map() };
+  for (const g of clientes) for (const o of g.obras) for (const h of o.hilos) {
+    const c = h.activa;
+    const bloque = out[c.estado];
+    if (!bloque || (c.estado === "Sin efecto" && c.sinEfectoAuto)) continue;
+    bloque.n += 1;
+    if (!c.motivoEstado) { bloque.sinMotivo += 1; continue; }
+    const item = bloque.motivos.get(c.motivoEstado) || { motivo: c.motivoEstado, n: 0, total: 0, casos: [] };
+    item.n += 1;
+    item.total += calcularTotalCotizacion(c);
+    item.casos.push({ cliente: g.cliente, obra: o.obra, comentario: c.comentarioEstado || "", monto: calcularTotalCotizacion(c) });
+    bloque.motivos.set(c.motivoEstado, item);
+  }
+  return out;
+}
+
 // Zona de playa guarda el código del catálogo al final de la descripción entre paréntesis
 // (ej: "Anafe 2 Hornillas Vitrocerámica (AE-AC-2T-30-ON)") — esto extrae solo el código.
 function codigoDePlaya(descripcion) {
@@ -2334,6 +2363,8 @@ export default function App() {
     if (c && patch.estado !== undefined) {
       // Cambiar el estado a mano nunca es un "Sin efecto" automático.
       patch = { ...patch, sinEfectoAuto: false };
+      // Un estado que no es Ganada/Perdida/Sin efecto (volver a Pendiente) borra el motivo anterior.
+      if (patch.motivoEstado === undefined && !MOTIVOS_ESTADO_COTIZACION[patch.estado]) patch = { ...patch, motivoEstado: "", comentarioEstado: "", fechaEstado: "" };
       const hilo = hiloKeyDeCotizacion(c);
       const otras = cotizaciones.filter((x) => x.id !== id && mismaObraYRubroCotizacion(x, c) && hiloKeyDeCotizacion(x) !== hilo);
       if (patch.estado === "Ganada" || patch.estado === "Perdida") {
@@ -2343,11 +2374,11 @@ export default function App() {
         patch = { ...patch, principal: true };
         otras
           .filter((x) => (x.estado || "Pendiente") === "Pendiente")
-          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Sin efecto", sinEfectoAuto: true }));
+          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Sin efecto", sinEfectoAuto: true, motivoEstado: MOTIVO_SIN_EFECTO_AUTO, comentarioEstado: "", fechaEstado: todayISO() }));
       } else if (patch.estado === "Pendiente") {
         otras
           .filter((x) => x.sinEfectoAuto)
-          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Pendiente", sinEfectoAuto: false }));
+          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Pendiente", sinEfectoAuto: false, motivoEstado: "", comentarioEstado: "", fechaEstado: "" }));
       }
     }
     updateItem(COLLECTIONS.cotizaciones, id, patch);
@@ -2965,10 +2996,12 @@ export default function App() {
       rows: () => cotizaciones.map((c) => ({
         "Fecha": c.fecha, "Cliente": c.cliente, "Obra": c.obra, "Categoría": c.categoria,
         "Monto U$S": calcularTotalCotizacion(c), "Estado": ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
+        "Motivo": c.motivoEstado || "", "Comentario del motivo": c.comentarioEstado || "",
       })),
       columnasPdf: [
         { key: "Fecha", label: "Fecha", width: 55 }, { key: "Cliente", label: "Cliente" }, { key: "Obra", label: "Obra" },
         { key: "Monto U$S", label: "Monto U$S", width: 65 }, { key: "Estado", label: "Estado", width: 65 },
+        { key: "Motivo", label: "Motivo" },
       ],
     },
     "presupuestos-reparacion": {
@@ -10393,6 +10426,118 @@ function ResumenCotizaciones({ resumen }) {
   );
 }
 
+// Ventana que se abre al marcar una cotización como Ganada / Perdida / Sin efecto: motivo con un
+// click + comentario libre. "Otro" obliga a escribir el comentario (si no, no sirve para decidir).
+function MotivoEstadoDialog({ cotizacion, estado, onConfirmar, onCancelar }) {
+  const opciones = MOTIVOS_ESTADO_COTIZACION[estado] || [];
+  const inicialValido = cotizacion.estado === estado;
+  const [motivo, setMotivo] = useState(inicialValido ? cotizacion.motivoEstado || "" : "");
+  const [comentario, setComentario] = useState(inicialValido ? cotizacion.comentarioEstado || "" : "");
+  const [error, setError] = useState("");
+  const badge = ESTADO_COTIZACION_BADGE[estado];
+  const guardar = () => {
+    if (!motivo) { setError("Elegí el motivo principal."); return; }
+    if (motivo === MOTIVO_OTRO && !comentario.trim()) { setError("Si el motivo es \"Otro\", contá qué pasó en el comentario."); return; }
+    onConfirmar({ estado, motivoEstado: motivo, comentarioEstado: comentario.trim(), fechaEstado: todayISO() });
+  };
+  const pregunta = estado === "Perdida" ? "¿Por qué se perdió?" : estado === "Ganada" ? "¿Por qué se ganó?" : "¿Por qué queda sin efecto?";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,23,32,0.75)" }} onClick={onCancelar}>
+      <div className="rounded-xl p-5 w-full overflow-y-auto" style={{ backgroundColor: "#FFFFFF", maxWidth: 440, maxHeight: "90vh" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: badge.bg, color: badge.color }}>{estado}</span>
+          <p className="text-xs" style={{ color: MUTED }}>{cotizacion.cliente}{cotizacion.obra ? ` — ${cotizacion.obra}` : ""}</p>
+        </div>
+        <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{pregunta}</p>
+        <div className="flex gap-2 flex-wrap mb-3">
+          {opciones.map((op) => {
+            const activo = motivo === op;
+            return (
+              <button
+                key={op} type="button" onClick={() => { setMotivo(op); setError(""); }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border font-medium text-left"
+                style={{ borderColor: activo ? ACCENT : BORDER, backgroundColor: activo ? ACCENT : "#FFFFFF", color: activo ? "#FFFFFF" : INK }}
+              >
+                {op}
+              </button>
+            );
+          })}
+        </div>
+        <Field label={motivo === MOTIVO_OTRO ? "Comentario (obligatorio)" : "Comentario (opcional)"}>
+          <Textarea
+            value={comentario} onChange={(e) => setComentario(e.target.value)}
+            placeholder={estado === "Perdida" ? "Ej: la competencia ofreció 8% menos con entrega inmediata" : "Ej: qué dijo el cliente, qué decidió la compra"}
+          />
+        </Field>
+        {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+        <div className="flex justify-end gap-2 mt-2">
+          <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+          <PrimaryButton onClick={guardar}>Guardar</PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Panel plegable en Cotizaciones: qué motivos se repiten al ganar, perder o dejar sin efecto.
+function ResumenMotivosCotizaciones({ grupos }) {
+  const [abierto, setAbierto] = useState(false);
+  const [verCasos, setVerCasos] = useState(null); // `${estado}|${motivo}`
+  const analisis = useMemo(() => analizarMotivosCotizaciones(grupos), [grupos]);
+  const hayAlgo = Object.values(analisis).some((b) => b.n > 0);
+  if (!hayAlgo) return null;
+  return (
+    <div className="mb-4 rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+      <button type="button" onClick={() => setAbierto(!abierto)} className="w-full flex items-center justify-between px-3 py-2.5 text-left">
+        <span className="text-sm font-semibold" style={{ color: INK }}>Por qué se gana, se pierde o queda sin efecto</span>
+        <ChevronDown size={16} style={{ color: MUTED, transform: abierto ? "rotate(180deg)" : "none" }} />
+      </button>
+      {abierto && (
+        <div className="px-3 pb-3 grid gap-3 md:grid-cols-3">
+          {["Perdida", "Ganada", "Sin efecto"].map((estado) => {
+            const b = analisis[estado];
+            const badge = ESTADO_COTIZACION_BADGE[estado];
+            const items = [...b.motivos.values()].sort((x, y) => y.n - x.n);
+            const maxN = Math.max(1, ...items.map((i) => i.n));
+            return (
+              <div key={estado} className="rounded-lg p-2.5" style={{ backgroundColor: badge.bg }}>
+                <p className="text-xs font-semibold mb-1.5" style={{ color: badge.color }}>{estado} ({b.n}){estado === "Sin efecto" ? " · decididas a mano" : ""}</p>
+                {items.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía sin motivos cargados.</p>}
+                {items.map((i) => {
+                  const clave = `${estado}|${i.motivo}`;
+                  return (
+                    <div key={i.motivo} className="mb-1.5">
+                      <button type="button" className="w-full text-left" onClick={() => setVerCasos(verCasos === clave ? null : clave)}>
+                        <div className="flex justify-between gap-2 text-xs" style={{ color: INK }}>
+                          <span>{i.motivo}</span>
+                          <span className="whitespace-nowrap font-medium">{i.n} · U$S {i.total.toLocaleString()}</span>
+                        </div>
+                        <div className="h-1.5 rounded mt-0.5" style={{ backgroundColor: "rgba(255,255,255,0.7)" }}>
+                          <div className="h-1.5 rounded" style={{ width: `${(i.n / maxN) * 100}%`, backgroundColor: badge.color }} />
+                        </div>
+                      </button>
+                      {verCasos === clave && (
+                        <div className="mt-1 space-y-1">
+                          {i.casos.map((k, idx) => (
+                            <p key={idx} className="text-[11px] px-1.5 py-1 rounded" style={{ backgroundColor: "rgba(255,255,255,0.8)", color: INK }}>
+                              <b>{k.cliente}{k.obra ? ` — ${k.obra}` : ""}</b> · U$S {k.monto.toLocaleString()}{k.comentario ? ` · ${k.comentario}` : ""}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {b.sinMotivo > 0 && <p className="text-[11px] mt-1" style={{ color: MUTED }}>{b.sinMotivo} sin motivo cargado</p>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SALIDA_COTIZACION_BADGE = {
   completa: { label: "Salida completa", bg: "#E8F3EC", color: "#1F7A44" },
   parcial: { label: "Salida parcial", bg: "#FEF3E2", color: "#B45309" },
@@ -10495,8 +10640,20 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
   const estadoSalida = estadoSalidaCotizacion(c);
   const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;
   const [verRentabilidad, setVerRentabilidad] = useState(false);
+  const [dialogoEstado, setDialogoEstado] = useState(null); // estado elegido que espera su motivo
+  const cambiarEstado = (nuevo) => {
+    if (MOTIVOS_ESTADO_COTIZACION[nuevo]) setDialogoEstado(nuevo);
+    else onUpdate(c.id, { estado: nuevo });
+  };
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: esActiva ? "#FFFFFF" : "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      {dialogoEstado && (
+        <MotivoEstadoDialog
+          cotizacion={c} estado={dialogoEstado}
+          onCancelar={() => setDialogoEstado(null)}
+          onConfirmar={(datos) => { setDialogoEstado(null); onUpdate(c.id, datos); }}
+        />
+      )}
       <div className="flex items-start justify-between mb-1">
         <p className="text-xs" style={{ color: MUTED }}>{fmtDate(c.fecha)}</p>
         <button onClick={() => onDelete(c.id)} className="p-1 rounded hover:bg-gray-100">
@@ -10541,7 +10698,7 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
           <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Info interna — no aparece en el PDF</p>
           <div className="flex items-center gap-2 flex-wrap">
             <div style={{ width: 110 }}>
-              <Select value={estado} onChange={(e) => onUpdate(c.id, { estado: e.target.value })}>
+              <Select value={estado} onChange={(e) => cambiarEstado(e.target.value)}>
                 {ESTADOS_COTIZACION.map((op) => <option key={op} value={op}>{op}</option>)}
               </Select>
             </div>
@@ -10549,6 +10706,20 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
               <ComentarioEditor value={c.clienteReal} onSave={(v) => onUpdate(c.id, { clienteReal: v })} placeholder="Cliente real / inversor" />
             </div>
           </div>
+          {MOTIVOS_ESTADO_COTIZACION[estado] && (
+            <div className="mt-2 flex items-start gap-2 flex-wrap">
+              <p className="text-xs flex-1 min-w-[160px]" style={{ color: c.motivoEstado ? INK : MUTED }}>
+                {c.motivoEstado
+                  ? <><b>Motivo:</b> {c.motivoEstado}{c.comentarioEstado ? ` — ${c.comentarioEstado}` : ""}</>
+                  : "Sin motivo cargado."}
+              </p>
+              {!(estado === "Sin efecto" && c.sinEfectoAuto) && (
+                <button type="button" onClick={() => setDialogoEstado(estado)} className="text-xs underline" style={{ color: ACCENT }}>
+                  {c.motivoEstado ? "Editar motivo" : "Cargar motivo"}
+                </button>
+              )}
+            </div>
+          )}
           <p className="text-[10px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Validez (días) — sí aparece en el PDF y el Excel</p>
           <div style={{ width: 90 }}>
             <ComentarioEditor
@@ -10789,6 +10960,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
       ) : (
         <>
           <ResumenCotizaciones resumen={resumen} />
+          <ResumenMotivosCotizaciones grupos={grupos} />
           <div className="space-y-3">
             {grupos.map((g) => (
               <ClienteGrupo

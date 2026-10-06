@@ -15,6 +15,7 @@ import {
 import { downloadEtiquetasPdf, textoSerial, parsearSerial, claveCodigo, SERIAL_BASE_APP } from "./etiquetas";
 import { anchosCode128 } from "./code128";
 import { CENTROS_COSTO, centroCostoPorCodigo, centroCostoSugerido, totalLineaPedido, totalPedido } from "./centrosCosto";
+import { normalizarEmpresa, normalizarCamposEmpresa } from "./nombres";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
@@ -938,7 +939,8 @@ function hiloKeyDeCotizacion(c) {
 
 function mismaObraCotizacion(a, b) {
   const norm = (s) => (s || "").trim().toLowerCase();
-  return norm(a.cliente) === norm(b.cliente) && norm(a.obra) === norm(b.obra);
+  const normCliente = (s) => norm(normalizarEmpresa(s || ""));
+  return normCliente(a.cliente) === normCliente(b.cliente) && norm(a.obra) === norm(b.obra);
 }
 
 // Rubro de una cotización: Categoría se elige con un click entre estos cuatro. Dentro de una obra,
@@ -1117,7 +1119,9 @@ function FotoPicker({ onChange }) {
 function subscribeCollection(name, onData) {
   const q = query(collection(db, name), orderBy("createdAt", "desc"));
   return onSnapshot(q, (snap) => {
-    onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    // Los nombres de empresa se normalizan al leer (ver nombres.js), así lo que ya estaba guardado
+    // de otra forma ("CCI", "Octagon sa") se ve y se agrupa igual que lo nuevo.
+    onData(snap.docs.map((d) => normalizarCamposEmpresa({ id: d.id, ...d.data() })));
   }, (err) => {
     // A permission error (or any other) on one collection shouldn't leave the
     // whole app stuck on the loading screen — fall back to empty.
@@ -1127,13 +1131,13 @@ function subscribeCollection(name, onData) {
 }
 function addItem(name, data) {
   return addDoc(collection(db, name), {
-    ...data, createdAt: Date.now(),
+    ...normalizarCamposEmpresa(data), createdAt: Date.now(),
     creadoPorEmail: auth.currentUser?.email || null, creadoPorUid: auth.currentUser?.uid || null,
   }).catch((e) => console.error("Firestore add error", name, e));
 }
 function updateItem(name, id, patch) {
   return updateDoc(doc(db, name, id), {
-    ...patch,
+    ...normalizarCamposEmpresa(patch),
     modificadoPorEmail: auth.currentUser?.email || null, modificadoEn: Date.now(),
   }).catch((e) => console.error("Firestore update error", name, id, e));
 }
@@ -2314,7 +2318,7 @@ export default function App() {
   // A diferencia de addItem/updateItem (que solo loguean el error), acá el error se propaga: si las
   // reglas de Firestore todavía no incluyen "pedidosFacturacion", el formulario tiene que avisarlo.
   const guardarPedidoFacturacion = async (pedido) => {
-    const { id, ...data } = pedido;
+    const { id, ...data } = normalizarCamposEmpresa(pedido);
     const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
     if (id) {
       await updateDoc(doc(db, COLLECTIONS.pedidosFacturacion, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() });
@@ -4291,9 +4295,12 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
     setP((prev) => ({ ...prev, centroCostoCodigo: codigo, centroCostoNombre: c?.nombre || "" }));
   };
   const total = totalPedido(p);
+  // El nombre de la empresa sale siempre normalizado (Octagon SA, CCI SA) en PDF, Excel y mail,
+  // aunque se haya escrito a mano de otra forma.
+  const pFinal = () => normalizarCamposEmpresa(p);
 
   const guardar = async (extra = {}) => {
-    const datos = { ...p, ...extra };
+    const datos = normalizarCamposEmpresa({ ...p, ...extra });
     const id = await onGuardar({ ...datos, ...(idDoc ? { id: idDoc } : {}) });
     setIdDoc(id);
     setP(datos);
@@ -4313,8 +4320,8 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
   const onGuardarClick = () => accion("guardar", async () => {
     try { await guardar(); setMsg({ tipo: "ok", texto: "Pedido guardado." }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorGuardar(e) }); }
   });
-  const onPdf = () => accion("pdf", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoPdf(p); });
-  const onExcel = () => accion("excel", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoExcel(p); });
+  const onPdf = () => accion("pdf", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoPdf(pFinal()); });
+  const onExcel = () => accion("excel", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoExcel(pFinal()); });
 
   const marcarEnviado = async () => {
     try { await guardar({ estado: "Enviado", enviadoEn: Date.now(), enviadoA: mailAdmin.trim() }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorGuardar(e) }); return false; }
@@ -4324,7 +4331,7 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
   const onEnviar = () => accion("enviar", async () => {
     recordarMail();
     const m = await import("./pedidoFacturacion");
-    const resultado = await m.enviarPedidoPorMail(p, mailAdmin.trim());
+    const resultado = await m.enviarPedidoPorMail(pFinal(), mailAdmin.trim());
     if (resultado === "cancelado") return;
     const ok = await marcarEnviado();
     if (ok) setMsg({ tipo: "ok", texto: resultado === "compartido" ? "Pedido compartido con PDF y Excel adjuntos." : "Se descargaron el PDF y el Excel y se abrió el mail: adjuntalos y enviá." });
@@ -4332,7 +4339,7 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
   const onOutlookWeb = () => accion("outlook", async () => {
     recordarMail();
     const m = await import("./pedidoFacturacion");
-    await m.abrirPedidoEnOutlookWeb(p, mailAdmin.trim());
+    await m.abrirPedidoEnOutlookWeb(pFinal(), mailAdmin.trim());
     const ok = await marcarEnviado();
     if (ok) setMsg({ tipo: "ok", texto: "Se descargaron el PDF y el Excel y se abrió Outlook web: adjuntalos y enviá." });
   });
@@ -4345,7 +4352,7 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
         {p.estado === "Enviado" && pedidoExistente?.enviadoEn ? ` Enviado el ${new Date(pedidoExistente.enviadoEn).toLocaleDateString("es-PY")}.` : ""}
       </p>
 
-      <Field label="Cliente (empresa que compró)"><TextInput value={p.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+      <Field label="Cliente (empresa que compró)"><TextInput value={p.cliente} onChange={(e) => set("cliente", e.target.value)} onBlur={(e) => set("cliente", normalizarEmpresa(e.target.value))} /></Field>
       <Field label="RUC"><TextInput value={p.ruc} onChange={(e) => set("ruc", e.target.value)} /></Field>
       <div className="flex gap-2">
         <div className="flex-1"><Field label="Condición/Plazo">
@@ -9611,12 +9618,12 @@ const OBS_DEFAULT = "Productos a retirar de depósito.";
 // eligió que se le pregunte cada vez, porque a veces sí es la misma línea evolucionando y a
 // veces es un servicio distinto (aires, cocina, termo) que solo comparte el edificio.
 function buscarCotizacionMismaObra(cotizaciones, cliente, obra, rubro) {
-  const clienteKey = cliente.trim().toLowerCase();
+  const clienteKey = normalizarEmpresa(cliente).toLowerCase();
   const obraKey = obra.trim().toLowerCase();
   if (!clienteKey || !obraKey) return null;
   // Solo compite con las del mismo rubro: aires y cocina de la misma obra se cotizan y cuentan aparte.
   const candidatas = (cotizaciones || [])
-    .filter((c) => (c.cliente || "").trim().toLowerCase() === clienteKey && (c.obra || "").trim().toLowerCase() === obraKey && rubroDeCotizacion(c) === rubro)
+    .filter((c) => normalizarEmpresa(c.cliente || "").toLowerCase() === clienteKey && (c.obra || "").trim().toLowerCase() === obraKey && rubroDeCotizacion(c) === rubro)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   return candidatas[0] || null;
 }
@@ -11166,7 +11173,7 @@ function ArmadoCombinacionForm({ productos, clientes, initial, editId, onSave, o
 
   return (
     <div>
-      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Ej: CCI" /></Field>
+      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Ej: CCI SA" /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Ej: EJE" /></Field>
       <Field label="Categoría / título"><TextInput value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Ej: Ejemplo 2 — usá el mismo título que la cotización" /></Field>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
@@ -11795,8 +11802,8 @@ function ClientesView({ clientes, cotizaciones, movimientos, pedidos, query, onQ
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
                   <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
-                  <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: Constructora CCI" />
-                </div>
+                  <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: CCI SA" />
+</div>
                 <div>
                   <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Teléfono / WhatsApp</p>
                   <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
@@ -11833,7 +11840,7 @@ function ClienteForm({ onSave }) {
     <div>
       <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(capitalizarPalabras(e.target.value))} placeholder="Persona con la que hablás" /></Field>
       <Field label="Empresa">
-        <TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: Constructora CCI" />
+        <TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: CCI SA" />
       </Field>
       <Field label="Teléfono / WhatsApp">
         <TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 595981234567 (con código de país, sin +)" />
@@ -12310,7 +12317,7 @@ function PrecioMayoristaForm({ onSave }) {
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Empresa (competidor)"><TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: Tecnocentro" /></Field>
       <Field label="Cliente / obra de esa cotización (opcional, contexto)">
-        <TextInput value={clienteObra} onChange={(e) => setClienteObra(e.target.value)} placeholder="Ej: CCI - Obra Station del Sol" />
+        <TextInput value={clienteObra} onChange={(e) => setClienteObra(e.target.value)} placeholder="Ej: CCI SA - Obra Station del Sol" />
       </Field>
       <Field label="Categoría">
         <select

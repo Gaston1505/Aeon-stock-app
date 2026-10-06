@@ -151,6 +151,8 @@ const COLLECTIONS = {
   cotizaciones: "cotizaciones",
   armadosCombinaciones: "armadosCombinaciones",
   pedidosFacturacion: "pedidosFacturacion",
+  fichasObras: "fichasObras",
+  facturasObra: "facturasObra",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
@@ -1957,6 +1959,8 @@ export default function App() {
   const [cotizaciones, setCotizaciones] = useState([]);
   const [armadosCombinaciones, setArmadosCombinaciones] = useState([]);
   const [pedidosFacturacion, setPedidosFacturacion] = useState([]);
+  const [fichasObras, setFichasObras] = useState([]);
+  const [facturasObra, setFacturasObra] = useState([]);
   const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
@@ -2015,6 +2019,8 @@ export default function App() {
       [COLLECTIONS.cotizaciones]: setCotizaciones,
       [COLLECTIONS.armadosCombinaciones]: setArmadosCombinaciones,
       [COLLECTIONS.pedidosFacturacion]: setPedidosFacturacion,
+      [COLLECTIONS.fichasObras]: setFichasObras,
+      [COLLECTIONS.facturasObra]: setFacturasObra,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
@@ -2356,6 +2362,22 @@ export default function App() {
     const ref = await addDoc(collection(db, COLLECTIONS.pedidosFacturacion), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
     return ref.id;
   };
+  // Ficha de obra (contrato y pagos): un documento por cliente+obra, con merge para ir sumando campos.
+  // Los errores se propagan para poder avisar si falta la regla de Firestore.
+  const guardarFichaObra = async (id, base, patch) => {
+    await setDoc(doc(db, COLLECTIONS.fichasObras, id), { ...base, ...patch, modificadoPorEmail: auth.currentUser?.email || null, modificadoEn: Date.now() }, { merge: true });
+  };
+  const guardarFacturaObra = async (factura) => {
+    const { id, ...data } = factura;
+    const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
+    if (id) {
+      await updateDoc(doc(db, COLLECTIONS.facturasObra, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() });
+      return id;
+    }
+    const ref = await addDoc(collection(db, COLLECTIONS.facturasObra), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
+    return ref.id;
+  };
+  const borrarFacturaObra = (id) => deleteItem(COLLECTIONS.facturasObra, id);
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   const updateCotizacion = (id, patch) => {
     const c = cotizaciones.find((x) => x.id === id);
@@ -3699,6 +3721,8 @@ export default function App() {
           <ClientesView
             clientes={filteredClientes} query={query} onQuery={setQuery}
             cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidosFacturacion}
+            fichasObras={fichasObras} facturasObra={facturasObra} comprometidas={comprometidas} productos={productos} equipos={equipos}
+            onGuardarFicha={guardarFichaObra} onGuardarFactura={guardarFacturaObra} onBorrarFactura={borrarFacturaObra}
             onNew={() => setDrawer("cliente")}
             onDelete={deleteCliente}
             onUpdateField={(id, field, value) => updateCliente(id, { [field]: value })}
@@ -4303,10 +4327,8 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos })
   };
 }
 
-const MAIL_ADMIN_KEY = "aeon_mail_administracion";
-function leerMailAdmin() {
-  try { return localStorage.getItem(MAIL_ADMIN_KEY) || ""; } catch (e) { return ""; }
-}
+// Destinatarios fijos del pedido de facturación (Administración).
+const MAILS_ADMINISTRACION = ["administrativo@qi.com.py", "acibils@qi.com.py"];
 
 function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equipos, cotizaciones, onGuardar }) {
   const inicial = useMemo(
@@ -4315,7 +4337,6 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
   );
   const [p, setP] = useState(inicial);
   const [idDoc, setIdDoc] = useState(pedidoExistente?.id || null);
-  const [mailAdmin, setMailAdmin] = useState(leerMailAdmin());
   const [msg, setMsg] = useState(null); // { tipo: "ok" | "error", texto }
   const [ocupado, setOcupado] = useState("");
 
@@ -4357,22 +4378,19 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
   const onExcel = () => accion("excel", async () => { const m = await import("./pedidoFacturacion"); await m.downloadPedidoExcel(pFinal()); });
 
   const marcarEnviado = async () => {
-    try { await guardar({ estado: "Enviado", enviadoEn: Date.now(), enviadoA: mailAdmin.trim() }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorGuardar(e) }); return false; }
+    try { await guardar({ estado: "Enviado", enviadoEn: Date.now(), enviadoA: MAILS_ADMINISTRACION.join(", ") }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorGuardar(e) }); return false; }
     return true;
   };
-  const recordarMail = () => { try { localStorage.setItem(MAIL_ADMIN_KEY, mailAdmin.trim()); } catch (e) { /* sin almacenamiento local: se pide de nuevo la próxima vez */ } };
   const onEnviar = () => accion("enviar", async () => {
-    recordarMail();
     const m = await import("./pedidoFacturacion");
-    const resultado = await m.enviarPedidoPorMail(pFinal(), mailAdmin.trim());
+    const resultado = await m.enviarPedidoPorMail(pFinal(), MAILS_ADMINISTRACION);
     if (resultado === "cancelado") return;
     const ok = await marcarEnviado();
     if (ok) setMsg({ tipo: "ok", texto: resultado === "compartido" ? "Pedido compartido con PDF y Excel adjuntos." : "Se descargaron el PDF y el Excel y se abrió el mail: adjuntalos y enviá." });
   });
   const onOutlookWeb = () => accion("outlook", async () => {
-    recordarMail();
     const m = await import("./pedidoFacturacion");
-    await m.abrirPedidoEnOutlookWeb(pFinal(), mailAdmin.trim());
+    await m.abrirPedidoEnOutlookWeb(pFinal(), MAILS_ADMINISTRACION);
     const ok = await marcarEnviado();
     if (ok) setMsg({ tipo: "ok", texto: "Se descargaron el PDF y el Excel y se abrió Outlook web: adjuntalos y enviá." });
   });
@@ -4429,9 +4447,7 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
       </div>
 
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Enviar a Administración</p>
-      <Field label="Mail de Administración (se recuerda en este dispositivo)">
-        <TextInput type="email" value={mailAdmin} onChange={(e) => setMailAdmin(e.target.value)} placeholder="administracion@..." />
-      </Field>
+      <p className="text-xs mb-2" style={{ color: INK }}>Para: <b>{MAILS_ADMINISTRACION.join(" · ")}</b></p>
       <div className="flex gap-2 flex-wrap mb-2">
         <PrimaryButton onClick={onEnviar} disabled={!!ocupado}><Send size={14} /> {ocupado === "enviar" ? "Preparando..." : "Enviar por mail"}</PrimaryButton>
         <SecondaryButton onClick={onOutlookWeb} disabled={!!ocupado}>Abrir en Outlook web</SecondaryButton>
@@ -11816,10 +11832,422 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
 // Nombre + WhatsApp de cada cliente — se completa solo al cargar un teléfono en una cotización
 // o presupuesto (ver upsertClienteTelefono), o se carga a mano acá. Reutilizado por el botón
 // "WhatsApp" de cotizaciones/presupuestos para no reescribir el número cada vez.
+// ---------- Cuenta por obra: contrato, mercadería entregada, pagos y facturas ----------
+// Todo se cuelga de la ficha del cliente, obra por obra. El contrato y los pagos se guardan en
+// `fichasObras` (un doc por cliente+obra) y cada factura en `facturasObra`; lo entregado sale de las
+// Salidas (solo las de motivo Venta) y lo contratado de las cotizaciones Ganadas.
+const MAX_ADJUNTO_BYTES = 600 * 1024;
+const TIPOS_PAGO_OBRA = ["Adelanto", "Pago parcial", "Saldo final", "Otro"];
+const usd = (n) => `U$S ${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const idFichaObra = (empresaKey, obraKey) => `${encodeURIComponent(empresaKey)}__${encodeURIComponent(obraKey)}`;
+const textoErrorFirestore = (e, coleccion) =>
+  e?.code === "permission-denied"
+    ? `No se pudo guardar: falta publicar la regla de Firestore para "${coleccion}" (ver firestore.rules).`
+    : `No se pudo guardar: ${e?.message || e}`;
+
+// Foto (se comprime) o PDF (entra tal cual si no pesa demasiado, porque va dentro del documento).
+async function leerAdjunto(file) {
+  if (!file) return null;
+  if (/^image\//.test(file.type)) return { nombre: (file.name || "foto").replace(/\.[^.]+$/, "") + ".jpg", tipo: "image/jpeg", data: await compressImage(file, 1600, 0.75) };
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name || "")) {
+    if (file.size > MAX_ADJUNTO_BYTES) throw new Error(`Ese PDF pesa ${fmtN(file.size / 1024, 0)}KB — el máximo es ${fmtN(MAX_ADJUNTO_BYTES / 1024, 0)}KB. Sacale una foto o comprimilo.`);
+    return { nombre: file.name, tipo: "application/pdf", data: await readFileAsDataUrl(file) };
+  }
+  throw new Error("Solo se admiten fotos o PDF.");
+}
+async function abrirAdjunto(adj) {
+  if (!adj?.data) return;
+  const blob = await (await fetch(adj.data)).blob();
+  const url = URL.createObjectURL(blob);
+  if (!window.open(url, "_blank")) {
+    const a = document.createElement("a");
+    a.href = url; a.download = adj.nombre || "archivo"; a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function AdjuntoPicker({ valor, onChange, onError }) {
+  const camRef = useRef(null);
+  const galRef = useRef(null);
+  const elegir = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    try { onChange(await leerAdjunto(f)); onError(""); } catch (err) { onError(err.message || String(err)); }
+  };
+  return (
+    <div>
+      {valor && (
+        <div className="flex items-center gap-2 mb-1.5 text-xs">
+          <FileText size={13} style={{ color: ACCENT }} />
+          <button type="button" onClick={() => abrirAdjunto(valor)} className="underline text-left" style={{ color: ACCENT }}>{valor.nombre || "Ver archivo"}</button>
+          <button type="button" onClick={() => onChange(null)} className="p-0.5 rounded hover:bg-gray-100"><X size={12} style={{ color: MUTED }} /></button>
+        </div>
+      )}
+      <div className="flex gap-2 flex-wrap">
+        <input ref={camRef} type="file" accept="image/*" capture="environment" onChange={elegir} className="hidden" />
+        <input ref={galRef} type="file" accept="application/pdf,image/*" onChange={elegir} className="hidden" />
+        <button type="button" onClick={() => camRef.current?.click()} className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1" style={{ borderColor: BORDER, color: ACCENT }}>
+          <Camera size={13} /> Sacar foto
+        </button>
+        <button type="button" onClick={() => galRef.current?.click()} className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1" style={{ borderColor: BORDER, color: ACCENT }}>
+          <Upload size={13} /> {valor ? "Cambiar archivo" : "PDF / galería / archivos"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// El adelanto que figura en la forma de pago de la cotización ("50% anticipo, saldo contra entrega").
+function adelantoSugeridoDeCotizacion(cot) {
+  if (!cot) return null;
+  const m = (cot.formaPago || "").match(/(\d{1,3}(?:[.,]\d+)?)\s*%/);
+  if (!m) return null;
+  const pct = parseFloat(m[1].replace(",", "."));
+  if (!(pct > 0 && pct <= 100)) return null;
+  return { pct, monto: Math.round(calcularTotalCotizacion(cot) * pct) / 100 };
+}
+
+// Cuenta de una obra: lo contratado, lo entregado (mercadería y plata), lo cobrado y lo facturado.
+// Lo entregado y no pagado / pagado se calcula cruzando entregas contra cobros: lo cobrado cubre
+// primero lo ya entregado, y lo que sobra es adelanto todavía sin consumir.
+function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, comprometidas, productos, equipos }) {
+  const ganadas = cotizacionesQueCuentan(agruparCotizaciones(cotizaciones)).filter((c) => c.estado === "Ganada");
+  const totalGanadas = ganadas.reduce((a, c) => a + calcularTotalCotizacion(c), 0);
+  const manual = ficha && ficha.contratoMonto !== undefined && ficha.contratoMonto !== null && ficha.contratoMonto !== "" ? Number(ficha.contratoMonto) : null;
+  const hayManual = manual != null && !isNaN(manual);
+  const contrato = hayManual ? manual : totalGanadas;
+  const contratoOrigen = hayManual ? "contrato" : ganadas.length ? "cotizaciones" : "ninguno";
+
+  const filas = new Map();
+  const fila = (codigo) => {
+    if (!filas.has(codigo)) {
+      const prod = productos.find((p) => p.nombre === codigo);
+      filas.set(codigo, { codigo, producto: prod ? nombreProducto(prod) : "", contratado: 0, entregado: 0, montoEntregado: 0, precioUnit: null });
+    }
+    return filas.get(codigo);
+  };
+  for (const cot of ganadas) {
+    const d = desglosarTotalCotizacion(cot);
+    const factor = d.subtotal > 0 ? (d.subtotal - d.descuentoMonto) / d.subtotal : 1;
+    for (const l of cot.lineas || []) {
+      const f = fila(l.codigo || "(sin código)");
+      f.contratado += Number(l.cantidad) || 0;
+      if (f.precioUnit == null) f.precioUnit = (Number(l.precioUnit) || 0) * factor;
+    }
+  }
+
+  // Solo cuentan las salidas por venta; préstamos de muestra, sustituciones y reparaciones no se facturan.
+  const esVenta = (m) => { const mot = MOTIVOS_SALIDA.find((x) => x.value === m.motivo); return !mot || !mot.trackea; };
+  let montoEntregado = 0;
+  let unidadesEntregadas = 0;
+  for (const m of movimientos.filter(esVenta)) {
+    const cant = Number(m.cantidad) || 1;
+    const prod = productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
+    const f = fila(prod?.nombre || m.modelo || m.codigo || "(sin código)");
+    if (!f.producto && prod) f.producto = nombreProducto(prod);
+    let monto = Number(m.monto) || 0;
+    if (monto <= 0 && f.precioUnit != null) monto = Math.round(cant * f.precioUnit * 100) / 100; // retiros de ventas comprometidas vienen con monto 0
+    f.entregado += cant;
+    f.montoEntregado += monto;
+    montoEntregado += monto;
+    unidadesEntregadas += cant;
+  }
+
+  const pagosFicha = (ficha?.pagos || []).map((p, idx) => ({ ...p, origen: "ficha", idx }));
+  const pagosComprometidas = comprometidas.flatMap((c) => (c.pagos || []).map((p) => ({
+    fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago", nota: p.formaPago ? `${p.formaPago} · registrado en Ventas comprometidas` : "Registrado en Ventas comprometidas", origen: "comprometida",
+  })));
+  const pagos = [...pagosFicha, ...pagosComprometidas].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  const cobrado = pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0);
+  const facturado = facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0);
+  const productosLista = Array.from(filas.values()).sort((a, b) => b.contratado - a.contratado || a.codigo.localeCompare(b.codigo));
+  const unidadesContratadas = productosLista.reduce((a, f) => a + f.contratado, 0);
+
+  return {
+    contrato, contratoOrigen, totalGanadas, montoEntregado, unidadesEntregadas, unidadesContratadas, cobrado, facturado, pagos,
+    productos: productosLista, ganadas,
+    entregadoYPagado: Math.min(montoEntregado, cobrado),
+    entregadoNoPagado: Math.max(0, montoEntregado - cobrado),
+    adelantoSinConsumir: Math.max(0, cobrado - montoEntregado),
+    restanteEntrega: Math.max(0, contrato - montoEntregado),
+    restanteCobro: Math.max(0, contrato - cobrado),
+    sinFacturar: Math.max(0, montoEntregado - facturado),
+  };
+}
+
+function StatTile({ label, valor, sub, color = INK, bg = "#FFFFFF" }) {
+  return (
+    <div className="px-2.5 py-2 rounded-lg" style={{ backgroundColor: bg, border: `0.5px solid ${BORDER}` }}>
+      <p className="text-[11px]" style={{ color: MUTED }}>{label}</p>
+      <p className="text-sm font-semibold" style={{ color }}>{valor}</p>
+      {sub && <p className="text-[10px]" style={{ color: MUTED }}>{sub}</p>}
+    </div>
+  );
+}
+
+function CuentaTiles({ c }) {
+  const subContrato = c.contratoOrigen === "contrato" ? "según contrato cargado" : c.contratoOrigen === "cotizaciones" ? "según cotizaciones ganadas" : "sin contrato ni cotización ganada";
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <StatTile label="Cerrado por contrato" valor={usd(c.contrato)} sub={subContrato} />
+      <StatTile label="Entregado (mercadería)" valor={usd(c.montoEntregado)} sub={`${c.unidadesEntregadas} u.${c.unidadesContratadas ? ` de ${c.unidadesContratadas}` : ""}`} />
+      <StatTile label="Cobrado" valor={usd(c.cobrado)} />
+      <StatTile label="Facturado" valor={usd(c.facturado)} />
+      <StatTile label="Falta entregar" valor={usd(c.restanteEntrega)} sub="en plata" />
+      <StatTile label="Falta cobrar" valor={usd(c.restanteCobro)} sub="del contrato" />
+      <StatTile label="Entregado y NO pagado" valor={usd(c.entregadoNoPagado)} color={c.entregadoNoPagado > 0 ? "#B91C1C" : INK} bg={c.entregadoNoPagado > 0 ? "#FBEAEA" : "#FFFFFF"} />
+      <StatTile label="Entregado y pagado" valor={usd(c.entregadoYPagado)} color="#15803D" bg="#E9F7EF" />
+      {c.adelantoSinConsumir > 0 && <StatTile label="Adelanto sin consumir" valor={usd(c.adelantoSinConsumir)} sub="cobrado de más que lo entregado" color="#B45309" bg="#FDF1E0" />}
+      {c.sinFacturar > 0 && <StatTile label="Entregado sin facturar" valor={usd(c.sinFacturar)} color="#B45309" bg="#FDF1E0" />}
+    </div>
+  );
+}
+
+function sumarCuentas(cuentas) {
+  const z = { contrato: 0, montoEntregado: 0, unidadesEntregadas: 0, unidadesContratadas: 0, cobrado: 0, facturado: 0, entregadoYPagado: 0, entregadoNoPagado: 0, adelantoSinConsumir: 0, restanteEntrega: 0, restanteCobro: 0, sinFacturar: 0 };
+  for (const c of cuentas) for (const k of Object.keys(z)) z[k] += c[k];
+  return { ...z, contratoOrigen: z.contrato > 0 ? "contrato" : "ninguno" };
+}
+
+function ContratoObra({ ficha, cuenta, onGuardar }) {
+  const [monto, setMonto] = useState(ficha?.contratoMonto != null ? String(ficha.contratoMonto) : "");
+  const [fecha, setFecha] = useState(ficha?.contratoFecha || "");
+  const [notas, setNotas] = useState(ficha?.contratoNotas || "");
+  const [archivo, setArchivo] = useState(ficha?.contratoArchivo || null);
+  const [msg, setMsg] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const guardar = async () => {
+    setOcupado(true);
+    setMsg(null);
+    try {
+      await onGuardar({ contratoMonto: monto === "" ? null : Number(monto), contratoFecha: fecha, contratoNotas: notas.trim(), contratoArchivo: archivo || null });
+      setMsg({ tipo: "ok", texto: "Contrato guardado." });
+    } catch (e) { setMsg({ tipo: "error", texto: textoErrorFirestore(e, "fichasObras") }); }
+    setOcupado(false);
+  };
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Contrato</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="Monto cerrado U$S"><TextInput type="number" step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder={cuenta.totalGanadas > 0 ? `Vacío = cotizaciones ganadas (${usd(cuenta.totalGanadas)})` : "Ej: 45000"} /></Field>
+        <Field label="Fecha de firma"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      </div>
+      <Field label="Notas del contrato"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: 50% anticipo, saldo contra entrega" /></Field>
+      <Field label="Contrato firmado (PDF o foto)"><AdjuntoPicker valor={archivo} onChange={setArchivo} onError={(t) => setMsg(t ? { tipo: "error", texto: t } : null)} /></Field>
+      <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar contrato"}</PrimaryButton>
+      {msg && <p className="text-xs mt-2" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>}
+    </div>
+  );
+}
+
+function ProductosObra({ productos }) {
+  if (productos.length === 0) return null;
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Mercadería: contratada vs. entregada</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ color: MUTED }}>
+              <th className="text-left font-medium py-1 pr-2">Producto</th>
+              <th className="text-right font-medium py-1 px-1">Contrat.</th>
+              <th className="text-right font-medium py-1 px-1">Entreg.</th>
+              <th className="text-right font-medium py-1 px-1">Falta</th>
+              <th className="text-right font-medium py-1 pl-1">Monto entregado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {productos.map((f) => {
+              const falta = f.contratado - f.entregado;
+              return (
+                <tr key={f.codigo} style={{ borderTop: `0.5px solid ${BORDER}`, color: INK }}>
+                  <td className="py-1 pr-2"><CodeTag>{f.codigo}</CodeTag>{f.producto && <span className="block text-[10px]" style={{ color: MUTED }}>{f.producto}</span>}</td>
+                  <td className="text-right px-1">{f.contratado || "—"}</td>
+                  <td className="text-right px-1">{f.entregado}</td>
+                  <td className="text-right px-1" style={{ color: falta > 0 ? "#B45309" : falta < 0 ? "#B91C1C" : "#15803D" }}>{f.contratado ? falta : "—"}</td>
+                  <td className="text-right pl-1">{f.montoEntregado > 0 ? usd(f.montoEntregado) : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PagosObra({ ficha, cuenta, cotizaciones, onGuardar }) {
+  const [form, setForm] = useState(null); // { idx (-1 = nuevo), tipo, fecha, monto, cotizacionId, nota }
+  const [msg, setMsg] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const cotsPosibles = cotizaciones.filter((c) => c.estado !== "Sin efecto");
+  const etiquetaCot = (c) => `${rubroDeCotizacion(c)}${c.nombre ? ` · ${c.nombre}` : ""} · ${usd(calcularTotalCotizacion(c))} · ${c.estado || "Pendiente"}`;
+  const sugerido = form ? adelantoSugeridoDeCotizacion(cotsPosibles.find((c) => c.id === form.cotizacionId)) : null;
+  const nuevo = () => setForm({ idx: -1, tipo: "Adelanto", fecha: todayISO(), monto: "", cotizacionId: cuenta.ganadas.length === 1 ? cuenta.ganadas[0].id : "", nota: "" });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const guardar = async () => {
+    const monto = Number(form.monto);
+    if (!(monto > 0)) { setMsg({ tipo: "error", texto: "Cargá el monto del pago." }); return; }
+    const pago = { id: form.id || `p${Date.now().toString(36)}`, tipo: form.tipo, fecha: form.fecha || todayISO(), monto, cotizacionId: form.cotizacionId || "", nota: form.nota.trim() };
+    const lista = [...(ficha?.pagos || [])];
+    if (form.idx >= 0) lista[form.idx] = pago; else lista.push(pago);
+    setOcupado(true);
+    setMsg(null);
+    try { await onGuardar({ pagos: lista }); setForm(null); } catch (e) { setMsg({ tipo: "error", texto: textoErrorFirestore(e, "fichasObras") }); }
+    setOcupado(false);
+  };
+  const quitar = async (idx) => {
+    const ok = confirmBridge ? await confirmBridge("¿Eliminar este pago?") : window.confirm("¿Eliminar este pago?");
+    if (!ok) return;
+    try { await onGuardar({ pagos: (ficha?.pagos || []).filter((_, i) => i !== idx) }); } catch (e) { setMsg({ tipo: "error", texto: textoErrorFirestore(e, "fichasObras") }); }
+  };
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Pagos recibidos · {usd(cuenta.cobrado)}</p>
+      {cuenta.pagos.length === 0 && <p className="text-xs mb-2" style={{ color: MUTED }}>Todavía no hay pagos cargados.</p>}
+      <div className="space-y-1 mb-2">
+        {cuenta.pagos.map((p, i) => {
+          const cot = p.cotizacionId ? cotizaciones.find((c) => c.id === p.cotizacionId) : null;
+          return (
+            <div key={`${p.origen}-${p.id || i}`} className="flex items-center justify-between gap-2 text-xs">
+              <span style={{ color: INK }}>
+                <b>{p.tipo || "Pago"}</b> · {fmtDate(p.fecha)} · {usd(p.monto)}
+                {cot ? ` · ${rubroDeCotizacion(cot)}${cot.nombre ? ` · ${cot.nombre}` : ""}` : ""}
+                {p.nota ? <span style={{ color: MUTED }}> — {p.nota}</span> : null}
+              </span>
+              {p.origen === "ficha" && (
+                <span className="flex gap-1 shrink-0">
+                  <button type="button" onClick={() => setForm({ idx: p.idx, id: p.id, tipo: p.tipo || "Otro", fecha: p.fecha || "", monto: String(p.monto), cotizacionId: p.cotizacionId || "", nota: p.nota || "" })} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
+                  <button type="button" onClick={() => quitar(p.idx)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {form ? (
+        <div className="p-3 rounded-lg border mb-1" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+          <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{form.idx >= 0 ? "Editar pago" : "Registrar pago"}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+            <Field label="Tipo"><Select value={form.tipo} onChange={(e) => set("tipo", e.target.value)}>{TIPOS_PAGO_OBRA.map((t) => <option key={t} value={t}>{t}</option>)}</Select></Field>
+            <Field label="Fecha"><TextInput type="date" value={form.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+          </div>
+          <Field label="Cotización a la que corresponde (opcional)">
+            <Select value={form.cotizacionId} onChange={(e) => set("cotizacionId", e.target.value)}>
+              <option value="">— Ninguna / toda la obra —</option>
+              {cotsPosibles.map((c) => <option key={c.id} value={c.id}>{etiquetaCot(c)}</option>)}
+            </Select>
+          </Field>
+          <Field label="Monto U$S (editable)"><TextInput type="number" step="0.01" value={form.monto} onChange={(e) => set("monto", e.target.value)} placeholder="Ej: 5000" /></Field>
+          {form.tipo === "Adelanto" && form.cotizacionId && (
+            sugerido
+              ? <button type="button" onClick={() => set("monto", String(sugerido.monto))} className="text-xs underline mb-2" style={{ color: ACCENT }}>La cotización pide {sugerido.pct}% de adelanto: usar {usd(sugerido.monto)}</button>
+              : <p className="text-[11px] mb-2" style={{ color: MUTED }}>Esta cotización no indica un % de adelanto en su forma de pago: cargá el monto que pagaron.</p>
+          )}
+          <Field label="Nota (opcional)"><TextInput value={form.nota} onChange={(e) => set("nota", e.target.value)} placeholder="Ej: transferencia Itaú, comprobante 1234" /></Field>
+          <div className="flex gap-2">
+            <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar pago"}</PrimaryButton>
+            <SecondaryButton onClick={() => { setForm(null); setMsg(null); }}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      ) : (
+        <SecondaryButton onClick={nuevo}><Plus size={14} /> Registrar pago / adelanto</SecondaryButton>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>}
+    </div>
+  );
+}
+
+function FacturasObra({ facturas, remisiones, pedidos, empresa, obra, onGuardar, onBorrar }) {
+  const [form, setForm] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const etiquetaRemito = (g) => `${g.remito ? `Remito ${g.remito}` : "Sin N° de remito"} · ${fmtDate(g.items[0]?.fecha)}`;
+  const totalPedidosElegidos = form ? (form.remitoKeys || []).reduce((a, k) => a + totalPedido(pedidos.find((p) => p.remitoKey === k) || {}), 0) : 0;
+  const nueva = () => setForm({ id: null, numero: "", fecha: todayISO(), monto: "", remitoKeys: [], archivo: null, notas: "" });
+  const alternarRemito = (k) => setForm((f) => ({ ...f, remitoKeys: f.remitoKeys.includes(k) ? f.remitoKeys.filter((x) => x !== k) : [...f.remitoKeys, k] }));
+  const guardar = async () => {
+    if (!form.numero.trim()) { setMsg({ tipo: "error", texto: "Cargá el número de factura." }); return; }
+    if (!(Number(form.monto) > 0)) { setMsg({ tipo: "error", texto: "Cargá el monto de la factura." }); return; }
+    setOcupado(true);
+    setMsg(null);
+    try {
+      await onGuardar({ ...(form.id ? { id: form.id } : {}), empresaKey: empresa.key, obraKey: obra.key, cliente: empresa.nombre, obra: obra.nombre,
+        numero: form.numero.trim(), fecha: form.fecha, monto: Number(form.monto), remitoKeys: form.remitoKeys, archivo: form.archivo || null, notas: form.notas.trim() });
+      setForm(null);
+    } catch (e) { setMsg({ tipo: "error", texto: textoErrorFirestore(e, "facturasObra") }); }
+    setOcupado(false);
+  };
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Facturas · {usd(facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0))}</p>
+      {facturas.length === 0 && <p className="text-xs mb-2" style={{ color: MUTED }}>Todavía no hay facturas cargadas. Cuando Administración te devuelva la factura, cargala acá.</p>}
+      <div className="space-y-1.5 mb-2">
+        {facturas.map((f) => {
+          const rem = (f.remitoKeys || []).map((k) => remisiones.find((g) => g.key === k)).filter(Boolean);
+          return (
+            <div key={f.id} className="flex items-start justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+              <span style={{ color: INK }}>
+                <b>Factura {f.numero}</b> · {fmtDate(f.fecha)} · {usd(f.monto)}
+                {rem.length > 0 && <span className="block" style={{ color: MUTED }}>Remitos: {rem.map((g) => g.remito || "s/n").join(", ")}</span>}
+                {f.notas && <span className="block" style={{ color: MUTED }}>{f.notas}</span>}
+              </span>
+              <span className="flex gap-1 shrink-0 items-center">
+                {f.archivo?.data && <button type="button" onClick={() => abrirAdjunto(f.archivo)} className="text-xs underline" style={{ color: ACCENT }}>Ver</button>}
+                <button type="button" onClick={() => setForm({ id: f.id, numero: f.numero || "", fecha: f.fecha || "", monto: String(f.monto ?? ""), remitoKeys: f.remitoKeys || [], archivo: f.archivo || null, notas: f.notas || "" })} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
+                <button type="button" onClick={() => onBorrar(f.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {form ? (
+        <div className="p-3 rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+          <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{form.id ? "Editar factura" : "Cargar factura"}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+            <Field label="N° de factura"><TextInput value={form.numero} onChange={(e) => set("numero", e.target.value)} placeholder="Ej: 001-001-0000123" /></Field>
+            <Field label="Fecha"><TextInput type="date" value={form.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+          </div>
+          {remisiones.length > 0 && (
+            <Field label="Remitos que cubre esta factura">
+              <div className="space-y-1">
+                {remisiones.map((g) => (
+                  <label key={g.key} className="flex items-center gap-2 text-xs" style={{ color: INK }}>
+                    <input type="checkbox" checked={form.remitoKeys.includes(g.key)} onChange={() => alternarRemito(g.key)} /> {etiquetaRemito(g)}
+                  </label>
+                ))}
+              </div>
+            </Field>
+          )}
+          <Field label="Monto U$S">
+            <TextInput type="number" step="0.01" value={form.monto} onChange={(e) => set("monto", e.target.value)} placeholder="Ej: 3693.60" />
+          </Field>
+          {totalPedidosElegidos > 0 && (
+            <button type="button" onClick={() => set("monto", String(Math.round(totalPedidosElegidos * 100) / 100))} className="text-xs underline mb-2" style={{ color: ACCENT }}>
+              Usar el total de los pedidos de facturación de esos remitos: {usd(totalPedidosElegidos)}
+            </button>
+          )}
+          <Field label="Factura (PDF o foto)"><AdjuntoPicker valor={form.archivo} onChange={(a) => set("archivo", a)} onError={(t) => setMsg(t ? { tipo: "error", texto: t } : null)} /></Field>
+          <Field label="Notas (opcional)"><TextInput value={form.notas} onChange={(e) => set("notas", e.target.value)} /></Field>
+          <div className="flex gap-2">
+            <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar factura"}</PrimaryButton>
+            <SecondaryButton onClick={() => { setForm(null); setMsg(null); }}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      ) : (
+        <SecondaryButton onClick={nueva}><Plus size={14} /> Cargar factura</SecondaryButton>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>}
+    </div>
+  );
+}
+
 // Ficha por cliente (empresa): agrupa por obra lo que ya está cargado en el resto de la app —
-// cotizaciones, remisiones (salidas agrupadas por remito) y su pedido de facturación. El campo de
-// facturas queda reservado para más adelante.
-function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, onPedido }) {
+// cotizaciones, remisiones (salidas agrupadas por remito) y su pedido de facturación — y suma el
+// contrato, los pagos y las facturas de cada obra, con la cuenta de lo entregado y lo cobrado.
+function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, fichasObras, facturasObra, comprometidas, productos, equipos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const norm = (s) => (s || "").trim().toLowerCase();
@@ -11844,6 +12272,23 @@ function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, o
     return Array.from(map.values()).sort((a, b) => b.ultimo - a.ultimo);
   }, [clientes, cotizaciones, movimientos, pedidos]);
 
+  // Cuenta (contrato / entregado / cobrado / facturado) de cada obra, calculada una sola vez.
+  const cuentas = useMemo(() => {
+    const out = new Map();
+    for (const e of empresas) {
+      for (const o of e.obras.values()) {
+        out.set(`${e.key}|${o.key}`, calcularCuentaObra({
+          cotizaciones: o.cotizaciones, movimientos: o.movimientos,
+          ficha: fichasObras.find((f) => f.id === idFichaObra(e.key, o.key)),
+          facturas: facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key),
+          comprometidas: comprometidas.filter((c) => norm(c.razonSocial) === e.key && (norm(c.obra) || "(sin obra)") === o.key),
+          productos, equipos,
+        }));
+      }
+    }
+    return out;
+  }, [empresas, fichasObras, facturasObra, comprometidas, productos, equipos]);
+
   const q = norm(query);
   const visibles = empresas.filter((e) => !q || norm(e.nombre).includes(q) || Array.from(e.obras.values()).some((o) => norm(o.nombre).includes(q)));
   if (visibles.length === 0) return <EmptyState icon={Phone} title="Sin clientes para mostrar" subtitle="Las fichas se arman solas con lo que cargues en cotizaciones y salidas." />;
@@ -11853,7 +12298,7 @@ function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, o
       {visibles.map((e) => {
         const abierto = abiertos.has(e.key) || !!q;
         const obras = Array.from(e.obras.values());
-        const totalRemitido = obras.reduce((acc, o) => acc + o.movimientos.reduce((a, m) => a + (Number(m.monto) || 0), 0), 0);
+        const totalCliente = sumarCuentas(obras.map((o) => cuentas.get(`${e.key}|${o.key}`)));
         return (
           <div key={e.key} className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
             <button onClick={() => toggle(e.key)} className="w-full flex items-center justify-between gap-3 p-4 text-left">
@@ -11861,15 +12306,33 @@ function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, o
                 <p className="text-base font-bold" style={{ color: INK }}>{e.nombre}</p>
                 <p className="text-xs mt-1" style={{ color: MUTED }}>
                   {obras.length} obra{obras.length !== 1 ? "s" : ""}
-                  {totalRemitido > 0 ? ` · remitido U$S ${totalRemitido.toLocaleString()}` : ""}
+                  {totalCliente.contrato > 0 ? ` · contratado ${usd(totalCliente.contrato)}` : ""}
+                  {totalCliente.montoEntregado > 0 ? ` · entregado ${usd(totalCliente.montoEntregado)}` : ""}
+                  {totalCliente.cobrado > 0 ? ` · cobrado ${usd(totalCliente.cobrado)}` : ""}
                   {e.contactos.length ? ` · ${e.contactos.map((c) => c.nombre).join(", ")}` : ""}
                 </p>
+                {totalCliente.entregadoNoPagado > 0 && (
+                  <p className="text-xs mt-0.5 font-medium" style={{ color: "#B91C1C" }}>Entregado y no pagado: {usd(totalCliente.entregadoNoPagado)}</p>
+                )}
               </div>
               <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
             </button>
             {abierto && (
               <div className="px-4 pb-4 space-y-3">
+                {obras.length > 1 && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Cuenta del cliente (todas las obras)</p>
+                    <CuentaTiles c={totalCliente} />
+                  </div>
+                )}
                 {obras.map((o) => {
+                  const kObra = `${e.key}|${o.key}`;
+                  const obraAbierta = abiertos.has(kObra) || !!q;
+                  const cuenta = cuentas.get(kObra);
+                  const idFicha = idFichaObra(e.key, o.key);
+                  const ficha = fichasObras.find((f) => f.id === idFicha);
+                  const facturasDeObra = facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key);
+                  const base = { empresaKey: e.key, obraKey: o.key, cliente: e.nombre, obra: o.nombre, createdAt: ficha?.createdAt || Date.now() };
                   const remisiones = agruparPorRemito(
                     o.movimientos,
                     (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
@@ -11879,36 +12342,60 @@ function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, o
                   const resumenCot = resumirCotizaciones(agruparCotizaciones(o.cotizaciones));
                   return (
                     <div key={o.key} className="rounded-lg p-3" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
-                      <p className="text-sm font-bold" style={{ color: INK }}>{o.nombre}</p>
-                      <p className="text-xs mb-2" style={{ color: MUTED }}>
-                        {o.cotizaciones.length
-                          ? `Cotizaciones: ${o.cotizaciones.length} · cuenta U$S ${resumenCot.total.toLocaleString()}`
-                          : "Sin cotizaciones vinculadas"}
-                      </p>
-                      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Remisiones</p>
-                      {remisiones.length === 0 ? (
-                        <p className="text-xs mb-2" style={{ color: MUTED }}>Todavía no hay salidas para esta obra.</p>
-                      ) : (
-                        <div className="space-y-1 mb-2">
-                          {remisiones.map((g) => {
-                            const m0 = g.items[0];
-                            const monto = g.items.reduce((a, m) => a + (Number(m.monto) || 0), 0);
-                            const pedido = pedidos.find((p) => p.remitoKey === g.key);
-                            return (
-                              <div key={g.key} className="flex items-center justify-between gap-2 text-xs">
-                                <span style={{ color: INK }}>
-                                  <b>{g.remito ? `Remito ${g.remito}` : "Sin N° de remito"}</b> · {fmtDate(m0.fecha)} · {g.unidades} u.{monto > 0 ? ` · U$S ${monto.toLocaleString()}` : ""}
-                                </span>
-                                <button onClick={() => onPedido(g)} className="px-2 py-1 rounded border font-medium shrink-0" style={{ borderColor: pedido?.estado === "Enviado" ? "#15803D" : ACCENT, color: pedido?.estado === "Enviado" ? "#15803D" : ACCENT }}>
-                                  {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Preparar facturación"}
-                                </button>
+                      <button onClick={() => toggle(kObra)} className="w-full flex items-start justify-between gap-2 text-left">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold" style={{ color: INK }}>{o.nombre}</p>
+                          <p className="text-xs" style={{ color: MUTED }}>
+                            {o.cotizaciones.length ? `Cotizaciones: ${o.cotizaciones.length} · cuenta ${usd(resumenCot.total)}` : "Sin cotizaciones vinculadas"}
+                            {cuenta.contrato > 0 ? ` · contrato ${usd(cuenta.contrato)}` : ""}
+                            {cuenta.montoEntregado > 0 ? ` · entregado ${usd(cuenta.montoEntregado)}` : ""}
+                            {cuenta.cobrado > 0 ? ` · cobrado ${usd(cuenta.cobrado)}` : ""}
+                          </p>
+                          {cuenta.entregadoNoPagado > 0 && <p className="text-xs font-medium" style={{ color: "#B91C1C" }}>Entregado y no pagado: {usd(cuenta.entregadoNoPagado)}</p>}
+                        </div>
+                        <ChevronDown size={16} style={{ color: ACCENT, transform: obraAbierta ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                      </button>
+                      {obraAbierta && (
+                        <div className="mt-3 space-y-4">
+                          <CuentaTiles c={cuenta} />
+                          <ContratoObra
+                            key={`${idFicha}:${ficha?.modificadoEn || 0}`} ficha={ficha} cuenta={cuenta}
+                            onGuardar={(patch) => onGuardarFicha(idFicha, base, patch)}
+                          />
+                          <ProductosObra productos={cuenta.productos} />
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Remisiones</p>
+                            {remisiones.length === 0 ? (
+                              <p className="text-xs" style={{ color: MUTED }}>Todavía no hay salidas para esta obra.</p>
+                            ) : (
+                              <div className="space-y-1.5">
+                                {remisiones.map((g) => {
+                                  const m0 = g.items[0];
+                                  const monto = g.items.reduce((a, m) => a + (Number(m.monto) || 0), 0);
+                                  const pedido = pedidos.find((p) => p.remitoKey === g.key);
+                                  const facturasDelRemito = facturasDeObra.filter((f) => (f.remitoKeys || []).includes(g.key));
+                                  return (
+                                    <div key={g.key} className="flex items-center justify-between gap-2 text-xs">
+                                      <span style={{ color: INK }}>
+                                        <b>{g.remito ? `Remito ${g.remito}` : "Sin N° de remito"}</b> · {fmtDate(m0.fecha)} · {g.unidades} u.{monto > 0 ? ` · ${usd(monto)}` : ""}
+                                        {facturasDelRemito.length > 0 && <span style={{ color: "#15803D" }}> · Facturado: {facturasDelRemito.map((f) => f.numero).join(", ")}</span>}
+                                      </span>
+                                      <button onClick={() => onPedido(g)} className="px-2 py-1 rounded border font-medium shrink-0" style={{ borderColor: pedido?.estado === "Enviado" ? "#15803D" : ACCENT, color: pedido?.estado === "Enviado" ? "#15803D" : ACCENT }}>
+                                        {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Preparar facturación"}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            );
-                          })}
+                            )}
+                          </div>
+                          <PagosObra ficha={ficha} cuenta={cuenta} cotizaciones={o.cotizaciones} onGuardar={(patch) => onGuardarFicha(idFicha, base, patch)} />
+                          <FacturasObra
+                            facturas={facturasDeObra} remisiones={remisiones} pedidos={pedidos} empresa={e} obra={o}
+                            onGuardar={onGuardarFactura} onBorrar={onBorrarFactura}
+                          />
                         </div>
                       )}
-                      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Facturas</p>
-                      <p className="text-xs" style={{ color: MUTED }}>Pendiente — el registro de facturas se suma más adelante.</p>
                     </div>
                   );
                 })}
@@ -11921,7 +12408,7 @@ function FichasClientes({ clientes, cotizaciones, movimientos, pedidos, query, o
   );
 }
 
-function ClientesView({ clientes, cotizaciones, movimientos, pedidos, query, onQuery, onNew, onDelete, onUpdateField, onPedido }) {
+function ClientesView({ clientes, cotizaciones, movimientos, pedidos, fichasObras, facturasObra, comprometidas, productos, equipos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
   const [vista, setVista] = useState("fichas");
   const toggleVista = (
     <div className="flex gap-2 mb-3">
@@ -11940,12 +12427,16 @@ function ClientesView({ clientes, cotizaciones, movimientos, pedidos, query, onQ
     return (
       <Section
         title="Clientes"
-        subtitle="Una ficha por cliente, con sus obras, remisiones y pedidos de facturación. Las facturas se suman más adelante."
+        subtitle="Una ficha por cliente, obra por obra: contrato, mercadería entregada, pagos recibidos, remisiones y facturas."
         query={query} onQuery={onQuery}
         onNew={onNew} newLabel="Nuevo contacto"
       >
         {toggleVista}
-        <FichasClientes clientes={clientes} cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidos} query={query} onPedido={onPedido} />
+        <FichasClientes
+          clientes={clientes} cotizaciones={cotizaciones} movimientos={movimientos} pedidos={pedidos}
+          fichasObras={fichasObras} facturasObra={facturasObra} comprometidas={comprometidas} productos={productos} equipos={equipos}
+          query={query} onPedido={onPedido} onGuardarFicha={onGuardarFicha} onGuardarFactura={onGuardarFactura} onBorrarFactura={onBorrarFactura}
+        />
       </Section>
     );
   }

@@ -81,6 +81,8 @@ service cloud.firestore {
     match /cotizaciones/{docId} { allow read, write: if esAdmin(); }
     match /armadosCombinaciones/{docId} { allow read, write: if esAdmin(); }
     match /pedidosFacturacion/{docId} { allow read, write: if esAdmin(); }
+    match /fichasObras/{docId} { allow read, write: if esAdmin(); }
+    match /facturasObra/{docId} { allow read, write: if esAdmin(); }
     match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
     match /clientes/{docId} { allow read, write: if esAdmin(); }
     match /transito/{docId} { allow read, write: if esAdmin(); }

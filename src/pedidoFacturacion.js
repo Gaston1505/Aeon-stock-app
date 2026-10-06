@@ -357,6 +357,11 @@ export function textoMailPedido(p, { corto = false } = {}) {
   return [...cab, ...cuerpoLineas, ...pie].join("\n");
 }
 
+// El destinatario puede ser un mail, una lista separada por comas/punto y coma, o un array.
+function listaDestinatarios(d) {
+  return [].concat(d || []).flatMap((x) => String(x).split(/[;,]/)).map((x) => x.trim()).filter(Boolean);
+}
+
 // Abre el redactor de mail con el texto armado. Un enlace no puede llevar adjuntos: por eso, cuando
 // el navegador lo permite se comparte directo con los dos archivos (Outlook figura entre las apps),
 // y si no, se descargan los archivos y se abre el mail para adjuntarlos.
@@ -378,7 +383,7 @@ export async function enviarPedidoPorMail(p, destinatario) {
   descargar(pdfBytes, archivos[0].name, "application/pdf");
   descargar(xlsxBuf, archivos[1].name, archivos[1].type);
   const cuerpo = textoMailPedido(p, { corto: true }) + "\n\n(Adjuntar los archivos descargados: PDF y Excel.)";
-  window.location.href = `mailto:${encodeURIComponent(destinatario || "")}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
+  window.location.href = `mailto:${listaDestinatarios(destinatario).map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
   return "mailto";
 }
 
@@ -389,6 +394,6 @@ export async function abrirPedidoEnOutlookWeb(p, destinatario) {
   descargar(pdfBytes, nombreArchivoPedidoPdf(p), "application/pdf");
   descargar(xlsxBuf, nombreArchivoPedidoExcel(p), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   const cuerpo = textoMailPedido(p, { corto: true }) + "\n\n(Adjuntar los archivos descargados: PDF y Excel.)";
-  const url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(destinatario || "")}&subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
+  const url = `https://outlook.office.com/mail/deeplink/compose?to=${listaDestinatarios(destinatario).map(encodeURIComponent).join(",")}&subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
   window.open(url, "_blank", "noopener");
 }

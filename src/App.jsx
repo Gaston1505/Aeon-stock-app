@@ -8417,7 +8417,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
       <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => { setPrecioLista(e.target.value); setPrecioManual(true); }} /></Field>
       {sugerido && (
         <div className="mb-3 -mt-2 text-xs" style={{ color: MUTED }}>
-          Según las métricas: <b style={{ color: INK }}>U$S {sugerido.precio.toLocaleString()}</b> = Costo PY U$S {fmtN(sugerido.costoPy)} × (1 + {fmtN(sugerido.markup.pct, 1)}% de markup de lista{sugerido.markup.origen === "propio" ? " propio" : ` del grupo ""`}).
+          Según las métricas: <b style={{ color: INK }}>U$S {sugerido.precio.toLocaleString()}</b> = Costo PY U$S {fmtN(sugerido.costoPy)} × (1 + {fmtN(sugerido.markup.pct, 1)}% de markup de lista{sugerido.markup.origen === "propio" ? " propio" : ` del grupo "${ETIQUETAS_MARKUP_LISTA[sugerido.markup.clave] || sugerido.markup.clave}"`}).
           {Number(precioLista) !== sugerido.precio && (
             <button type="button" onClick={() => { setPrecioLista(String(sugerido.precio)); setPrecioManual(false); }} className="ml-1.5 underline" style={{ color: ACCENT }}>Usar este precio</button>
           )}

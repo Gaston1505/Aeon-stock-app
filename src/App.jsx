@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useContext } from "react";
 import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
@@ -1336,6 +1336,35 @@ function SolicitudesPendientesBox({ solicitudes, tipo, esAdmin, uid, onAprobar, 
   );
 }
 
+// Catálogo y equipos a mano en cualquier pantalla, para mostrar siempre el código comercial junto con
+// el nombre del producto sin pasar `productos` por todos los componentes.
+const CatalogoCtx = React.createContext({ productos: [], equipos: [] });
+// Nombre del producto (ej. "Horno Mecánico 56 L") a partir de su código comercial; si no está en el
+// catálogo, muestra `fallback` (por ejemplo la descripción que traía la línea).
+function ProductoNombre({ codigo, fallback = "", className = "", style }) {
+  const { productos, equipos } = useContext(CatalogoCtx);
+  const p = productoDeCodigo(codigo, equipos, productos);
+  const nombre = p ? nombreProducto(p) : fallback;
+  return nombre ? <span className={className} style={style}>{nombre}</span> : null;
+}
+// Código comercial (CodeTag) + nombre del producto, y opcionalmente el código interno de la unidad.
+// Recibe un registro (equipo, movimiento, entrada…) o directamente un código comercial.
+function CodigoNombre({ registro, codigo, mostrarInterno = false }) {
+  const { productos, equipos } = useContext(CatalogoCtx);
+  const reg = registro || { codigo, modelo: codigo };
+  const p = productoDeCodigo(reg.modelo || reg.codigo, equipos, productos) || productoDeCodigo(reg.codigo, equipos, productos);
+  const comercial = p?.nombre || reg.modelo || reg.codigo || "";
+  const nombre = p ? nombreProducto(p) : "";
+  const interno = mostrarInterno && reg.codigo && reg.codigo !== comercial ? reg.codigo : "";
+  return (
+    <span className="inline-flex flex-col items-start">
+      <CodeTag>{comercial || "—"}</CodeTag>
+      {nombre && <span className="text-[11px] mt-0.5" style={{ color: MUTED }}>{nombre}</span>}
+      {interno && <span className="text-[10px]" style={{ color: MUTED }}>Interno: {interno}</span>}
+    </span>
+  );
+}
+
 function CodeTag({ children }) {
   return (
     <span
@@ -1603,7 +1632,10 @@ function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion
       {
         label: "Equipos", tab: "equipos",
         items: equipos.filter((e) => match(e.codigo) || match(e.serie) || match(e.modelo)).slice(0, 6)
-          .map((e) => ({ id: e.id, filtro: e.codigo, texto: `${e.codigo} — ${e.modelo}` })),
+          .map((e) => {
+            const p = productoDeCodigo(e.modelo || e.codigo, equipos, productos);
+            return { id: e.id, filtro: e.codigo, texto: `${p?.nombre || e.modelo || e.codigo}${p ? ` — ${nombreProducto(p)}` : ""} (${e.codigo})` };
+          }),
       },
       {
         label: "Catálogo de productos", tab: "catalogo",
@@ -3363,6 +3395,7 @@ export default function App() {
   }
 
   return (
+    <CatalogoCtx.Provider value={{ productos, equipos }}>
     <div style={{ backgroundColor: BG, minHeight: "100vh", fontFamily: "system-ui, -apple-system, sans-serif" }}>
       {/* Mobile top bar */}
       <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b sticky top-0 z-20" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
@@ -3565,8 +3598,8 @@ export default function App() {
           >
             <Table
               columns={[
-                { key: "codigo", label: "Código" }, { key: "serie", label: "N° de serie" },
-                { key: "modelo", label: "Modelo" }, { key: "fechaIngreso", label: "Ingreso" },
+                { key: "codigo", label: "Código interno" }, { key: "serie", label: "N° de serie" },
+                { key: "modelo", label: "Código comercial / producto" }, { key: "fechaIngreso", label: "Ingreso" },
                 { key: "estado", label: "Estado" }, { key: "cantidad", label: "Cant." },
                 { key: "comprometido", label: "Comprometido" }, { key: "motivoBaja", label: "Motivo de baja" },
                 { key: "ubicacion", label: "Ubicación" },
@@ -3579,6 +3612,7 @@ export default function App() {
                 if (key === "modelo") return (
                   <div style={{ minWidth: 180 }}>
                     <ComentarioEditor value={row.modelo} onSave={(v) => updateEquipoField(row.id, "modelo", v)} placeholder="Modelo" />
+                    <ProductoNombre codigo={row.modelo} className="block text-[11px] mt-0.5" style={{ color: MUTED }} />
                   </div>
                 );
                 if (key === "estado") return (
@@ -4081,6 +4115,7 @@ export default function App() {
         />
       )}
     </div>
+    </CatalogoCtx.Provider>
   );
 }
 
@@ -4685,7 +4720,7 @@ function ComprometidaPagoBox({ comprometidas }) {
       <div className="space-y-1">
         {enDeposito.map((c) => (
           <p key={c.id} className="text-sm" style={{ color: "#92400E" }}>
-            · {c.razonSocial} — {c.obra} — {c.modelo} × {c.saldo} en depósito —{" "}
+            · {c.razonSocial} — {c.obra} — {c.modelo} <ProductoNombre codigo={c.modelo} /> × {c.saldo} en depósito —{" "}
             {c.saldoPago <= 0
               ? "pagado por completo"
               : c.pagado > 0
@@ -4747,7 +4782,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
                     <td className="px-3 py-2" style={{ color: INK }}>{fmtDate(v.fecha)}</td>
                     <td className="px-3 py-2" style={{ color: INK }}>{v.cliente || "—"}</td>
                     <td className="px-3 py-2" style={{ color: INK }}>{v.obra || "—"}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{v.modelo}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}><CodigoNombre codigo={v.modelo} /></td>
                     <td className="px-3 py-2" style={{ color: INK }}>{v.cantidad}</td>
                     <td className="px-3 py-2" style={{ color: INK }}>{Number(v.monto || 0).toLocaleString()}</td>
                   </tr>
@@ -4776,7 +4811,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
               <tbody>
                 {porProducto.map((p) => (
                   <tr key={p.modelo} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                    <td className="px-3 py-2" style={{ color: INK }}>{p.modelo}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}><CodigoNombre codigo={p.modelo} /></td>
                     <td className="px-3 py-2" style={{ color: INK }}>{p.cantidad}</td>
                     <td className="px-3 py-2" style={{ color: INK }}>{p.monto.toLocaleString()}</td>
                   </tr>
@@ -5019,8 +5054,7 @@ function MuestrasGrupo({ titulo, items }) {
           <div key={e.id} className="text-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <CodeTag>{e.codigo}</CodeTag>
-                <span style={{ color: INK }}>{e.modelo}</span>
+                <CodigoNombre registro={e} mostrarInterno />
                 <span style={{ color: MUTED }}>· cant. {e.cantidad || 1}</span>
               </div>
               <StatusBadge estado={e.estado} />
@@ -5610,10 +5644,9 @@ function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpda
           {filtered.map((e) => (
             <div key={e.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
               <div className="flex items-center justify-between mb-2">
-                <CodeTag>{e.codigo}</CodeTag>
+                <CodigoNombre registro={e} mostrarInterno />
                 <StatusBadge estado={e.estado} />
               </div>
-              <p className="text-sm font-medium mb-2" style={{ color: INK }}>{e.modelo}</p>
               <div className="flex items-center gap-2">
                 <Select value={e.estado} onChange={(ev) => onUpdateEstado(e.id, ev.target.value)} style={{ ...inputStyle, padding: "4px 8px", fontSize: 12 }}>
                   {RECUPERABLE_ESTADOS.concat(["Apto para venta", "Muestra", "Dado de baja"]).map((s) => (
@@ -5712,7 +5745,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                 {(v.lineas || []).length > 0 && (
                   <ul className="text-xs mt-1.5 space-y-0.5" style={{ color: INK }}>
                     {v.lineas.map((l, i) => (
-                      <li key={i}>{l.cantidad}× {l.modelo}{l.descripcion ? ` — ${l.descripcion}` : ""}</li>
+                      <li key={i}>{l.cantidad}× {l.modelo} <ProductoNombre codigo={l.modelo} fallback={l.descripcion} style={{ color: MUTED }} /></li>
                     ))}
                   </ul>
                 )}
@@ -5732,7 +5765,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                     <ul className="text-xs mt-1 space-y-1" style={{ color: MUTED }}>
                       {remitos.map((m) => (
                         <li key={m.id} className="flex items-center gap-1.5">
-                          <span>{fmtDate(m.fecha)} · {m.cantidad}× {m.modelo}{m.remito ? ` · N° ${m.remito}` : ""}</span>
+                          <span>{fmtDate(m.fecha)} · {m.cantidad}× {m.modelo} <ProductoNombre codigo={m.modelo} />{m.remito ? ` · N° ${m.remito}` : ""}</span>
                           {m.fotoRemito && (
                             <button onClick={() => onVerFoto(m.fotoRemito)} title="Ver foto del remito" style={{ color: ACCENT }}>
                               <Camera size={12} />
@@ -5885,7 +5918,7 @@ function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar }) {
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start justify-between mb-1">
         <div>
-          <p className="text-sm font-medium" style={{ color: INK }}>{c.modelo}</p>
+          <div className="mb-0.5"><CodigoNombre codigo={c.modelo} /></div>
           {c.cotizacionId && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-block mt-1" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
               Desde cotización
@@ -6114,6 +6147,7 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField, onUp
                     <tr key={e.id} className="border-b last:border-0" style={{ borderColor: BORDER }}>
                       <td className="px-3 py-1.5" style={{ minWidth: 180 }}>
                         <ComentarioEditor value={e.modelo} onSave={(v) => onUpdateField(e.id, "modelo", v)} placeholder="Modelo" />
+                        <ProductoNombre codigo={e.modelo} className="block text-[11px] mt-0.5" style={{ color: MUTED }} />
                       </td>
                       <td className="px-3 py-1.5 whitespace-nowrap"><CodeTag>{e.codigo}</CodeTag></td>
                       <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: INK, fontSize: 13 }}>{e.cantidad || 1}</td>
@@ -6243,8 +6277,8 @@ function EquipoForm({ equipos, productos, onSave }) {
           {lineas.map((l, idx) => (
             <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
               <div className="min-w-0">
-                <CodeTag>{l.codigo}</CodeTag>
-                <span className="text-xs ml-1.5" style={{ color: MUTED }}>{l.cantidad}× {l.modelo} · {l.estado}</span>
+                <CodigoNombre registro={l} mostrarInterno />
+                <span className="text-xs ml-1.5" style={{ color: MUTED }}>{l.cantidad}× · {l.estado}</span>
               </div>
               <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
                 <X size={14} style={{ color: MUTED }} />
@@ -6805,7 +6839,7 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave,
           {lineas.map((l, idx) => (
             <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
               <div className="min-w-0">
-                <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.modelo}</span>
+                <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.modelo}</span> <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} className="text-xs" />
                 <span className="text-xs ml-1.5" style={{ color: MUTED }}>
                   {l.categoriaLabel}{l.motivo ? ` · ${l.motivo}` : ""}{l.monto > 0 ? ` · U$S ${fmtN(l.monto)}` : ""}
                 </span>
@@ -6987,7 +7021,7 @@ function EscanearEquipoForm({ equipos, playa, productos, comprometidas, onSalida
             <CodeTag>{equipo.codigo}</CodeTag>
             <StatusBadge estado={equipo.estado} />
           </div>
-          <p className="text-sm font-medium" style={{ color: INK }}>{equipo.modelo}</p>
+          <CodigoNombre registro={equipo} />
           <p className="text-xs mt-1" style={{ color: MUTED }}>
             {equipo.serie ? `N° de serie: ${equipo.serie} — ` : ""}Ubicación: {equipo.ubicacion || "—"} — Cantidad: {equipo.cantidad || 1}
           </p>
@@ -7070,7 +7104,7 @@ function ReubicarEquipoForm({ equipo, onEnviarPlaya, onCambiarEstado, onVolver }
           <CodeTag>{equipo.codigo}</CodeTag>
           <StatusBadge estado={equipo.estado} />
         </div>
-        <p className="text-sm font-medium" style={{ color: INK }}>{equipo.modelo}</p>
+        <CodigoNombre registro={equipo} />
       </div>
       <Field label="Reubicar a">
         <Select value={destino} onChange={(e) => setDestino(e.target.value)}>
@@ -7280,7 +7314,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
                       onChange={() => toggleLinea(idx)}
                     />
                     <div className="flex-1 min-w-0">
-                      <span className="font-medium" style={{ color: INK }}>{f.descripcion || f.codigo}</span>
+                      <span className="font-medium" style={{ color: INK }}><ProductoNombre codigo={f.codigo} fallback={f.descripcion || f.codigo} /></span>
                       <span style={{ color: MUTED }}> · {f.codigo}</span>
                     </div>
                     {seleccion[idx] && !sinStock && !yaCompleto && (
@@ -7516,7 +7550,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
                       onChange={() => toggleLinea(idx)}
                     />
                     <div className="flex-1 min-w-0">
-                      <span className="font-medium" style={{ color: INK }}>{f.descripcion || f.codigo}</span>
+                      <span className="font-medium" style={{ color: INK }}><ProductoNombre codigo={f.codigo} fallback={f.descripcion || f.codigo} /></span>
                       <span style={{ color: MUTED }}> · {f.codigo} · U$S {Number(f.precioUnit).toLocaleString()} c/u</span>
                     </div>
                     {seleccion[idx] && !sinStock && !yaCompleto && (
@@ -7693,7 +7727,7 @@ function VentaForm({ productos, onSave }) {
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
           {lineas.map((l, i) => (
             <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <span style={{ color: INK }}>{l.modelo} · cant. {l.cantidad}</span>
+              <span style={{ color: INK }}>{l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}</span>
               <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
             </div>
           ))}
@@ -7740,8 +7774,8 @@ function VentaDesdeCotizacionForm({ cotizaciones, ventas, cotizacionInicial, onG
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
           {(cotizacion.lineas || []).map((l, i) => (
             <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <span style={{ color: INK }}>{l.cantidad}× {l.codigo}</span>
-              {l.descripcion && <span style={{ color: MUTED }}> — {l.descripcion}</span>}
+              <span style={{ color: INK }}>{l.cantidad}× <CodeTag>{l.codigo}</CodeTag></span>
+              <ProductoNombre codigo={l.codigo} fallback={l.descripcion} className="ml-1.5" style={{ color: MUTED }} />
             </div>
           ))}
         </div>
@@ -8002,7 +8036,7 @@ function ComprometidaForm({ equipos, productos, onSave }) {
           {lineas.map((l, idx) => (
             <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
               <div className="min-w-0">
-                <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.modelo}</span>
+                <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.modelo}</span> <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} className="text-xs" />
                 {l.monto > 0 && <span className="text-xs ml-1.5" style={{ color: MUTED }}>U$S {fmtN(l.monto)}</span>}
               </div>
               <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
@@ -8079,7 +8113,7 @@ function RetiroParcialForm({ comprometida, onSave }) {
     <div>
       <div className="mb-4 p-3 rounded" style={{ backgroundColor: "#F7F8FA" }}>
         <p className="text-sm font-medium" style={{ color: INK }}>{comprometida.razonSocial} — {comprometida.obra}</p>
-        <p className="text-xs mt-0.5" style={{ color: MUTED }}>{comprometida.modelo} · saldo pendiente: {saldo} de {comprometida.cantidad}</p>
+        <p className="text-xs mt-0.5" style={{ color: MUTED }}>{comprometida.modelo} <ProductoNombre codigo={comprometida.modelo} /> · saldo pendiente: {saldo} de {comprometida.cantidad}</p>
       </div>
 
       <Field label={`Cantidad a retirar (saldo: ${saldo})`}>
@@ -9709,7 +9743,7 @@ function ConteoRowDeposito({ item, onGuardar }) {
   return (
     <div className="flex items-center gap-3 px-3.5 py-2 border-b" style={{ borderColor: BORDER }}>
       <div className="min-w-0 flex-1">
-        <CodeTag>{item.codigo}</CodeTag>
+        <CodigoNombre codigo={item.codigo} />
         {item.categoria === "Repuestos" && item.descripcion && (
           <span className="text-xs ml-2" style={{ color: MUTED }}>{item.descripcion}</span>
         )}
@@ -9836,6 +9870,7 @@ function EtiquetasView({ productos, serialesEtiquetas, onReservar }) {
                 <div key={l.codigo} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
                   <div className="min-w-0">
                     <span className="font-medium" style={{ color: INK }}>{l.cantidad}× {l.codigo}</span>
+                    <ProductoNombre codigo={l.codigo} className="text-xs ml-1.5" style={{ color: MUTED }} />
                     <span className="text-xs ml-1.5" style={{ color: MUTED }}>{String(desde).padStart(6, "0")} a {String(desde + l.cantidad - 1).padStart(6, "0")}</span>
                   </div>
                   <button onClick={() => setLineas(lineas.filter((_, j) => j !== i))} className="p-1 rounded hover:bg-gray-100 shrink-0">
@@ -9991,7 +10026,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
               const diff = i.contado != null ? i.contado - i.sistema : null;
               return (
                 <tr key={i.id} className="border-t" style={{ borderColor: BORDER }}>
-                  <td className="px-3.5 py-2"><CodeTag>{i.codigo}</CodeTag></td>
+                  <td className="px-3.5 py-2"><CodigoNombre codigo={i.codigo} /></td>
                   <td className="px-3.5 py-2 text-right"><ConteoCeldaAdmin item={i} onGuardar={onGuardar} /></td>
                   <td className="px-3.5 py-2 text-right" style={{ color: MUTED }}>{i.sistema}</td>
                   <td className="px-3.5 py-2 text-right">
@@ -10480,6 +10515,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
               )}
               <div className="min-w-0 flex-1">
                 <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
+                <ProductoNombre codigo={l.codigo} className="block text-[11px]" style={{ color: MUTED }} />
                 <div className="flex items-center gap-1 mt-1">
                   <input
                     type="number" min="1" value={l.cantidad}
@@ -10734,6 +10770,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
                   )}
                   <div className="min-w-0 flex-1">
                     <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
+                    <ProductoNombre codigo={f.codigo} className="block text-[11px]" style={{ color: MUTED }} />
                     {f.especValor && <span style={{ color: MUTED }}> · {f.especValor}</span>}
                     <div className="flex items-center gap-1 mt-1 flex-wrap">
                       <input
@@ -11148,7 +11185,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
         {r.filas.map((f, i) => (
           <div key={i} className="px-2 py-1.5 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
             <div className="flex items-center justify-between gap-2">
-              <span className="font-medium" style={{ color: INK }}>{f.codigo}</span>
+              <span className="font-medium" style={{ color: INK }}>{f.codigo} <ProductoNombre codigo={f.codigo} style={{ color: MUTED, fontWeight: 400 }} /></span>
               <span style={{ color: f.sinCosto ? "#B45309" : colorMargen(f.margen) }}>
                 {f.sinCosto ? "Sin costo cargado" : `${fmtN(f.margenPct, 1)}%`}
               </span>
@@ -11783,7 +11820,7 @@ function ArmadoCard({ a, onDelete, onEditar, onDescargarPdf, onDescargarExcel, d
       <div className="flex flex-wrap gap-1.5">
         {totalesPorCodigo.map((t) => (
           <span key={t.codigo} className="text-[11px] px-2 py-1 rounded-full" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            {t.codigo} × {t.cantidad}
+            {t.codigo} <ProductoNombre codigo={t.codigo} /> × {t.cantidad}
           </span>
         ))}
       </div>
@@ -14078,7 +14115,7 @@ function ComprometerLineaTransitoForm({ envio, lineaIdx, cotizaciones, compromet
   return (
     <div>
       <p className="text-sm mb-3" style={{ color: MUTED }}>
-        {linea.modelo} · disponible en este envío: <strong style={{ color: INK }}>{disponible}</strong>
+        {linea.modelo} <ProductoNombre codigo={linea.modelo} /> · disponible en este envío: <strong style={{ color: INK }}>{disponible}</strong>
       </p>
       <div className="flex gap-2 mb-3">
         <button
@@ -14152,7 +14189,7 @@ function DarLlegadaTransitoForm({ envio, onConfirmar }) {
           const comprometido = comprometidoEnLineaTransito(l);
           return (
             <div key={i} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <span style={{ color: INK }}>{l.modelo} · cant. {l.cantidad}</span>
+              <span style={{ color: INK }}>{l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}</span>
               {comprometido > 0 && (
                 <span style={{ color: MUTED }}> — {comprometido} comprometido(s): {(l.comprometidos || []).map((c) => `${c.cliente}${c.obra ? ` (${c.obra})` : ""} ×${c.cantidad}`).join(", ")}</span>
               )}
@@ -14318,7 +14355,7 @@ function OrdenCompraForm({ orden, productos, matrizCostos, cotizaciones, comprom
           <div className="max-h-32 overflow-y-auto space-y-0.5">
             {pendientes.map((p) => (
               <div key={p.codigo} className="flex justify-between text-xs">
-                <span style={{ color: MUTED }}>{p.codigo}</span>
+                <span style={{ color: MUTED }}>{p.codigo} <ProductoNombre codigo={p.codigo} /></span>
                 <span style={{ color: INK }}>{p.cantidad}</span>
               </div>
             ))}
@@ -14348,6 +14385,7 @@ function OrdenCompraForm({ orden, productos, matrizCostos, cotizaciones, comprom
             <div key={i} className="flex items-center gap-2 px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
               <div className="min-w-0 flex-1">
                 <span className="font-medium" style={{ color: INK }}>{l.codigo}</span>
+                <ProductoNombre codigo={l.codigo} className="block text-[11px]" style={{ color: MUTED }} />
                 <div className="flex items-center gap-1 mt-1">
                   <input
                     type="number" min="1" value={l.cantidad}
@@ -14506,7 +14544,7 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                     return (
                       <div key={i} className="text-xs" style={{ color: MUTED }}>
                         <div className="flex items-center gap-1 flex-wrap">
-                          <span>· {l.modelo} — cant. {l.cantidad}</span>
+                          <span>· {l.modelo} <ProductoNombre codigo={l.modelo} /> — cant. {l.cantidad}</span>
                           {comprometido > 0 && (
                             <>
                               <span>· comprometido {comprometido} · disponible {disponible}</span>
@@ -14684,7 +14722,7 @@ function TransitoForm({ envio, productos, onSave }) {
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
           {lineas.map((l, i) => (
             <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <span style={{ color: INK }}>{l.modelo} · cant. {l.cantidad}</span>
+              <span style={{ color: INK }}>{l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}</span>
               <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
             </div>
           ))}

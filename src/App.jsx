@@ -2248,12 +2248,11 @@ export default function App() {
   // esta única fecha de venta para toda la obra.
   const generarVentaDesdeCotizacion = (cotizacion, datos) => {
     const fechaVenta = datos.fechaVenta || todayISO();
+    const lineas = (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad }));
     addVenta({
       cliente: cotizacion.cliente, obra: cotizacion.obra, cotizacionId: cotizacion.id,
-      fechaVenta,
-      lineas: (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad })),
-      vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24),
-      estadoService1: "Pendiente", estadoService2: "Pendiente",
+      fechaVenta, lineas,
+      ...serviciosDeVenta(fechaVenta, lineas, productos),
     });
   };
 
@@ -4069,6 +4068,25 @@ export default function App() {
   );
 }
 
+// Los accesorios (ej. control remoto) no son equipos para service: una venta que lleva solo accesorios
+// no genera los services de 12 y 24 meses. Si lleva algún equipo (o un modelo que no está en el
+// catálogo), se generan como siempre.
+function ventaLlevaService(lineas, productos) {
+  return (lineas || []).some((l) => {
+    const p = (productos || []).find((pp) => pp.nombre === l.modelo);
+    return !(p && /accesorio/i.test(p.subcategoria || ""));
+  });
+}
+function serviciosDeVenta(fechaVenta, lineas, productos) {
+  if (!ventaLlevaService(lineas, productos)) {
+    return { vtoService1: "", vtoService2: "", estadoService1: "No aplica", estadoService2: "No aplica", sinService: true };
+  }
+  return {
+    vtoService1: addMonthsISO(fechaVenta, 12), vtoService2: addMonthsISO(fechaVenta, 24),
+    estadoService1: "Pendiente", estadoService2: "Pendiente",
+  };
+}
+
 function ServiceCell({ venta, field, label, onUpdate, onGestionar }) {
   const estadoKey = `estado${field}`;
   const estado = venta[estadoKey] || "Pendiente";
@@ -5714,10 +5732,14 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                   </ul>
                 )}
 
-                <div className="mt-2.5 space-y-1.5">
-                  <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
-                  <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
-                </div>
+                {v.sinService || (!v.vtoService1 && !v.vtoService2) ? (
+                  <p className="text-xs mt-2.5" style={{ color: MUTED }}>Sin service: la venta es solo de accesorios.</p>
+                ) : (
+                  <div className="mt-2.5 space-y-1.5">
+                    <ServiceCell venta={v} field="Service1" label={`Service 1 (12m): ${fmtDate(v.vtoService1)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                    <ServiceCell venta={v} field="Service2" label={`Service 2 (24m): ${fmtDate(v.vtoService2)}`} onUpdate={onUpdateField} onGestionar={onGestionar} />
+                  </div>
+                )}
 
                 {remitos.length > 0 && (
                   <div className="mt-2.5">
@@ -7665,12 +7687,7 @@ function VentaForm({ productos, onSave }) {
       setError("Agregá al menos un modelo vendido.");
       return;
     }
-    onSave({
-      cliente, obra, fechaVenta, lineas,
-      vtoService1: addMonthsISO(fechaVenta, 12),
-      vtoService2: addMonthsISO(fechaVenta, 24),
-      estadoService1: "Pendiente", estadoService2: "Pendiente",
-    });
+    onSave({ cliente, obra, fechaVenta, lineas, ...serviciosDeVenta(fechaVenta, lineas, productos) });
   };
 
   return (

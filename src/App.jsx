@@ -82,6 +82,22 @@ const MATRIZ_COSTOS_DEFAULT = {
     aires: { comisionVentaPct: 1.88, despachoPct: 31, margenMinimoPct: 10, margenIdealMinPct: 25, margenIdealMaxPct: 30 },
     otros: { comisionVentaPct: 2.5, despachoPct: 31, margenMinimoPct: 25, margenIdealMinPct: 60, margenIdealMaxPct: 65 },
   },
+  // Markup de LISTA por grupo de producto (sobre Costo PY): precio de lista = Costo PY × (1 + markup).
+  // Es el patrón con el que están armados los precios hoy. La clave puede ser "Categoría",
+  // "Categoría|Subcategoría" o "Categoría|Subcategoría|Subcategoría 2"; gana la más específica.
+  // Un producto puede tener su propio markup (markupListaPct) que pisa al del grupo.
+  markupLista: {
+    "Aire Acondicionado": 30,
+    "Aire Acondicionado|Split Pared|ON-OFF": 25,
+    "Cocina": 65,
+    "Termocalefones": 45,
+  },
+};
+const ETIQUETAS_MARKUP_LISTA = {
+  "Aire Acondicionado": "Aire Acondicionado (general)",
+  "Aire Acondicionado|Split Pared|ON-OFF": "Aire Acondicionado — Split Pared ON-OFF",
+  "Cocina": "Cocina (anafes, hornos, campanas, enfriadores)",
+  "Termocalefones": "Termocalefones",
 };
 
 const ORIGENES_PLAYA = ["Técnico", "Gastón", "Cliente", "Otro"];
@@ -765,6 +781,31 @@ function calcularCostosProducto(producto, matriz) {
     margenIdealMinPct: Number(catCfg.margenIdealMinPct) || 0,
     margenIdealMaxPct: Number(catCfg.margenIdealMaxPct) || 0,
   };
+}
+
+// Markup de lista que le corresponde a un producto: el propio (si se cargó) o el de su grupo en la
+// Matriz (el más específico: Categoría|Sub|Sub2, luego Categoría|Sub, luego Categoría).
+function markupListaDe(producto, matriz) {
+  const propio = producto?.markupListaPct;
+  if (propio !== undefined && propio !== null && propio !== "" && !isNaN(Number(propio))) return { pct: Number(propio), origen: "propio" };
+  const tabla = { ...MATRIZ_COSTOS_DEFAULT.markupLista, ...((matriz && matriz.markupLista) || {}) };
+  const cp = (producto?.categoriaPrincipal || "").trim();
+  const sub = (producto?.subcategoria || "").trim();
+  const sub2 = (producto?.subcategoria2 || "").trim();
+  for (const clave of [`${cp}|${sub}|${sub2}`, `${cp}|${sub}`, cp]) {
+    if (tabla[clave] !== undefined && tabla[clave] !== null && tabla[clave] !== "" && !isNaN(Number(tabla[clave]))) {
+      return { pct: Number(tabla[clave]), origen: "grupo", clave };
+    }
+  }
+  return null;
+}
+// Precio de lista que sale de las métricas: Costo PY (desde el costo de origen) × (1 + markup de lista),
+// en dólares enteros. null si falta el costo de origen, las unidades por contenedor o el markup.
+function precioListaSugerido(producto, matriz) {
+  const costos = calcularCostosProducto(producto, matriz);
+  const mk = markupListaDe(producto, matriz);
+  if (!costos || !mk) return null;
+  return { precio: Math.round(costos.costoPy * (1 + mk.pct / 100)), costoPy: costos.costoPy, markup: mk };
 }
 
 // Clasifica un markup % (sobre Costo PY, no sobre precio de venta) contra el piso/ideal de su
@@ -2394,6 +2435,8 @@ export default function App() {
   // el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
   const addProducto = (data) => addItem(COLLECTIONS.productos, data);
   const updateProducto = (id, data) => updateItem(COLLECTIONS.productos, id, data);
+  // Aplica de una vez los precios de lista que salen de las métricas: [{ id, precioLista }].
+  const aplicarPreciosSegunMetricas = (cambios) => Promise.all(cambios.map((c) => updateItem(COLLECTIONS.productos, c.id, { precioLista: c.precioLista })));
   const deleteProducto = (p) => deleteItem(COLLECTIONS.productos, p.id);
   const quitarFichaTecnica = (producto) =>
     updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
@@ -3717,7 +3760,8 @@ export default function App() {
 
         {tab === "catalogo" && (
           <CatalogoView
-            productos={filteredProductos} equipos={equipos} query={query} onQuery={setQuery}
+            productos={filteredProductos} productosTodos={productos} matrizCostos={matrizCostosEfectiva} onAplicarPrecios={aplicarPreciosSegunMetricas}
+            equipos={equipos} query={query} onQuery={setQuery}
             modoInicial={catalogoModoInicial}
             onNew={(modo) => { setProductoEditando(null); setNuevoProductoDefaults(modo === "repuestos" ? { categoriaPrincipal: "Repuestos" } : null); setDrawer("producto"); }}
             onEdit={(p) => { setProductoEditando(p); setDrawer("producto"); }}
@@ -8261,6 +8305,10 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
   const [precioLista, setPrecioLista] = useState(producto ? String(producto.precioLista ?? "") : "");
   const [costoOrigen, setCostoOrigen] = useState(producto ? String(producto.costoOrigen ?? "") : "");
   const costoPyGuardado = producto ? Number(producto.costoPy) || 0 : 0;
+  // Markup de lista propio de este producto (vacío = el de su grupo en la Matriz de costos).
+  const [markupPropio, setMarkupPropio] = useState(producto?.markupListaPct != null ? String(producto.markupListaPct) : "");
+  // Si se escribe el precio a mano, el precio automático no lo pisa hasta que se vuelva a tocar el costo.
+  const [precioManual, setPrecioManual] = useState(false);
   const [codigoFabrica, setCodigoFabrica] = useState(producto?.codigoFabrica || "");
   const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "40HQ");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
@@ -8280,6 +8328,18 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
     [categoriaPrincipal, costoOrigen, contenedorCantidad, matrizCostos]
   );
   const costoPyEfectivo = costosCalc ? costosCalc.costoPy : costoPyGuardado;
+
+  // Precio de lista que sale de las métricas (origen → Costo PY → × markup de lista).
+  const sugerido = useMemo(
+    () => precioListaSugerido({ categoriaPrincipal, subcategoria, subcategoria2, costoOrigen, contenedorCantidad, markupListaPct: markupPropio }, matrizCostos),
+    [categoriaPrincipal, subcategoria, subcategoria2, costoOrigen, contenedorCantidad, markupPropio, matrizCostos]
+  );
+  // Al cambiar el costo de origen (o lo que lo afecta), el precio de lista se rearma solo con las métricas.
+  const primerRender = useRef(true);
+  useEffect(() => {
+    if (primerRender.current) { primerRender.current = false; return; }
+    if (sugerido) { setPrecioLista(String(sugerido.precio)); setPrecioManual(false); }
+  }, [costoOrigen, contenedorCantidad, markupPropio, categoriaPrincipal, subcategoria, subcategoria2]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFoto = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -8328,6 +8388,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         ordenNumerico: ordenNumerico === "" ? null : Number(ordenNumerico) || 0,
         precioLista: Number(precioLista) || 0,
         costoOrigen: Number(costoOrigen) || 0, costoPy: costoPyEfectivo,
+        markupListaPct: markupPropio === "" ? null : Number(markupPropio),
         codigoFabrica: codigoFabrica.trim(),
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
@@ -8353,7 +8414,16 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         <Field label="Especificación — etiqueta"><TextInput value={especLabel} onChange={(e) => setEspecLabel(e.target.value)} placeholder="Ej: Capacidad BTU" /></Field>
         <Field label="Especificación — valor"><TextInput value={especValor} onChange={(e) => setEspecValor(e.target.value)} placeholder="Ej: 12.000" /></Field>
       </div>
-      <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => setPrecioLista(e.target.value)} /></Field>
+      <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => { setPrecioLista(e.target.value); setPrecioManual(true); }} /></Field>
+      {sugerido && (
+        <div className="mb-3 -mt-2 text-xs" style={{ color: MUTED }}>
+          Según las métricas: <b style={{ color: INK }}>U$S {sugerido.precio.toLocaleString()}</b> = Costo PY U$S {fmtN(sugerido.costoPy)} × (1 + {fmtN(sugerido.markup.pct, 1)}% de markup de lista{sugerido.markup.origen === "propio" ? " propio" : ` del grupo ""`}).
+          {Number(precioLista) !== sugerido.precio && (
+            <button type="button" onClick={() => { setPrecioLista(String(sugerido.precio)); setPrecioManual(false); }} className="ml-1.5 underline" style={{ color: ACCENT }}>Usar este precio</button>
+          )}
+          {precioManual && Number(precioLista) !== sugerido.precio && <span style={{ color: "#B45309" }}> El precio cargado a mano difiere de las métricas.</span>}
+        </div>
+      )}
       <label className="flex items-center gap-2 mb-3 text-sm" style={{ color: INK }}>
         <input type="checkbox" checked={noDisponible} onChange={(e) => setNoDisponible(e.target.checked)} />
         No disponible para la venta (no aparece como opción en Cotizaciones ni Panel de simulación)
@@ -8388,6 +8458,9 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
           <TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} />
         </Field>
       </div>
+      <Field label="Markup de lista propio % (vacío = el del grupo en la Matriz de costos)">
+        <TextInput type="number" step="0.1" value={markupPropio} onChange={(e) => setMarkupPropio(e.target.value)} placeholder={markupListaDe({ categoriaPrincipal, subcategoria, subcategoria2 }, matrizCostos)?.pct != null ? `Grupo: ${markupListaDe({ categoriaPrincipal, subcategoria, subcategoria2 }, matrizCostos).pct}%` : "Sin markup de grupo"} />
+      </Field>
       <Field label="Contenedor de referencia (para Flete y Orden de Compra)">
         <Select value={contenedorTipo} onChange={(e) => setContenedorTipo(e.target.value)}>
           {Object.keys((matrizCostos || MATRIZ_COSTOS_DEFAULT).contenedores).map((tipo) => (
@@ -8785,6 +8858,97 @@ function downloadListaPreciosExcel(secciones, fecha) {
   XLSX.writeFile(wb, `Lista_de_precios_AEON_${fecha}.xlsx`);
 }
 
+// Productos cuyo precio de lista no coincide con el que dan las métricas (costo de origen → Costo PY →
+// × markup de lista). Pasa cuando se cambia un costo de origen por fuera del formulario, o una variable
+// de la Matriz (flete, despacho, comisión) o un markup. Se aplica de a uno o todos juntos.
+// Hay una tolerancia chica para no listar diferencias que son solo redondeo a dólares enteros.
+function PreciosSegunMetricasPanel({ productos, matrizCostos, onAplicar, onCerrar }) {
+  const filas = useMemo(() => {
+    const out = [];
+    for (const p of productos) {
+      if (p.categoriaPrincipal === "Repuestos" || p.noDisponible) continue;
+      const s = precioListaSugerido(p, matrizCostos);
+      if (!s) continue;
+      const actual = Number(p.precioLista) || 0;
+      const dif = s.precio - actual;
+      if (Math.abs(dif) >= 1 && (actual <= 0 || Math.abs(dif) / actual >= 0.015)) out.push({ p, s, actual, dif });
+    }
+    return out.sort((a, b) => (a.p.categoriaPrincipal || "").localeCompare(b.p.categoriaPrincipal || "") || (a.p.nombre || "").localeCompare(b.p.nombre || ""));
+  }, [productos, matrizCostos]);
+  const [elegidos, setElegidos] = useState(null); // null = todos
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const marcado = (id) => elegidos === null || elegidos.includes(id);
+  const alternar = (id) => setElegidos((prev) => {
+    const base = prev === null ? filas.map((f) => f.p.id) : prev;
+    return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+  });
+  const aElegir = filas.filter((f) => marcado(f.p.id));
+  const aplicar = async () => {
+    setOcupado(true);
+    setMsg(null);
+    try {
+      await onAplicar(aElegir.map((f) => ({ id: f.p.id, precioLista: f.s.precio })));
+      setMsg({ tipo: "ok", texto: `Se actualizaron ${aElegir.length} precio(s) de lista.` });
+      setElegidos(null);
+    } catch (e) { setMsg({ tipo: "error", texto: "No se pudieron actualizar los precios. Probá de nuevo." }); }
+    setOcupado(false);
+  };
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <p className="text-base font-bold" style={{ color: INK }}>Precios según métricas</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+            El costo de origen manda: Costo PY (con comisión agente, flete y despacho de la Matriz) × (1 + markup de lista) = precio de lista. Acá figuran los productos cuyo precio de lista actual no coincide con eso.
+          </p>
+        </div>
+        <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
+      </div>
+      {filas.length === 0 ? (
+        <p className="text-sm px-3 py-2 rounded-lg" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>Todos los precios de lista están al día con las métricas.</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-lg border mb-2" style={{ borderColor: BORDER }}>
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ backgroundColor: "#FAFBFC", color: MUTED }}>
+                  <th className="px-2 py-1.5"></th>
+                  <th className="text-left font-medium px-2 py-1.5">Producto</th>
+                  <th className="text-right font-medium px-2 py-1.5">Costo origen</th>
+                  <th className="text-right font-medium px-2 py-1.5">Costo PY</th>
+                  <th className="text-right font-medium px-2 py-1.5">Markup</th>
+                  <th className="text-right font-medium px-2 py-1.5">Precio actual</th>
+                  <th className="text-right font-medium px-2 py-1.5">Según métricas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((f) => (
+                  <tr key={f.p.id} style={{ borderTop: `0.5px solid ${BORDER}`, color: INK }}>
+                    <td className="px-2 py-1.5"><input type="checkbox" checked={marcado(f.p.id)} onChange={() => alternar(f.p.id)} /></td>
+                    <td className="px-2 py-1.5"><CodeTag>{f.p.nombre}</CodeTag><span className="block text-[10px]" style={{ color: MUTED }}>{nombreProducto(f.p)}</span></td>
+                    <td className="text-right px-2 py-1.5">{fmtN(f.p.costoOrigen)}</td>
+                    <td className="text-right px-2 py-1.5">{fmtN(f.s.costoPy)}</td>
+                    <td className="text-right px-2 py-1.5">{fmtN(f.s.markup.pct, 1)}%{f.s.markup.origen === "propio" ? " (propio)" : ""}</td>
+                    <td className="text-right px-2 py-1.5">U$S {f.actual.toLocaleString()}</td>
+                    <td className="text-right px-2 py-1.5 font-semibold" style={{ color: f.dif > 0 ? "#B45309" : "#15803D" }}>
+                      U$S {f.s.precio.toLocaleString()} <span className="font-normal">({f.dif > 0 ? "+" : ""}{f.dif.toLocaleString()})</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <PrimaryButton onClick={aplicar} disabled={ocupado || aElegir.length === 0}>
+            {ocupado ? "Aplicando..." : `Actualizar ${aElegir.length} precio${aElegir.length !== 1 ? "s" : ""} de lista`}
+          </PrimaryButton>
+        </>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>}
+    </div>
+  );
+}
+
 function ListaPreciosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
   const [ocupado, setOcupado] = useState("");
@@ -8943,12 +9107,13 @@ function TablaCombinacionesMultiSplit({ productos }) {
   );
 }
 
-function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
+function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecios, equipos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
   const fileInputRef = useRef(null);
   const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
   const [verTablaMulti, setVerTablaMulti] = useState(false);
   const [verListaPrecios, setVerListaPrecios] = useState(false);
+  const [verMetricas, setVerMetricas] = useState(false);
 
   // Stock vendible por modelo, para mostrarlo directo en la tarjeta del producto — misma
   // cuenta que usa Depósito (todo menos Vendido/Dado de baja, que ya salieron del circuito).
@@ -9020,6 +9185,7 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
           <SecondaryButton onClick={() => setVerListaPrecios((v) => !v)}><FileText size={14} /> Lista de precios</SecondaryButton>
+          <SecondaryButton onClick={() => setVerMetricas((v) => !v)}><Calculator size={14} /> Precios según métricas</SecondaryButton>
           <SecondaryButton onClick={descargarPlantillaCatalogo}><Download size={14} /> Plantilla</SecondaryButton>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="hidden" />
           <SecondaryButton onClick={() => fileInputRef.current?.click()}>
@@ -9045,6 +9211,7 @@ function CatalogoView({ productos, equipos, query, onQuery, onNew, onEdit, onDel
       </div>
 
       {verListaPrecios && <ListaPreciosPanel productos={productos} onCerrar={() => setVerListaPrecios(false)} />}
+      {verMetricas && <PreciosSegunMetricasPanel productos={productosTodos || productos} matrizCostos={matrizCostos} onAplicar={onAplicarPrecios} onCerrar={() => setVerMetricas(false)} />}
 
       {importResultado && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultado}</div>
@@ -13637,12 +13804,14 @@ function agruparPreciosMercado(registros) {
 // calcularCostosProducto) — todo lo demás (Costo PY, Costo Real, etc.) sale calculado de acá +
 // costo origen/cantidad por contenedor de cada producto, nunca se carga a mano en otro lado.
 function MatrizCostosView({ matrizCostos, onUpdate }) {
-  const [form, setForm] = useState(matrizCostos);
+  // Una matriz guardada antes de que existieran los markups de lista no los trae: se completan con los de fábrica.
+  const conMarkups = (m) => ({ ...m, markupLista: { ...MATRIZ_COSTOS_DEFAULT.markupLista, ...(m.markupLista || {}) } });
+  const [form, setForm] = useState(() => conMarkups(matrizCostos));
   const [guardado, setGuardado] = useState(false);
 
   // El doc real puede llegar después del primer render (onSnapshot es async) — sin esto, el
   // formulario se quedaría pegado en MATRIZ_COSTOS_DEFAULT aunque ya exista un doc guardado.
-  useEffect(() => { setForm(matrizCostos); setGuardado(false); }, [matrizCostos]);
+  useEffect(() => { setForm(conMarkups(matrizCostos)); setGuardado(false); }, [matrizCostos]);
 
   const set = (path, value) => {
     setGuardado(false);
@@ -13670,6 +13839,9 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
           margenMinimoPct: Number(v.margenMinimoPct) || 0,
           margenIdealMinPct: Number(v.margenIdealMinPct) || 0, margenIdealMaxPct: Number(v.margenIdealMaxPct) || 0,
         },
+      ])),
+      markupLista: Object.fromEntries(Object.keys(MATRIZ_COSTOS_DEFAULT.markupLista).map((k) => [
+        k, Number((form.markupLista || {})[k] ?? MATRIZ_COSTOS_DEFAULT.markupLista[k]) || 0,
       ])),
     });
     setGuardado(true);
@@ -13737,6 +13909,18 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
             </Field>
           </div>
         </div>
+      ))}
+
+      <p className="text-base font-bold mt-4 mb-1" style={{ color: ACCENT }}>Markup de precio de lista (por grupo)</p>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>
+        Así se arma el precio de lista a partir del costo de origen: <b>precio de lista = Costo PY × (1 + markup)</b>, en dólares enteros. Cuando cambiás el costo de origen de un producto,
+        su precio de lista se recalcula solo con el markup de su grupo (o con el propio, si se lo cargaste al producto). Después podés editar el precio a mano.
+        Si cambiás acá un markup o alguna variable de costo, los precios que queden desfasados se actualizan desde Catálogo → "Precios según métricas".
+      </p>
+      {Object.keys(MATRIZ_COSTOS_DEFAULT.markupLista).map((k) => (
+        <Field key={k} label={`${ETIQUETAS_MARKUP_LISTA[k] || k} — markup % sobre Costo PY`}>
+          <TextInput type="number" step="0.1" value={(form.markupLista || {})[k] ?? MATRIZ_COSTOS_DEFAULT.markupLista[k]} onChange={(e) => set(["markupLista", k], e.target.value)} />
+        </Field>
       ))}
 
       {guardado && <p className="text-xs mb-2" style={{ color: "#15803D" }}>Guardado — ya se está usando en todo el catálogo.</p>}

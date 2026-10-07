@@ -863,8 +863,10 @@ function sugerirContenedores(m3Total, contenedores) {
 // se prorratea proporcional a todos los productos (nunca se resta aparte de uno solo).
 function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   const lineas = c.lineas || [];
-  const descuentoPct = c.incluirDescuento ? (Number(c.descuento) || 0) : 0;
-  const factorDescuento = 1 - descuentoPct / 100;
+  // El descuento sale de la misma cuenta que el total de la cotización (porcentaje o monto fijo).
+  const dTotal = desglosarTotalCotizacion(c);
+  const factorDescuento = dTotal.subtotal > 0 ? (dTotal.subtotal - dTotal.descuentoMonto) / dTotal.subtotal : 1;
+  const descuentoPct = dTotal.subtotal > 0 ? (dTotal.descuentoMonto / dTotal.subtotal) * 100 : 0;
   const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
 
   const filas = lineas.map((l) => {
@@ -872,7 +874,9 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     const precioUnit = Number(l.precioUnit) || 0;
     const ventaNeta = cantidad * precioUnit * factorDescuento;
     const producto = (productos || []).find((p) => p.nombre === l.codigo);
-    const costoUnit = producto ? (Number(producto.costoPy) || Number(producto.costoOrigen) || 0) : 0;
+    // Costo PY calculado hoy desde el costo de origen y la Matriz; el valor guardado solo si faltan datos.
+    const costosVivos = producto ? calcularCostosProducto(producto, matriz) : null;
+    const costoUnit = costosVivos ? costosVivos.costoPy : (producto ? (Number(producto.costoPy) || Number(producto.costoOrigen) || 0) : 0);
     const sinCosto = !producto || costoUnit === 0;
     const costoTotal = cantidad * costoUnit;
     const margen = ventaNeta - costoTotal;
@@ -10894,6 +10898,16 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
   const todoCubierto = filas.length > 0 && totalFaltante === 0;
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
 
+  // El ejercicio armado como si fuera una cotización (mismos datos que se guardarían al confirmar), para
+  // calcularle la rentabilidad en plata con el mismo motor que usa una cotización real.
+  const cotizacionSimulada = useMemo(() => ({
+    lineas,
+    incluirDescuento: dI.incluirDescuento, descuento: Number(dI.descuento) || 0, descuentoEsPorcentaje: true,
+    incluirInstalacion: dI.incluirInstalacion || dI.serviciosAdicionales.length > 0,
+    instalacionMonto: (Number(dI.instalacionMonto) || 0) + dI.totalServicios,
+    serviciosAdicionales: dI.serviciosAdicionales,
+  }), [lineas, dI.incluirDescuento, dI.descuento, dI.incluirInstalacion, dI.instalacionMonto, dI.serviciosAdicionales, dI.totalServicios]);
+
   const confirmar = () => {
     if (!cliente.trim()) {
       setError("Ingresá el cliente para confirmar como cotización.");
@@ -11033,6 +11047,16 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
       )}
 
       <DescuentoInstalacionCampos dI={dI} subtotal={subtotal} />
+
+      {filas.length > 0 && (
+        <div className="mb-4">
+          <p className="text-base font-bold mb-1" style={{ color: ACCENT }}>Rentabilidad de este negocio (simulada)</p>
+          <p className="text-xs mb-1" style={{ color: MUTED }}>
+            Los mismos números que mostraría la cotización armada — venta, costo, margen en plata y margen neto de la empresa — con el descuento, la instalación y los precios que tengas cargados acá, sin tener que generar la cotización.
+          </p>
+          <RentabilidadCotizacionView c={cotizacionSimulada} productos={productos} matrizCostos={matrizCostos} />
+        </div>
+      )}
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={confirmar} disabled={filas.length === 0}>Confirmar como cotización real</PrimaryButton>

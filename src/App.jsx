@@ -3742,7 +3742,7 @@ export default function App() {
         )}
 
         {tab === "etiquetas" && (
-          <EtiquetasView productos={productos} serialesEtiquetas={serialesEtiquetas} onReservar={reservarSeriales} />
+          <EtiquetasView productos={productos} transito={transito} serialesEtiquetas={serialesEtiquetas} onReservar={reservarSeriales} />
         )}
 
         {tab === "cotizaciones" && (
@@ -9785,13 +9785,54 @@ function EtiquetaPreview({ texto }) {
 
 const ETIQUETAS_POR_HOJA = 28;
 
-function EtiquetasView({ productos, serialesEtiquetas, onReservar }) {
+function EtiquetasView({ productos, transito = [], serialesEtiquetas, onReservar }) {
   const [productoId, setProductoId] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [lineas, setLineas] = useState([]);
   const [generando, setGenerando] = useState(false);
   const [error, setError] = useState("");
   const [resultado, setResultado] = useState(null);
+  const [avisoTransito, setAvisoTransito] = useState("");
+
+  // Trae a la lista lo que viene en camino (envíos que todavía no llegaron), una línea por producto y
+  // con la cantidad del envío. Los códigos se buscan en el catálogo sin distinguir mayúsculas, espacios
+  // ni guiones, para que "60CM" o "60 cm" no impidan reconocerlos.
+  const cargarDesdeTransito = () => {
+    setError("");
+    const acumulado = new Map();
+    const noEncontrados = [];
+    for (const envio of transito.filter((t) => t.estado !== "Llegado")) {
+      for (const l of envio.lineas || []) {
+        const cant = Math.floor(Number(l.cantidad) || 0);
+        if (cant <= 0) continue;
+        const p = productos.find((pp) => claveCodigo(pp.nombre) === claveCodigo(l.modelo));
+        if (!p) { noEncontrados.push(l.modelo); continue; }
+        acumulado.set(p.nombre, (acumulado.get(p.nombre) || 0) + cant);
+      }
+    }
+    setLineas(Array.from(acumulado, ([codigo, cant]) => ({ codigo, cantidad: cant })));
+    const total = Array.from(acumulado.values()).reduce((a, b) => a + b, 0);
+    setAvisoTransito(
+      acumulado.size === 0
+        ? "No hay mercadería en tránsito para cargar."
+        : `Se cargaron ${acumulado.size} producto(s) del tránsito (${total} etiquetas).${noEncontrados.length ? ` No se encontraron en el catálogo: ${noEncontrados.join(", ")}.` : ""}`
+    );
+  };
+
+  // Una hoja con 4 etiquetas de cada producto de la lista para probar la impresión y la lectura con el
+  // celular. No reserva seriales: son de muestra y no se pegan en cajas.
+  const hojaDePrueba = async () => {
+    setError("");
+    if (lineas.length === 0) { setError("Agregá productos (o cargá lo que viene en tránsito) para armar la hoja de prueba."); return; }
+    setGenerando(true);
+    try {
+      const etiquetas = lineas.flatMap((l) => [1, 2, 3, 4].map((n) => ({ texto: textoSerial(l.codigo, SERIAL_BASE_APP + n) })));
+      await downloadEtiquetasPdf(etiquetas, `Etiquetas_PRUEBA_${todayISO()}`);
+    } catch (err) {
+      setError(`No se pudo generar la hoja de prueba: ${err.message || err}`);
+    }
+    setGenerando(false);
+  };
 
   const disponibles = useMemo(() => productos.filter((p) => p.categoriaPrincipal !== "Repuestos" && !p.noDisponible), [productos]);
   const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(disponibles), [disponibles]);
@@ -9846,6 +9887,12 @@ function EtiquetasView({ productos, serialesEtiquetas, onReservar }) {
           Armá los pegotines para pegar en las cajas y controlar por código de barras. Elegís producto y cantidad, y se genera el PDF listo para imprimir.
         </p>
       </div>
+
+      <div className="flex gap-2 flex-wrap mb-3">
+        <SecondaryButton onClick={cargarDesdeTransito}><Ship size={14} /> Cargar lo que viene en tránsito</SecondaryButton>
+        <SecondaryButton onClick={hojaDePrueba} disabled={generando}><Download size={14} /> Hoja de prueba (no gasta seriales)</SecondaryButton>
+      </div>
+      {avisoTransito && <p className="text-xs mb-3" style={{ color: MUTED }}>{avisoTransito}</p>}
 
       <div className="p-3 rounded-lg mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto">

@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers,
+  Calculator, ShoppingCart, Layers, Eye,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -10804,22 +10804,176 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
   );
 }
 
-function ResumenCotizaciones({ resumen }) {
+// Qué tiene una cotización, a la vista y sin descargar nada: productos con cantidad y precio, totales
+// (descuento e instalación) y condiciones. Se usa dentro de la tarjeta (desplegable) y en una ventana
+// superpuesta desde el resumen, para no tener que salir de la pantalla y volver a buscarla.
+function CotizacionDetalle({ c, productos }) {
+  const d = desglosarTotalCotizacion(c);
+  const lineas = c.lineas || [];
+  const retiradas = c.lineasRetiradas || {};
+  const hayRetiradas = lineas.some((l) => Number(retiradas[l.codigo]) > 0);
+  const filaInfo = (label, valor) => (valor ? (
+    <p className="text-xs" style={{ color: INK }}><span style={{ color: MUTED }}>{label}: </span>{valor}</p>
+  ) : null);
   return (
-    <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
-      <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
-        <p className="text-xs" style={{ color: ACCENT }}>Total cotizado</p>
-        <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {resumen.total.toLocaleString()}</p>
+    <div className="rounded-lg p-3 mt-2" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ color: MUTED }}>
+              <th className="text-left font-medium py-1 pr-2">Producto</th>
+              <th className="text-right font-medium py-1 px-1">Cant.</th>
+              {hayRetiradas && <th className="text-right font-medium py-1 px-1">Retirado</th>}
+              <th className="text-right font-medium py-1 px-1">Precio U$S</th>
+              <th className="text-right font-medium py-1 pl-1">Subtotal U$S</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lineas.map((l, i) => {
+              const prod = (productos || []).find((p) => p.nombre === l.codigo);
+              const nombre = prod ? nombreProducto(prod) : (l.descripcion || "");
+              const cant = Number(l.cantidad) || 0;
+              const precio = Number(l.precioUnit) || 0;
+              return (
+                <tr key={i} style={{ borderTop: `0.5px solid ${BORDER}`, color: INK }}>
+                  <td className="py-1.5 pr-2">
+                    <div className="flex items-center gap-2">
+                      {l.foto && <img src={l.foto} alt="" className="rounded border shrink-0" style={{ width: 34, height: 34, objectFit: "cover", borderColor: BORDER }} />}
+                      <div className="min-w-0">
+                        <CodeTag>{l.codigo}</CodeTag>
+                        {nombre && <span className="block text-[11px]" style={{ color: MUTED }}>{nombre}</span>}
+                        {l.especValor && <span className="block text-[10px]" style={{ color: MUTED }}>{l.especLabel ? `${l.especLabel}: ` : ""}{l.especValor}</span>}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="text-right px-1">{cant}</td>
+                  {hayRetiradas && <td className="text-right px-1">{Number(retiradas[l.codigo]) || 0}</td>}
+                  <td className="text-right px-1">{precio.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                  <td className="text-right pl-1 font-medium">{(cant * precio).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      {ESTADOS_RESUMEN.map((estado) => {
-        const badge = ESTADO_COTIZACION_BADGE[estado];
-        return (
-          <div key={estado} className="px-3 py-2 rounded-lg" style={{ backgroundColor: badge.bg }}>
-            <p className="text-xs" style={{ color: badge.color }}>{estado} ({resumen[estado].n})</p>
-            <p className="text-sm font-semibold" style={{ color: badge.color }}>U$S {resumen[estado].total.toLocaleString()}</p>
+      <div className="mt-2 pt-2 space-y-0.5 text-xs text-right" style={{ borderTop: `0.5px solid ${BORDER}`, color: INK }}>
+        <p>Equipos: <b>U$S {d.subtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></p>
+        {d.descuentoMonto > 0 && (
+          <p style={{ color: "#B45309" }}>
+            Descuento {c.descuentoEsPorcentaje ? `${d.descuentoPct}%` : ""}: <b>-U$S {d.descuentoMonto.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>
+          </p>
+        )}
+        {d.instalacionMonto > 0 && (
+          <p>Instalación{c.instalacionDescripcion ? ` (${c.instalacionDescripcion})` : ""}: <b>+U$S {d.instalacionMonto.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></p>
+        )}
+        <p className="text-sm" style={{ color: ACCENT }}>Total: <b>U$S {d.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></p>
+      </div>
+      <div className="mt-2 pt-2 space-y-0.5" style={{ borderTop: `0.5px solid ${BORDER}` }}>
+        {filaInfo("Forma de pago", c.formaPago)}
+        {filaInfo("Validez", c.diasValidez ? `${c.diasValidez} días` : "")}
+        {filaInfo("Entrega estimada", c.fechaEntregaEstimada)}
+        {filaInfo("Cliente real / inversor", c.clienteReal)}
+        {filaInfo("Observaciones", c.obs)}
+        {filaInfo("Comentarios", c.comentarios)}
+        {c.motivoEstado && filaInfo(`Motivo (${c.estado})`, `${c.motivoEstado}${c.comentarioEstado ? ` — ${c.comentarioEstado}` : ""}`)}
+      </div>
+    </div>
+  );
+}
+
+function CotizacionDetalleModal({ c, productos, onClose }) {
+  const badge = ESTADO_COTIZACION_BADGE[ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente"];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3" style={{ backgroundColor: "rgba(15,23,32,0.75)" }} onClick={onClose}>
+      <div className="rounded-xl p-4 w-full overflow-y-auto" style={{ backgroundColor: "#FAFBFC", maxWidth: 640, maxHeight: "92vh" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-base font-bold" style={{ color: INK }}>{c.cliente}{c.obra ? ` — ${c.obra}` : ""}</p>
+            <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+              {rubroDeCotizacion(c)}{c.nombre ? ` · ${c.nombre}` : ""} · {fmtDate(c.fecha)}
+            </p>
+            <span className="text-[11px] px-2 py-0.5 rounded-full font-medium inline-block mt-1.5" style={{ backgroundColor: badge.bg, color: badge.color }}>{c.estado || "Pendiente"}</span>
           </div>
-        );
-      })}
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={18} style={{ color: MUTED }} /></button>
+        </div>
+        <CotizacionDetalle c={c} productos={productos} />
+        <div className="mt-3 flex justify-end"><SecondaryButton onClick={onClose}>Cerrar</SecondaryButton></div>
+      </div>
+    </div>
+  );
+}
+
+// Las cotizaciones que cuentan en el resumen (una por obra y rubro), con su cliente y obra.
+function listarCotizacionesQueCuentan(grupos) {
+  return grupos.flatMap((g) => g.obras.flatMap((o) => o.principales.map((h) => ({ cliente: g.cliente, obra: o.obra, rubro: h.rubro, c: h.activa }))));
+}
+
+// Cada recuadro del resumen se puede tocar: despliega debajo qué cotizaciones lo componen, y tocar una
+// abre su detalle completo.
+function ResumenCotizaciones({ resumen, grupos, productos }) {
+  const [sel, setSel] = useState(null); // "Total" | estado
+  const [detalle, setDetalle] = useState(null);
+  const lista = useMemo(() => {
+    if (!sel) return [];
+    return listarCotizacionesQueCuentan(grupos)
+      .filter((f) => sel === "Total" || (ESTADOS_COTIZACION.includes(f.c.estado) ? f.c.estado : "Pendiente") === sel)
+      .sort((a, b) => calcularTotalCotizacion(b.c) - calcularTotalCotizacion(a.c));
+  }, [sel, grupos]);
+  const tile = (key, label, n, total, color, bg) => {
+    const activo = sel === key;
+    return (
+      <button
+        key={key} type="button" onClick={() => setSel(activo ? null : key)}
+        className="px-3 py-2 rounded-lg text-left"
+        style={{ backgroundColor: bg, outline: activo ? `2px solid ${color}` : "none", outlineOffset: -2 }}
+      >
+        <p className="text-xs" style={{ color }}>{label}{n != null ? ` (${n})` : ""}</p>
+        <p className="text-sm font-semibold" style={{ color }}>U$S {total.toLocaleString()}</p>
+      </button>
+    );
+  };
+  return (
+    <div className="mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {tile("Total", "Total cotizado", null, resumen.total, ACCENT, ACCENT_LIGHT)}
+        {ESTADOS_RESUMEN.map((estado) => tile(estado, estado, resumen[estado].n, resumen[estado].total, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg))}
+      </div>
+      {sel && (
+        <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <p className="text-xs font-semibold mb-1.5" style={{ color: INK }}>
+            {sel === "Total" ? "Todas las cotizaciones que cuentan" : sel} · {lista.length} · tocá una para ver qué contiene
+          </p>
+          {lista.length === 0 ? (
+            <p className="text-xs" style={{ color: MUTED }}>No hay cotizaciones en este estado.</p>
+          ) : (
+            <div className="space-y-1">
+              {lista.map((f) => {
+                const est = ESTADOS_COTIZACION.includes(f.c.estado) ? f.c.estado : "Pendiente";
+                return (
+                  <button
+                    key={f.c.id} type="button" onClick={() => setDetalle(f.c)}
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded border text-left hover:bg-gray-50"
+                    style={{ borderColor: BORDER }}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium truncate" style={{ color: INK }}>{f.cliente}{f.obra ? ` — ${f.obra}` : ""}</span>
+                      <span className="block text-xs" style={{ color: MUTED }}>
+                        {f.rubro}{f.c.nombre ? ` · ${f.c.nombre}` : ""} · {fmtDate(f.c.fecha)} · {(f.c.lineas || []).length} producto(s)
+                        {sel === "Total" && <span style={{ color: ESTADO_COTIZACION_BADGE[est].color }}> · {est}</span>}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1.5 shrink-0 text-sm font-semibold" style={{ color: ACCENT }}>
+                      U$S {calcularTotalCotizacion(f.c).toLocaleString()}
+                      <Eye size={14} style={{ color: MUTED }} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      {detalle && <CotizacionDetalleModal c={detalle} productos={productos} onClose={() => setDetalle(null)} />}
     </div>
   );
 }
@@ -11038,6 +11192,7 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
   const estadoSalida = estadoSalidaCotizacion(c);
   const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;
   const [verRentabilidad, setVerRentabilidad] = useState(false);
+  const [verDetalle, setVerDetalle] = useState(false);
   const [dialogoEstado, setDialogoEstado] = useState(null); // estado elegido que espera su motivo
   const cambiarEstado = (nuevo) => {
     if (MOTIVOS_ESTADO_COTIZACION[nuevo]) setDialogoEstado(nuevo);
@@ -11090,6 +11245,14 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
           {" "}· Total U$S {d.total.toLocaleString()}
         </p>
       )}
+      <button
+        type="button" onClick={() => setVerDetalle((v) => !v)}
+        className="mt-2 text-xs px-2.5 py-1.5 rounded border flex items-center gap-1 font-medium"
+        style={{ borderColor: ACCENT, color: ACCENT }}
+      >
+        <Eye size={13} /> {verDetalle ? "Ocultar detalle" : "Ver qué contiene"}
+      </button>
+      {verDetalle && <CotizacionDetalle c={c} productos={productos} />}
 
       {esActiva && (
         <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#F7F8FA" }}>
@@ -11357,7 +11520,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
         <EmptyState icon={FileSignature} title="Todavía no hay cotizaciones" subtitle="Usá el botón de arriba para armar la primera." />
       ) : (
         <>
-          <ResumenCotizaciones resumen={resumen} />
+          <ResumenCotizaciones resumen={resumen} grupos={grupos} productos={productos} />
           <ResumenMotivosCotizaciones grupos={grupos} />
           <div className="space-y-3">
             {grupos.map((g) => (

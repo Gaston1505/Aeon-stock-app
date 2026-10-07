@@ -168,6 +168,7 @@ const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
 // solo admin): { contadores: { AEAC2T30ON: 900012 }, lotes: [...] }.
 const SERIALES_ETIQUETAS_DOC_ID = "serialesEtiquetas";
+const EMPRESAS_AGRUPADAS_DOC_ID = "empresasAgrupadas";
 
 // Tabs visibles/alcanzables para el rol "deposito": stock, Zona de playa, Entradas, Salidas,
 // Conteo de stock, Maestro de equipos y Banco de recuperables (los cards del Resumen de
@@ -2057,6 +2058,21 @@ export default function App() {
   }, [user]);
   const matrizCostosEfectiva = matrizCostos || MATRIZ_COSTOS_DEFAULT;
 
+  // Grupos de empresas (nombre comercial + razones sociales con RUC): un solo documento de configuración.
+  const [gruposEmpresas, setGruposEmpresas] = useState([]);
+  useEffect(() => {
+    if (!user || !esAdmin) return;
+    const unsub = onSnapshot(
+      doc(db, COLLECTIONS.configuracion, EMPRESAS_AGRUPADAS_DOC_ID),
+      (snap) => setGruposEmpresas(snap.exists() ? (snap.data().grupos || []) : []),
+      (err) => { console.error("Firestore subscribe error (empresasAgrupadas)", err); setGruposEmpresas([]); }
+    );
+    return () => unsub();
+  }, [user, esAdmin]);
+  const guardarGruposEmpresas = async (grupos) => {
+    await setDoc(doc(db, COLLECTIONS.configuracion, EMPRESAS_AGRUPADAS_DOC_ID), { grupos, modificadoPorEmail: auth.currentUser?.email || null, modificadoEn: Date.now() }, { merge: true });
+  };
+
   const [serialesEtiquetas, setSerialesEtiquetas] = useState(null);
   useEffect(() => {
     if (!user || !esAdmin) return;
@@ -2380,12 +2396,12 @@ export default function App() {
   // Clientes con sus obras y la cuenta de cada una (contrato, entregado, cobrado, facturado): se calcula
   // una sola vez acá y se reparte a las fichas de Clientes, al Resumen y al Reporte Financiero.
   const empresasObras = useMemo(
-    () => construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos: pedidosFacturacion }),
-    [clientes, cotizaciones, movimientos, pedidosFacturacion]
+    () => construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos: pedidosFacturacion, grupos: gruposEmpresas }),
+    [clientes, cotizaciones, movimientos, pedidosFacturacion, gruposEmpresas]
   );
   const cuentasObras = useMemo(
-    () => calcularCuentasObras(empresasObras, { fichasObras, facturasObra, comprometidas, productos, equipos }),
-    [empresasObras, fichasObras, facturasObra, comprometidas, productos, equipos]
+    () => calcularCuentasObras(empresasObras, { fichasObras, facturasObra, comprometidas, productos, equipos, grupos: gruposEmpresas }),
+    [empresasObras, fichasObras, facturasObra, comprometidas, productos, equipos, gruposEmpresas]
   );
   const listaObrasCuenta = useMemo(() => listaCuentasObras(empresasObras, cuentasObras), [empresasObras, cuentasObras]);
 
@@ -3748,7 +3764,7 @@ export default function App() {
           <ClientesView
             clientes={filteredClientes} query={query} onQuery={setQuery}
             empresas={empresasObras} cuentas={cuentasObras} pedidos={pedidosFacturacion}
-            fichasObras={fichasObras} facturasObra={facturasObra}
+            fichasObras={fichasObras} facturasObra={facturasObra} grupos={gruposEmpresas} onGuardarGrupos={guardarGruposEmpresas}
             onGuardarFicha={guardarFichaObra} onGuardarFactura={guardarFacturaObra} onBorrarFactura={borrarFacturaObra}
             onNew={() => setDrawer("cliente")}
             onDelete={deleteCliente}
@@ -4002,7 +4018,7 @@ export default function App() {
             grupo={pedidoTarget}
             pedidoExistente={pedidosFacturacion.find((p) => p.remitoKey === pedidoTarget.key)}
             pedidos={pedidosFacturacion}
-            productos={productos} equipos={equipos} cotizaciones={cotizaciones}
+            productos={productos} equipos={equipos} cotizaciones={cotizaciones} grupos={gruposEmpresas}
             onGuardar={guardarPedidoFacturacion}
           />
         )}
@@ -4327,7 +4343,7 @@ function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDele
 // Arma el Pedido de Facturación de un remito: fecha, empresa que compró, RUC, obra y una línea por
 // código comercial con el precio de la cotización de la que salió (con el descuento ya aplicado).
 // Todo queda editable en el formulario — esto es solo el punto de partida.
-function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos }) {
+function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, grupos }) {
   const m0 = g.items[0] || {};
   const porCodigo = new Map();
   const cotizacionesUsadas = new Map();
@@ -4363,7 +4379,7 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos })
   const centro = centroCostoPorCodigo(centroCostoSugerido(m0.obra));
   return {
     remitoKey: g.key, remito: g.remito || "", fecha: m0.fecha || todayISO(),
-    cliente, ruc: (m0.rucCliente || previo?.ruc || "").trim(),
+    cliente, ruc: (m0.rucCliente || rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
     condicion: previo?.condicion || "Crédito", termino: "",
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
     obra: (m0.obra || "").trim(),
@@ -4376,9 +4392,9 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos })
 // Destinatarios fijos del pedido de facturación (Administración).
 const MAILS_ADMINISTRACION = ["administrativo@qi.com.py", "acibils@qi.com.py"];
 
-function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equipos, cotizaciones, onGuardar }) {
+function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equipos, cotizaciones, grupos, onGuardar }) {
   const inicial = useMemo(
-    () => pedidoExistente || armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos }),
+    () => pedidoExistente || armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos, grupos }),
     [] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const [p, setP] = useState(inicial);
@@ -4647,13 +4663,6 @@ function clasificarComprometida(c) {
   return { ...c, retirado, saldo: Math.max(0, cantidad - retirado), pagado, saldoPago: Math.max(0, monto - pagado), categoria };
 }
 
-const CATEGORIAS_PLATA_COBRAR = [
-  { key: "entregado_por_cobrar", label: "Entregado y por cobrar" },
-  { key: "parcial_sin_pago", label: "Entrega parcial, sin ningún pago" },
-  { key: "parcial_con_adelanto", label: "Entrega parcial, con algún adelanto" },
-  { key: "adelanto_sin_entrega", label: "Adelanto pagado, sin entrega" },
-];
-
 // Cuadro reutilizado por Reporte Seguro y Reporte Joel: mercadería comprometida que todavía
 // está físicamente en el depósito (ya cuenta en el total físico de arriba) junto con su estado
 // de pago — para no confundir "sigue en el depósito" con "ya es plata cobrada".
@@ -4685,51 +4694,6 @@ function ComprometidaPagoBox({ comprometidas }) {
           </p>
         ))}
       </div>
-    </div>
-  );
-}
-
-// "Plata por cobrar" para Joel: cruza entrega vs. cobro de cada venta comprometida. Los
-// proyectos 100% entregados y cobrados quedan aparte, como referencia (no suman saldo).
-function PlataPorCobrarSection({ comprometidas }) {
-  const clasificadas = useMemo(() => comprometidas.map(clasificarComprometida), [comprometidas]);
-  const cerrados = clasificadas.filter((c) => c.categoria === "cerrado");
-
-  return (
-    <div className="mb-6">
-      <div className="flex items-center gap-1 mb-2">
-        <p className="text-base font-bold" style={{ color: ACCENT }}>Plata por cobrar</p>
-        <InfoTip>
-          <p>Se arma con Ventas comprometidas, cruzando cuánto se entregó (retiros registrados) contra cuánto se cobró (Pagos).</p>
-          <p><strong>Entregado y por cobrar:</strong> ya se llevó todo, falta cobrar total o parcial.</p>
-          <p><strong>Entrega parcial sin pago:</strong> se entregó algo, no se cobró nada todavía.</p>
-          <p><strong>Entrega parcial con adelanto:</strong> se entregó algo y ya hay algún pago.</p>
-          <p><strong>Adelanto sin entrega:</strong> ya pagaron algo, todavía no se entregó nada.</p>
-        </InfoTip>
-      </div>
-      {CATEGORIAS_PLATA_COBRAR.map((cat) => {
-        const items = clasificadas.filter((c) => c.categoria === cat.key);
-        if (items.length === 0) return null;
-        const totalSaldo = items.reduce((acc, c) => acc + c.saldoPago, 0);
-        return (
-          <div key={cat.key} className="mb-3">
-            <p className="text-xs font-medium mb-1" style={{ color: INK }}>{cat.label} — saldo por cobrar U$S {totalSaldo.toLocaleString()}</p>
-            {items.map((c) => (
-              <p key={c.id} className="text-xs" style={{ color: MUTED }}>
-                · {c.razonSocial} — {c.obra} · saldo por cobrar U$S {c.saldoPago.toLocaleString()}
-              </p>
-            ))}
-          </div>
-        );
-      })}
-      {cerrados.length > 0 && (
-        <div>
-          <p className="text-xs font-medium mb-1" style={{ color: MUTED }}>Proyectos cerrados (entregado y cobrado 100%) — referencia</p>
-          {cerrados.map((c) => (
-            <p key={c.id} className="text-xs" style={{ color: MUTED }}>· {c.razonSocial} — {c.obra} — U$S {(Number(c.monto) || 0).toLocaleString()}</p>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -4831,49 +4795,70 @@ function VentasCerradasPanel({ ventasCerradas }) {
 function totalesCuentasObras(lista) {
   return sumarCuentas(lista.map((f) => f.cuenta));
 }
-function CuentaObrasTabla({ lista, onNavigate, compacta = false }) {
+function CuentaObrasTabla({ lista, onNavigate }) {
+  const [abierta, setAbierta] = useState(null);
   const tot = totalesCuentasObras(lista);
-  const cols = ["Cliente / obra", "Contratado", "Entregado", "Cobrado", "Entregado sin pagar", "Falta cobrar"];
+  const cols = ["Cliente / obra", "Contratado", "Adelanto pactado", "Entregado", "Cobrado", "Entregado sin pagar", "Falta entregar", "Falta cobrar"];
+  const celda = (v) => (v > 0 ? usd(v) : "—");
   return (
-    <div className="overflow-x-auto rounded-lg border" style={{ borderColor: BORDER }}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr style={{ backgroundColor: "#FAFBFC" }}>
-            {cols.map((h, i) => (
-              <th key={h} className={`font-medium px-3 py-2 border-b ${i === 0 ? "text-left" : "text-right"}`} style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {lista.map((f, i) => (
-            <tr
-              key={i} className={`border-b last:border-0 ${onNavigate ? "cursor-pointer hover:bg-gray-50" : ""}`} style={{ borderColor: BORDER }}
-              onClick={onNavigate ? () => onNavigate("clientes") : undefined}
-            >
-              <td className="px-3 py-2" style={{ color: INK }}>
-                <span className="font-medium">{f.cliente}</span>
-                <span className="block text-xs" style={{ color: MUTED }}>{f.obra}</span>
-              </td>
-              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.contrato > 0 ? usd(f.cuenta.contrato) : "—"}</td>
-              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.montoEntregado > 0 ? usd(f.cuenta.montoEntregado) : "—"}</td>
-              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.cobrado > 0 ? usd(f.cuenta.cobrado) : "—"}</td>
-              <td className="px-3 py-2 text-right font-medium" style={{ color: f.cuenta.entregadoNoPagado > 0 ? "#B91C1C" : INK }}>{f.cuenta.entregadoNoPagado > 0 ? usd(f.cuenta.entregadoNoPagado) : "—"}</td>
-              <td className="px-3 py-2 text-right" style={{ color: INK }}>{f.cuenta.restanteCobro > 0 ? usd(f.cuenta.restanteCobro) : "—"}</td>
+    <div className="rounded-lg border" style={{ borderColor: BORDER }}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr style={{ backgroundColor: "#FAFBFC" }}>
+              {cols.map((h, i) => (
+                <th key={h} className={`font-medium px-3 py-2 border-b ${i === 0 ? "text-left" : "text-right"}`} style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>{h}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr style={{ backgroundColor: ACCENT_LIGHT }}>
-            <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>Total</td>
-            {[tot.contrato, tot.montoEntregado, tot.cobrado, tot.entregadoNoPagado, tot.restanteCobro].map((v, i) => (
-              <td key={i} className="px-3 py-2 text-sm font-medium text-right" style={{ color: ACCENT }}>{usd(v)}</td>
+          </thead>
+          <tbody>
+            {lista.map((f, i) => (
+              <React.Fragment key={i}>
+                <tr className="border-b cursor-pointer hover:bg-gray-50" style={{ borderColor: BORDER }} onClick={() => setAbierta(abierta === i ? null : i)}>
+                  <td className="px-3 py-2" style={{ color: INK }}>
+                    <span className="font-medium flex items-center gap-1">
+                      <ChevronDown size={13} style={{ color: ACCENT, transform: abierta === i ? "rotate(180deg)" : "none" }} />{f.cliente}
+                    </span>
+                    <span className="block text-xs" style={{ color: MUTED }}>{f.obra}{f.razonSocial ? ` · Razón social: ${f.razonSocial}` : ""}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right" style={{ color: INK }}>{celda(f.cuenta.contrato)}</td>
+                  <td className="px-3 py-2 text-right" style={{ color: INK }}>
+                    {f.cuenta.adelantoPactado > 0 ? usd(f.cuenta.adelantoPactado) : "—"}
+                    {f.cuenta.adelantoPct > 0 && <span className="block text-[11px]" style={{ color: MUTED }}>{f.cuenta.adelantoPct}% · cobrado {usd(f.cuenta.adelantoCobrado)}</span>}
+                  </td>
+                  <td className="px-3 py-2 text-right" style={{ color: INK }}>{celda(f.cuenta.montoEntregado)}</td>
+                  <td className="px-3 py-2 text-right" style={{ color: INK }}>{celda(f.cuenta.cobrado)}</td>
+                  <td className="px-3 py-2 text-right font-medium" style={{ color: f.cuenta.entregadoNoPagado > 0 ? "#B91C1C" : INK }}>{celda(f.cuenta.entregadoNoPagado)}</td>
+                  <td className="px-3 py-2 text-right" style={{ color: INK }}>{celda(f.cuenta.restanteEntrega)}</td>
+                  <td className="px-3 py-2 text-right" style={{ color: INK }}>{celda(f.cuenta.restanteCobro)}</td>
+                </tr>
+                {abierta === i && (
+                  <tr className="border-b" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+                    <td colSpan={cols.length} className="px-3 py-3">
+                      <EstadoCuentaObra c={f.cuenta} conListas />
+                      {onNavigate && (
+                        <button type="button" onClick={() => onNavigate("clientes")} className="text-xs underline mt-2" style={{ color: ACCENT }}>Abrir la ficha del cliente</button>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
-          </tr>
-        </tfoot>
-      </table>
-      {!compacta && tot.adelantoSinConsumir > 0 && (
+          </tbody>
+          <tfoot>
+            <tr style={{ backgroundColor: ACCENT_LIGHT }}>
+              <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>Total</td>
+              {[tot.contrato, tot.adelantoPactado, tot.montoEntregado, tot.cobrado, tot.entregadoNoPagado, tot.restanteEntrega, tot.restanteCobro].map((v, i) => (
+                <td key={i} className="px-3 py-2 text-sm font-medium text-right" style={{ color: ACCENT }}>{usd(v)}</td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {tot.adelantoSinConsumir > 0 && (
         <p className="text-xs px-3 py-2" style={{ color: "#B45309" }}>Adelantos cobrados todavía sin consumir en entregas: {usd(tot.adelantoSinConsumir)}</p>
       )}
+      <p className="text-[11px] px-3 py-1.5" style={{ color: MUTED }}>Tocá una fila para ver el detalle: adelanto, lo que falta entregar, remitos y facturas.</p>
     </div>
   );
 }
@@ -8729,12 +8714,12 @@ function tituloGrupoLista(p) {
 }
 // Devuelve las secciones { categoria, grupos: [{ titulo, filas }] } de las categorías elegidas. Quedan
 // afuera los productos marcados como no disponibles y los que no tienen precio de lista cargado.
-// Solo equipos nuevos disponibles: quedan afuera los usados, los repuestos (otra categoría), los
-// accesorios (ej. control remoto), lo marcado como no disponible y lo que no tiene precio de lista.
+// Solo productos nuevos disponibles: equipos y accesorios (ej. control remoto, en su grupo "Accesorios").
+// Quedan afuera los usados, los repuestos (otra categoría), lo marcado como no disponible y lo que no
+// tiene precio de lista.
 const esProductoUsado = (p) => /usado/i.test(p.nombre || "");
-const esAccesorio = (p) => /accesorio/i.test(p.subcategoria || "");
 function entraEnListaPrecios(p, categoria) {
-  return p.categoriaPrincipal === categoria && !p.noDisponible && Number(p.precioLista) > 0 && !esProductoUsado(p) && !esAccesorio(p);
+  return p.categoriaPrincipal === categoria && !p.noDisponible && Number(p.precioLista) > 0 && !esProductoUsado(p);
 }
 function construirListaPrecios(productos, categoriasElegidas) {
   const secciones = [];
@@ -8772,7 +8757,7 @@ function ListaPreciosPanel({ productos, onCerrar }) {
   const [msg, setMsg] = useState(null);
   const secciones = useMemo(() => construirListaPrecios(productos, elegidas), [productos, elegidas]);
   const cuentaPorCategoria = (key) => productos.filter((p) => entraEnListaPrecios(p, key)).length;
-  const sinPrecio = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && !esProductoUsado(p) && !esAccesorio(p) && !(Number(p.precioLista) > 0));
+  const sinPrecio = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && !esProductoUsado(p) && !(Number(p.precioLista) > 0));
   const total = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
   const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   const hoy = todayISO();
@@ -8787,7 +8772,7 @@ function ListaPreciosPanel({ productos, onCerrar }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <p className="text-base font-bold" style={{ color: INK }}>Lista de precios para clientes</p>
-          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Solo equipos nuevos disponibles: sin usados, repuestos ni accesorios.</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Solo productos nuevos disponibles (equipos y accesorios): sin usados ni repuestos.</p>
         </div>
         <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
       </div>
@@ -12456,7 +12441,7 @@ function adelantoSugeridoDeCotizacion(cot) {
 // Cuenta de una obra: lo contratado, lo entregado (mercadería y plata), lo cobrado y lo facturado.
 // Lo entregado y no pagado / pagado se calcula cruzando entregas contra cobros: lo cobrado cubre
 // primero lo ya entregado, y lo que sobra es adelanto todavía sin consumir.
-function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, comprometidas, productos, equipos }) {
+function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, comprometidas, productos, equipos, pedidos = [] }) {
   const ganadas = cotizacionesQueCuentan(agruparCotizaciones(cotizaciones)).filter((c) => c.estado === "Ganada");
   const totalGanadas = ganadas.reduce((a, c) => a + calcularTotalCotizacion(c), 0);
   const manual = ficha && ficha.contratoMonto !== undefined && ficha.contratoMonto !== null && ficha.contratoMonto !== "" ? Number(ficha.contratoMonto) : null;
@@ -12486,6 +12471,7 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   const esVenta = (m) => { const mot = MOTIVOS_SALIDA.find((x) => x.value === m.motivo); return !mot || !mot.trackea; };
   let montoEntregado = 0;
   let unidadesEntregadas = 0;
+  const montoPorMovimiento = new Map();
   for (const m of movimientos.filter(esVenta)) {
     const cant = Number(m.cantidad) || 1;
     const prod = productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
@@ -12497,7 +12483,20 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
     f.montoEntregado += monto;
     montoEntregado += monto;
     unidadesEntregadas += cant;
+    montoPorMovimiento.set(m.id, monto);
   }
+  // Remisiones de la obra con lo que valen y si ya tienen factura / pedido de facturación.
+  const remisiones = agruparPorRemito(
+    movimientos.filter(esVenta),
+    (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
+    (m) => Number(m.cantidad) || 1,
+    () => ""
+  ).map((g) => ({
+    key: g.key, remito: g.remito, fecha: g.items[0]?.fecha || "", unidades: g.unidades,
+    monto: Math.round(g.items.reduce((a, m) => a + (montoPorMovimiento.get(m.id) || 0), 0) * 100) / 100,
+    facturas: facturas.filter((f) => (f.remitoKeys || []).includes(g.key)).map((f) => f.numero),
+    pedidoEstado: pedidos.find((p) => p.remitoKey === g.key)?.estado || "",
+  })).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
 
   const pagosFicha = (ficha?.pagos || []).map((p, idx) => ({ ...p, origen: "ficha", idx }));
   const pagosComprometidas = comprometidas.flatMap((c) => (c.pagos || []).map((p) => ({
@@ -12512,9 +12511,18 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   // Todo a centavos: restar sumas de decimales deja restos tipo 4e-13 que aparecerían como saldo.
   const c2 = (n) => Math.round(n * 100) / 100;
   const entregado = c2(montoEntregado);
+  // Adelanto pactado: el que se cargó a mano en el contrato o, si no, el % que dice la forma de pago de
+  // la cotización ganada ("30% anticipo..."). Puede cobrarse más o menos que eso.
+  const pctManual = ficha && ficha.contratoAdelantoPct !== undefined && ficha.contratoAdelantoPct !== null && ficha.contratoAdelantoPct !== "" ? Number(ficha.contratoAdelantoPct) : null;
+  const pctCotizacion = ganadas.map((c) => adelantoSugeridoDeCotizacion(c)?.pct).find((p) => p > 0) || null;
+  const adelantoPct = pctManual != null && !isNaN(pctManual) ? pctManual : pctCotizacion;
+  const adelantoOrigen = pctManual != null && !isNaN(pctManual) ? "contrato" : pctCotizacion ? "cotizacion" : "ninguno";
+  const adelantoCobrado = pagos.filter((p) => p.tipo === "Adelanto").reduce((a, p) => a + (Number(p.monto) || 0), 0);
   return {
     contrato: c2(contrato), contratoOrigen, totalGanadas, montoEntregado: entregado, unidadesEntregadas, unidadesContratadas, cobrado: c2(cobrado), facturado: c2(facturado), pagos,
-    productos: productosLista, ganadas,
+    productos: productosLista, ganadas, remisiones, facturas,
+    adelantoPct, adelantoOrigen, adelantoPactado: adelantoPct ? c2((contrato * adelantoPct) / 100) : 0, adelantoCobrado: c2(adelantoCobrado),
+    unidadesFaltan: Math.max(0, unidadesContratadas - unidadesEntregadas),
     entregadoYPagado: c2(Math.min(entregado, cobrado)),
     entregadoNoPagado: c2(Math.max(0, entregado - cobrado)),
     adelantoSinConsumir: c2(Math.max(0, cobrado - entregado)),
@@ -12530,6 +12538,91 @@ function StatTile({ label, valor, sub, color = INK, bg = "#FFFFFF" }) {
       <p className="text-[11px]" style={{ color: MUTED }}>{label}</p>
       <p className="text-sm font-semibold" style={{ color }}>{valor}</p>
       {sub && <p className="text-[10px]" style={{ color: MUTED }}>{sub}</p>}
+    </div>
+  );
+}
+
+// Estado de cuenta de una obra, para entender de un vistazo: una frase que dice cómo está, barras de lo
+// entregado / cobrado / facturado sobre lo cerrado por contrato (con la marca del adelanto pactado), y
+// cuánto falta entregar. Con `conListas` suma los remitos y las facturas (para los resúmenes).
+function BarraCuenta({ label, valor, contrato, color, extra }) {
+  const pct = contrato > 0 ? (valor / contrato) * 100 : 0;
+  return (
+    <div className="mb-2">
+      <div className="flex justify-between gap-2 text-xs mb-0.5" style={{ color: INK }}>
+        <span>{label}</span>
+        <span className="font-semibold">{usd(valor)}{contrato > 0 ? ` · ${Math.round(pct)}%` : ""}{extra ? <span className="font-normal" style={{ color: MUTED }}> {extra}</span> : null}</span>
+      </div>
+      <div className="relative h-2.5 rounded" style={{ backgroundColor: "#E4E5E5" }}>
+        <div className="h-2.5 rounded" style={{ width: `${Math.min(100, pct)}%`, backgroundColor: color }} />
+      </div>
+    </div>
+  );
+}
+
+function EstadoCuentaObra({ c, conListas = false }) {
+  let veredicto = "Sin entregas ni pagos todavía";
+  let color = MUTED;
+  let bg = "#F2F3F4";
+  if (c.entregadoNoPagado > 0) { veredicto = `Debe ${usd(c.entregadoNoPagado)} por lo ya entregado`; color = "#B91C1C"; bg = "#FBEAEA"; }
+  else if (c.adelantoSinConsumir > 0) { veredicto = `Tiene ${usd(c.adelantoSinConsumir)} cobrados de más que lo entregado (adelanto sin consumir)`; color = "#B45309"; bg = "#FDF1E0"; }
+  else if (c.montoEntregado > 0) { veredicto = "Al día: todo lo entregado está pagado"; color = "#15803D"; bg = "#E9F7EF"; }
+  const marcaAdelanto = c.contrato > 0 && c.adelantoPct > 0 ? Math.min(100, c.adelantoPct) : null;
+  const difAdelanto = c.adelantoPactado > 0 ? c.adelantoCobrado - c.adelantoPactado : 0;
+  return (
+    <div>
+      <div className="px-3 py-2 rounded-lg mb-3 text-sm font-semibold" style={{ backgroundColor: bg, color }}>{veredicto}</div>
+      {c.contrato > 0 ? (
+        <div className="relative">
+          <BarraCuenta label="Entregado (mercadería)" valor={c.montoEntregado} contrato={c.contrato} color={ACCENT} extra={`· ${c.unidadesEntregadas}${c.unidadesContratadas ? ` de ${c.unidadesContratadas}` : ""} u.`} />
+          <BarraCuenta label="Cobrado" valor={c.cobrado} contrato={c.contrato} color="#15803D" />
+          <BarraCuenta label="Facturado" valor={c.facturado} contrato={c.contrato} color="#8A8F96" />
+          {marcaAdelanto != null && (
+            <p className="text-[11px]" style={{ color: MUTED }}>
+              Adelanto pactado: <b style={{ color: INK }}>{c.adelantoPct}%</b> = {usd(c.adelantoPactado)} ({c.adelantoOrigen === "cotizacion" ? "según la cotización" : "según el contrato"}).
+              {" "}Cobrado como adelanto: <b style={{ color: INK }}>{usd(c.adelantoCobrado)}</b>
+              {c.adelantoPactado > 0 && (
+                difAdelanto === 0 ? " — justo lo pactado." : difAdelanto > 0 ? ` — ${usd(difAdelanto)} más de lo pactado.` : ` — falta cobrar ${usd(-difAdelanto)} del adelanto.`
+              )}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs mb-2" style={{ color: MUTED }}>Cargá el contrato (o tené una cotización ganada) para ver cuánto va entregado y cobrado sobre lo cerrado.</p>
+      )}
+      <p className="text-xs mt-2" style={{ color: INK }}>
+        <b>Falta entregar:</b> {usd(c.restanteEntrega)}{c.unidadesFaltan > 0 ? ` (${c.unidadesFaltan} unidad${c.unidadesFaltan !== 1 ? "es" : ""})` : ""}
+        <span style={{ color: MUTED }}> · Falta cobrar del contrato: {usd(c.restanteCobro)}</span>
+      </p>
+      {conListas && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Remisiones</p>
+            {c.remisiones.length === 0 ? <p className="text-xs" style={{ color: MUTED }}>Sin remisiones.</p> : (
+              <div className="space-y-0.5">
+                {c.remisiones.map((r) => (
+                  <p key={r.key} className="text-xs" style={{ color: INK }}>
+                    <b>{r.remito ? `Remito ${r.remito}` : "Sin N°"}</b> · {fmtDate(r.fecha)} · {r.unidades} u.{r.monto > 0 ? ` · ${usd(r.monto)}` : ""}
+                    {r.facturas.length > 0
+                      ? <span style={{ color: "#15803D" }}> · Factura {r.facturas.join(", ")}</span>
+                      : <span style={{ color: r.pedidoEstado === "Enviado" ? "#B45309" : "#B91C1C" }}> · {r.pedidoEstado === "Enviado" ? "esperando factura" : "sin facturar"}</span>}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Facturas</p>
+            {c.facturas.length === 0 ? <p className="text-xs" style={{ color: MUTED }}>Sin facturas cargadas.</p> : (
+              <div className="space-y-0.5">
+                {c.facturas.map((f) => (
+                  <p key={f.id} className="text-xs" style={{ color: INK }}><b>{f.numero}</b> · {fmtDate(f.fecha)} · {usd(f.monto)}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -12553,7 +12646,7 @@ function CuentaTiles({ c }) {
 }
 
 function sumarCuentas(cuentas) {
-  const z = { contrato: 0, montoEntregado: 0, unidadesEntregadas: 0, unidadesContratadas: 0, cobrado: 0, facturado: 0, entregadoYPagado: 0, entregadoNoPagado: 0, adelantoSinConsumir: 0, restanteEntrega: 0, restanteCobro: 0, sinFacturar: 0 };
+  const z = { contrato: 0, montoEntregado: 0, unidadesEntregadas: 0, unidadesContratadas: 0, unidadesFaltan: 0, cobrado: 0, facturado: 0, entregadoYPagado: 0, entregadoNoPagado: 0, adelantoSinConsumir: 0, adelantoPactado: 0, adelantoCobrado: 0, restanteEntrega: 0, restanteCobro: 0, sinFacturar: 0 };
   for (const c of cuentas) for (const k of Object.keys(z)) z[k] += c[k];
   return { ...z, contratoOrigen: z.contrato > 0 ? "contrato" : "ninguno" };
 }
@@ -12562,14 +12655,20 @@ function ContratoObra({ ficha, cuenta, onGuardar }) {
   const [monto, setMonto] = useState(ficha?.contratoMonto != null ? String(ficha.contratoMonto) : "");
   const [fecha, setFecha] = useState(ficha?.contratoFecha || "");
   const [notas, setNotas] = useState(ficha?.contratoNotas || "");
+  const [adelantoPct, setAdelantoPct] = useState(ficha?.contratoAdelantoPct != null ? String(ficha.contratoAdelantoPct) : "");
   const [archivo, setArchivo] = useState(ficha?.contratoArchivo || null);
   const [msg, setMsg] = useState(null);
   const [ocupado, setOcupado] = useState(false);
+  const montoContrato = monto === "" ? cuenta.contrato : Number(monto) || 0;
+  const pctEfectivo = adelantoPct === "" ? cuenta.adelantoPct : Number(adelantoPct);
   const guardar = async () => {
     setOcupado(true);
     setMsg(null);
     try {
-      await onGuardar({ contratoMonto: monto === "" ? null : Number(monto), contratoFecha: fecha, contratoNotas: notas.trim(), contratoArchivo: archivo || null });
+      await onGuardar({
+        contratoMonto: monto === "" ? null : Number(monto), contratoFecha: fecha, contratoNotas: notas.trim(),
+        contratoAdelantoPct: adelantoPct === "" ? null : Number(adelantoPct), contratoArchivo: archivo || null,
+      });
       setMsg({ tipo: "ok", texto: "Contrato guardado." });
     } catch (e) { setMsg({ tipo: "error", texto: textoErrorFirestore(e, "fichasObras") }); }
     setOcupado(false);
@@ -12581,6 +12680,13 @@ function ContratoObra({ ficha, cuenta, onGuardar }) {
         <Field label="Monto cerrado U$S"><TextInput type="number" step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder={cuenta.totalGanadas > 0 ? `Vacío = cotizaciones ganadas (${usd(cuenta.totalGanadas)})` : "Ej: 45000"} /></Field>
         <Field label="Fecha de firma"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       </div>
+      <Field label="Adelanto pactado (% del contrato)">
+        <TextInput
+          type="number" step="0.1" min="0" max="100" value={adelantoPct} onChange={(e) => setAdelantoPct(e.target.value)}
+          placeholder={cuenta.adelantoOrigen === "cotizacion" ? `Vacío = ${cuenta.adelantoPct}% según la cotización` : "Ej: 30 (vacío = sin adelanto)"}
+        />
+        {pctEfectivo > 0 && <span className="block text-[11px] mt-1" style={{ color: MUTED }}>{pctEfectivo}% de {usd(montoContrato)} = {usd((montoContrato * pctEfectivo) / 100)}</span>}
+      </Field>
       <Field label="Notas del contrato"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: 50% anticipo, saldo contra entrega" /></Field>
       <Field label="Contrato firmado (PDF o foto)"><AdjuntoPicker valor={archivo} onChange={setArchivo} onError={(t) => setMsg(t ? { tipo: "error", texto: t } : null)} /></Field>
       <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar contrato"}</PrimaryButton>
@@ -12795,13 +12901,27 @@ function FacturasObra({ facturas, remisiones, pedidos, empresa, obra, onGuardar,
 // Clientes (empresas) con sus obras: junta cotizaciones, salidas y pedidos de facturación por empresa y
 // obra (sin distinguir mayúsculas). Lo usan las fichas de Clientes y los resúmenes.
 const normClave = (s) => (s || "").trim().toLowerCase();
-function construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos }) {
+// Grupos de empresas (configuracion/empresasAgrupadas): un nombre comercial (ej. Amati) que reúne
+// otros nombres con los que aparece cargado (alias) y sus razones sociales con RUC (ej. Octagon SA).
+// Los datos de remito y factura son siempre los de la razón social.
+function resolverEmpresa(nombre, grupos) {
+  const k = normClave(nombre);
+  if (!k) return null;
+  const g = (grupos || []).find((x) => normClave(x.nombre) === k || (x.alias || []).some((a) => normClave(a) === k));
+  return g ? { key: normClave(g.nombre), nombre: g.nombre.trim(), grupo: g } : { key: k, nombre: nombre.trim(), grupo: null };
+}
+function construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos, grupos = [] }) {
   const map = new Map();
-  const empresa = (nombre) => {
-    const k = normClave(nombre);
-    if (!k) return null;
-    if (!map.has(k)) map.set(k, { key: k, nombre: nombre.trim(), contactos: [], obras: new Map(), ultimo: 0 });
-    return map.get(k);
+  const empresa = (nombre, ruc) => {
+    const r = resolverEmpresa(nombre, grupos);
+    if (!r) return null;
+    if (!map.has(r.key)) map.set(r.key, { key: r.key, nombre: r.nombre, grupo: r.grupo, nombres: new Map(), contactos: [], obras: new Map(), ultimo: 0 });
+    const e = map.get(r.key);
+    // nombres con los que aparece cargada esta empresa (y el RUC que traían), para armar sus razones sociales
+    const n = nombre.trim();
+    if (!e.nombres.has(n)) e.nombres.set(n, "");
+    if (ruc && !e.nombres.get(n)) e.nombres.set(n, String(ruc).trim());
+    return e;
   };
   const obraDe = (e, nombreObra) => {
     const k = normClave(nombreObra) || "(sin obra)";
@@ -12809,13 +12929,34 @@ function construirEmpresasObras({ clientes, cotizaciones, movimientos, pedidos }
     return e.obras.get(k);
   };
   for (const c of cotizaciones) { const e = empresa(c.cliente); if (e) { obraDe(e, c.obra).cotizaciones.push(c); e.ultimo = Math.max(e.ultimo, c.createdAt || 0); } }
-  for (const m of movimientos) { const e = empresa(m.empresaCliente || m.cliente); if (e) { obraDe(e, m.obra).movimientos.push(m); e.ultimo = Math.max(e.ultimo, m.createdAt || 0); } }
-  for (const p of pedidos) { const e = empresa(p.cliente); if (e) { obraDe(e, p.obra).pedidos.push(p); e.ultimo = Math.max(e.ultimo, p.createdAt || 0); } }
+  for (const m of movimientos) { const e = empresa(m.empresaCliente || m.cliente, m.rucCliente); if (e) { obraDe(e, m.obra).movimientos.push(m); e.ultimo = Math.max(e.ultimo, m.createdAt || 0); } }
+  for (const p of pedidos) { const e = empresa(p.cliente, p.ruc); if (e) { obraDe(e, p.obra).pedidos.push(p); e.ultimo = Math.max(e.ultimo, p.createdAt || 0); } }
   for (const cl of clientes) { const e = empresa(cl.empresa); if (e) e.contactos.push(cl); }
   return Array.from(map.values()).sort((a, b) => b.ultimo - a.ultimo);
 }
+// Razones sociales de una empresa con su RUC: las del grupo configurado más los nombres con los que
+// aparece cargada (si no es solo el nombre comercial). Sin grupo, la razón social es el propio nombre.
+function razonesSocialesDe(e) {
+  const lista = (e.grupo?.razonesSociales || []).map((r) => ({ nombre: r.nombre, ruc: r.ruc || "" }));
+  const tiene = (n) => lista.some((r) => normClave(r.nombre) === normClave(n));
+  for (const [n, ruc] of e.nombres) {
+    if (e.grupo && normClave(n) === e.key) continue; // el nombre comercial no es razón social por sí solo
+    if (!tiene(n)) lista.push({ nombre: n, ruc });
+    else if (ruc) { const r = lista.find((x) => normClave(x.nombre) === normClave(n)); if (r && !r.ruc) r.ruc = ruc; }
+  }
+  if (lista.length === 0) lista.push({ nombre: e.nombre, ruc: "" });
+  return lista;
+}
+// RUC de una razón social (por nombre) mirando todos los grupos configurados.
+function rucDeRazonSocial(nombre, grupos) {
+  for (const g of grupos || []) {
+    const r = (g.razonesSociales || []).find((x) => normClave(x.nombre) === normClave(nombre));
+    if (r?.ruc) return r.ruc;
+  }
+  return "";
+}
 // Cuenta de cada obra (clave `${empresa.key}|${obra.key}`): contrato / entregado / cobrado / facturado.
-function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometidas, productos, equipos }) {
+function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometidas, productos, equipos, grupos = [] }) {
   const out = new Map();
   for (const e of empresas) {
     for (const o of e.obras.values()) {
@@ -12823,8 +12964,8 @@ function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometid
         cotizaciones: o.cotizaciones, movimientos: o.movimientos,
         ficha: fichasObras.find((f) => f.id === idFichaObra(e.key, o.key)),
         facturas: facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key),
-        comprometidas: comprometidas.filter((c) => normClave(c.razonSocial) === e.key && (normClave(c.obra) || "(sin obra)") === o.key),
-        productos, equipos,
+        comprometidas: comprometidas.filter((c) => resolverEmpresa(c.razonSocial, grupos)?.key === e.key && (normClave(c.obra) || "(sin obra)") === o.key),
+        productos, equipos, pedidos: o.pedidos,
       }));
     }
   }
@@ -12837,14 +12978,95 @@ function listaCuentasObras(empresas, cuentas) {
   for (const e of empresas) {
     for (const o of e.obras.values()) {
       const cuenta = cuentas.get(`${e.key}|${o.key}`);
-      if (cuenta && (cuenta.contrato > 0 || cuenta.montoEntregado > 0 || cuenta.cobrado > 0)) filas.push({ cliente: e.nombre, obra: o.nombre, cuenta });
+      if (cuenta && (cuenta.contrato > 0 || cuenta.montoEntregado > 0 || cuenta.cobrado > 0)) {
+        const razones = razonesSocialesDe(e).map((r) => r.nombre).filter((n) => normClave(n) !== e.key);
+        filas.push({ cliente: e.nombre, razonSocial: razones.join(", "), obra: o.nombre, cuenta });
+      }
     }
   }
   return filas.sort((a, b) => b.cuenta.entregadoNoPagado - a.cuenta.entregadoNoPagado || b.cuenta.contrato - a.cuenta.contrato);
 }
 
 // Ficha por cliente (empresa): una tarjeta por obra con la cuenta, el contrato, los pagos y las facturas.
-function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
+// Datos de la empresa en su ficha: razones sociales con RUC (los datos de remito y factura son los de la
+// razón social) y los otros nombres con que está agrupada. Permite unir otra empresa a esta.
+function DatosEmpresa({ e, empresas, grupos, onGuardar }) {
+  const razones = razonesSocialesDe(e);
+  const [msg, setMsg] = useState(null);
+  const [unir, setUnir] = useState("");
+  const [nueva, setNueva] = useState({ nombre: "", ruc: "" });
+  const grupoActual = (grupos || []).find((g) => normClave(g.nombre) === e.key);
+  const alias = grupoActual?.alias || [];
+  const guardarGrupo = async (patch, removerKeys = []) => {
+    setMsg(null);
+    const base = grupoActual || { id: `g${Date.now().toString(36)}`, nombre: e.nombre, alias: [], razonesSociales: [] };
+    const nuevo = { ...base, ...patch };
+    const resto = (grupos || []).filter((g) => g !== grupoActual && !removerKeys.includes(normClave(g.nombre)));
+    try { await onGuardar([...resto, nuevo]); } catch (err) { setMsg(textoErrorFirestore(err, "configuracion")); }
+  };
+  const cambiarRuc = (i, ruc) => guardarGrupo({ razonesSociales: razones.map((r, j) => (j === i ? { ...r, ruc: ruc.trim() } : r)) });
+  const quitarRazon = (i) => guardarGrupo({ razonesSociales: razones.filter((_, j) => j !== i) });
+  const agregarRazon = async () => {
+    if (!nueva.nombre.trim()) return;
+    await guardarGrupo({ razonesSociales: [...razones, { nombre: normalizarEmpresa(nueva.nombre), ruc: nueva.ruc.trim() }] });
+    setNueva({ nombre: "", ruc: "" });
+  };
+  const unirEmpresa = async () => {
+    const otra = empresas.find((x) => x.key === unir);
+    if (!otra) return;
+    const nombresOtra = Array.from(otra.nombres.keys());
+    const aliasNuevos = [...new Set([...alias, ...nombresOtra, ...(otra.grupo?.alias || [])])].filter((n) => normClave(n) !== e.key);
+    const razonesOtra = razonesSocialesDe(otra).filter((r) => !razones.some((x) => normClave(x.nombre) === normClave(r.nombre)));
+    await guardarGrupo({ alias: aliasNuevos, razonesSociales: [...razones, ...razonesOtra] }, [otra.key]);
+    setUnir("");
+  };
+  const desagrupar = (nombre) => guardarGrupo({ alias: alias.filter((a) => a !== nombre) });
+  return (
+    <div className="rounded-lg p-3" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: MUTED }}>Razón social y RUC (datos para remito y factura)</p>
+      <div className="space-y-1.5">
+        {razones.map((r, i) => (
+          <div key={`${r.nombre}-${i}`} className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium" style={{ color: INK }}>{r.nombre}</span>
+            <span className="text-xs" style={{ color: MUTED }}>RUC</span>
+            <div style={{ width: 150 }}><ComentarioEditor value={r.ruc} onSave={(v) => cambiarRuc(i, v)} placeholder="Ej: 80112098-5" /></div>
+            {razones.length > 1 && <button type="button" onClick={() => quitarRazon(i)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap mt-2">
+        <div style={{ width: 170 }}><TextInput value={nueva.nombre} onChange={(ev) => setNueva({ ...nueva, nombre: ev.target.value })} placeholder="Otra razón social" /></div>
+        <div style={{ width: 130 }}><TextInput value={nueva.ruc} onChange={(ev) => setNueva({ ...nueva, ruc: ev.target.value })} placeholder="RUC" /></div>
+        <SecondaryButton onClick={agregarRazon}><Plus size={13} /> Agregar</SecondaryButton>
+      </div>
+      {alias.length > 0 && (
+        <p className="text-xs mt-2.5" style={{ color: MUTED }}>
+          Agrupada con:{" "}
+          {alias.map((a) => (
+            <span key={a} className="inline-flex items-center gap-1 mr-1.5 px-1.5 py-0.5 rounded-full" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+              {a}
+              <button type="button" onClick={() => desagrupar(a)} title="Separar"><X size={11} /></button>
+            </span>
+          ))}
+        </p>
+      )}
+      {empresas.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap mt-2.5">
+          <div style={{ width: 220 }}>
+            <Select value={unir} onChange={(ev) => setUnir(ev.target.value)}>
+              <option value="">Agrupar con otra empresa…</option>
+              {empresas.filter((x) => x.key !== e.key).map((x) => <option key={x.key} value={x.key}>{x.nombre}</option>)}
+            </Select>
+          </div>
+          {unir && <SecondaryButton onClick={unirEmpresa}>Agrupar bajo "{e.nombre}"</SecondaryButton>}
+        </div>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
+function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, grupos, onGuardarGrupos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const norm = normClave;
@@ -12864,6 +13086,15 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
             <button onClick={() => toggle(e.key)} className="w-full flex items-center justify-between gap-3 p-4 text-left">
               <div className="min-w-0">
                 <p className="text-base font-bold" style={{ color: INK }}>{e.nombre}</p>
+                {(() => {
+                  const razones = razonesSocialesDe(e);
+                  const visibles = razones.filter((r) => normClave(r.nombre) !== e.key);
+                  return visibles.length > 0 ? (
+                    <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+                      Razón social: {visibles.map((r) => `${r.nombre}${r.ruc ? ` (RUC ${r.ruc})` : ""}`).join(" · ")}
+                    </p>
+                  ) : null;
+                })()}
                 <p className="text-xs mt-1" style={{ color: MUTED }}>
                   {obras.length} obra{obras.length !== 1 ? "s" : ""}
                   {totalCliente.contrato > 0 ? ` · contratado ${usd(totalCliente.contrato)}` : ""}
@@ -12879,6 +13110,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
             </button>
             {abierto && (
               <div className="px-4 pb-4 space-y-3">
+                <DatosEmpresa e={e} empresas={empresas} grupos={grupos} onGuardar={onGuardarGrupos} />
                 {obras.length > 1 && (
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Cuenta del cliente (todas las obras)</p>
@@ -12917,6 +13149,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
                       </button>
                       {obraAbierta && (
                         <div className="mt-3 space-y-4">
+                          <EstadoCuentaObra c={cuenta} />
                           <CuentaTiles c={cuenta} />
                           <ContratoObra
                             key={`${idFicha}:${ficha?.modificadoEn || 0}`} ficha={ficha} cuenta={cuenta}
@@ -12968,7 +13201,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
   );
 }
 
-function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
+function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, grupos, onGuardarGrupos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
   const [vista, setVista] = useState("fichas");
   const toggleVista = (
     <div className="flex gap-2 mb-3">
@@ -12994,7 +13227,7 @@ function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, factu
         {toggleVista}
         <FichasClientes
           empresas={empresas} cuentas={cuentas} pedidos={pedidos} fichasObras={fichasObras} facturasObra={facturasObra}
-          query={query} onPedido={onPedido} onGuardarFicha={onGuardarFicha} onGuardarFactura={onGuardarFactura} onBorrarFactura={onBorrarFactura}
+          grupos={grupos} onGuardarGrupos={onGuardarGrupos} query={query} onPedido={onPedido} onGuardarFicha={onGuardarFicha} onGuardarFactura={onGuardarFactura} onBorrarFactura={onBorrarFactura}
         />
       </Section>
     );
@@ -14648,20 +14881,13 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
 
   const totalFisico = filasFisicoPorCategoria.reduce((acc, f) => acc + f.valorTotal, 0);
 
-  // Misma clasificación que ya usa PlataPorCobrarSection en pantalla — se arma acá aparte para
-  // que el PDF y el Excel puedan traer exactamente lo mismo que se ve.
-  const plataPorCobrarData = useMemo(() => {
-    const clasificadas = comprometidas.map(clasificarComprometida);
-    return CATEGORIAS_PLATA_COBRAR.map((cat) => {
-      const items = clasificadas.filter((c) => c.categoria === cat.key);
-      return { label: cat.label, total: items.reduce((acc, c) => acc + c.saldoPago, 0), items };
-    }).filter((g) => g.items.length > 0);
-  }, [comprometidas]);
-
   // Cuenta por obra (de las fichas de Clientes) en el formato plano que usan el PDF y el Excel.
   const cuentaObrasData = useMemo(() => cuentasObras.map((f) => ({
-    cliente: f.cliente, obra: f.obra, contrato: f.cuenta.contrato, entregado: f.cuenta.montoEntregado,
-    cobrado: f.cuenta.cobrado, sinPagar: f.cuenta.entregadoNoPagado, faltaCobrar: f.cuenta.restanteCobro,
+    cliente: f.cliente, razonSocial: f.razonSocial, obra: f.obra, contrato: f.cuenta.contrato,
+    adelantoPct: f.cuenta.adelantoPct || 0, adelantoPactado: f.cuenta.adelantoPactado, adelantoCobrado: f.cuenta.adelantoCobrado,
+    entregado: f.cuenta.montoEntregado, unidadesEntregadas: f.cuenta.unidadesEntregadas, unidadesContratadas: f.cuenta.unidadesContratadas,
+    cobrado: f.cuenta.cobrado, sinPagar: f.cuenta.entregadoNoPagado, faltaEntregar: f.cuenta.restanteEntrega, faltaCobrar: f.cuenta.restanteCobro,
+    facturado: f.cuenta.facturado,
   })), [cuentasObras]);
 
   const handleExcel = () => {
@@ -14693,18 +14919,11 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         d.categorias.map((c) => `${c.label}: ${c.monto.toLocaleString()}`).join(" · "),
       ]),
     ]), "Cotizaciones");
-    const clasificadas = comprometidas.map(clasificarComprometida);
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clasificadas
-      .filter((c) => c.categoria !== "sin_movimiento")
-      .map((c) => ({
-        "Categoría": CATEGORIAS_PLATA_COBRAR.find((cat) => cat.key === c.categoria)?.label || "Cerrado",
-        "Cliente": c.razonSocial, "Obra": c.obra, "Saldo por cobrar U$S": c.saldoPago,
-      }))), "Plata por cobrar");
     const totObras = totalesCuentasObras(cuentasObras);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-      ["Cliente", "Obra", "Contratado U$S", "Entregado U$S", "Cobrado U$S", "Entregado sin pagar U$S", "Falta cobrar U$S"],
-      ...cuentaObrasData.map((d) => [d.cliente, d.obra, d.contrato, d.entregado, d.cobrado, d.sinPagar, d.faltaCobrar]),
-      ["TOTAL", "", totObras.contrato, totObras.montoEntregado, totObras.cobrado, totObras.entregadoNoPagado, totObras.restanteCobro],
+      ["Cliente", "Razón social", "Obra", "Contratado U$S", "Adelanto pactado %", "Adelanto pactado U$S", "Adelanto cobrado U$S", "Entregado U$S", "Unidades entregadas", "Unidades contratadas", "Cobrado U$S", "Entregado sin pagar U$S", "Falta entregar U$S", "Falta cobrar U$S", "Facturado U$S"],
+      ...cuentaObrasData.map((d) => [d.cliente, d.razonSocial || "", d.obra, d.contrato, d.adelantoPct, d.adelantoPactado, d.adelantoCobrado, d.entregado, d.unidadesEntregadas, d.unidadesContratadas, d.cobrado, d.sinPagar, d.faltaEntregar, d.faltaCobrar, d.facturado]),
+      ["TOTAL", "", "", totObras.contrato, "", totObras.adelantoPactado, totObras.adelantoCobrado, totObras.montoEntregado, totObras.unidadesEntregadas, totObras.unidadesContratadas, totObras.cobrado, totObras.entregadoNoPagado, totObras.restanteEntrega, totObras.restanteCobro, totObras.facturado],
     ]), "Cuenta por obra");
     XLSX.writeFile(wb, `Reporte_Financiero_${todayISO()}.xlsx`);
   };
@@ -14713,7 +14932,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO(), cuentaObrasData);
+      await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, todayISO(), cuentaObrasData);
     } catch (e) {
       console.error("Error generando reporte para Joel", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
@@ -14725,9 +14944,9 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     setCompartiendo(true);
     setError("");
     try {
-      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO(), cuentaObrasData);
+      const bytes = await generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, todayISO(), cuentaObrasData);
       const ok = await compartirArchivo(bytes, nombreArchivoReporteJoel(todayISO()), "Reporte Financiero");
-      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, plataPorCobrarData, todayISO(), cuentaObrasData);
+      if (!ok) await downloadReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransitoData, resumenCot, detalleCotizaciones, todayISO(), cuentaObrasData);
     } catch (e) {
       console.error("Error compartiendo reporte para Joel", e);
       setError("No se pudo compartir el PDF. Probá de nuevo.");
@@ -14745,11 +14964,11 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
               <p><strong>Físico en Paraguay:</strong> lo mismo que cuenta el Reporte para Seguro (equipos activos, repuestos, Zona de playa), agrupado solo por categoría — sin modelos ni cantidades.</p>
               <p><strong>Tránsito:</strong> el desglose de todos los costos de los envíos en camino (fábrica, representante, flete, comisión, despacho, seguro), más el costo en origen, el costo puesto en PY y el valor a precio de lista de todo lo que viene (productos y repuestos juntos) — sin el detalle de modelos.</p>
               <p><strong>Cotizaciones:</strong> el mismo resumen Total/Pendiente/Ganada/Perdida de la pestaña Cotizaciones, con cada obra desglosada por categoría general de producto (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones).</p>
-              <p><strong>Plata por cobrar:</strong> cruza entregas contra pagos de Ventas comprometidas.</p>
+              <p><strong>Cuenta por obra:</strong> lo cerrado por contrato, el adelanto pactado, lo entregado, lo cobrado y lo que falta entregar, obra por obra (con sus remitos y facturas).</p>
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Físico en Paraguay (U$S {totalFisico.toLocaleString()}) + tránsito (U$S {costosTransito.total.toLocaleString()} en costos) + cotizaciones + plata por cobrar.
+            Físico en Paraguay (U$S {totalFisico.toLocaleString()}) + tránsito (U$S {costosTransito.total.toLocaleString()} en costos) + cotizaciones + cuenta por obra.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -14886,7 +15105,6 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
           : <CuentaObrasTabla lista={cuentasObras} />}
       </div>
 
-      <PlataPorCobrarSection comprometidas={comprometidas} />
     </div>
   );
 }

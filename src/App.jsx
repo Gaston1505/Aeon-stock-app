@@ -936,10 +936,14 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   // de la Matriz de costos.
   const margenEmpresa = margenTotal - comisionVentaTotal - costoFinancieroTotal;
   const margenEmpresaPct = costoTotal > 0 ? (margenEmpresa / costoTotal) * 100 : 0;
+  // El precio mínimo de venta sin pérdida real: Costo PY + comisión de venta + costo financiero.
+  // Vender exactamente a este monto da margen empresa U$S 0 — es la referencia para saber hasta
+  // dónde se puede bajar negociando con el cliente.
+  const puntoEquilibrioTotal = costoTotal + comisionVentaTotal + costoFinancieroTotal;
 
   return {
     filas, ventaTotal, costoTotal, margenTotal, margenTotalPct, instalacionMonto, costoInstalacion, descuentoPct,
-    comisionVentaTotal, costoFinancieroTotal, margenEmpresa, margenEmpresaPct, serviciosAdicionales,
+    comisionVentaTotal, costoFinancieroTotal, margenEmpresa, margenEmpresaPct, serviciosAdicionales, puntoEquilibrioTotal,
   };
 }
 
@@ -977,8 +981,8 @@ function estadoSalidaCotizacion(c) {
 // que cuenta para los totales y cuyo estado se puede editar. Las anteriores quedan de historial.
 // Cliente y obra se agrupan sin distinguir mayúsculas (así "Eje" y "EJE" son la misma obra, igual
 // que ya hacía el aviso de "ya hay una cotización para esta obra"); se muestra la grafía de la
-// cotización más nueva. Dentro de cada obra, `principal` es el hilo que cuenta en los resúmenes
-// (ver elegirHiloPrincipal): una sola cotización por obra.
+// cotización más nueva. Dentro de cada obra y rubro, cada hilo es Principal, Suma o Historial
+// para el total (ver clasificarHilosDeRubro) — Principal + Suma cuentan, Historial no.
 function hiloKeyDeCotizacion(c) {
   // Sin .toLowerCase() a propósito: es exactamente la misma comparación (case-sensitive) que
   // ya se usaba antes de que existiera hiloId — cambiarla ahora fusionaría de nuevo cotizaciones
@@ -1010,13 +1014,33 @@ function mismaObraYRubroCotizacion(a, b) {
   return mismaObraCotizacion(a, b) && rubroDeCotizacion(a) === rubroDeCotizacion(b);
 }
 
-// Entre los hilos de un mismo rubro de una obra, el que cuenta: el que el usuario marcó como
-// principal (si sigue en juego); si no hay marca, la cotización más reciente. Las "Sin efecto"
-// nunca cuentan.
-function elegirHiloPrincipal(hilos) {
-  const enJuego = hilos.filter((h) => h.activa.estado !== "Sin efecto");
-  if (enJuego.length === 0) return null;
-  return enJuego.find((h) => h.versiones.some((v) => v.principal)) || enJuego[0];
+// Qué es un hilo para el total de la obra: "principal" (la referencia), "suma" (cuenta aparte,
+// sumado a la principal — ej. se separó un producto para negociarle descuento solo) o "historial"
+// (no cuenta, quedó de lado). Es independiente del `estado` (Pendiente/Ganada/Perdida/Sin efecto):
+// el usuario puede mover el estado libremente sin que eso cambie si cuenta o no para la obra.
+// `cuentaObra` es el campo nuevo y manda siempre que esté cargado. Si no está (cotizaciones viejas,
+// de antes de que existiera), se interpreta con las reglas de siempre: "Sin efecto" no contaba, y
+// `principal:true` marcaba la que sí.
+function cuentaObraDeHilo(h) {
+  if (h.activa.cuentaObra) return h.activa.cuentaObra;
+  if (h.activa.estado === "Sin efecto") return "historial";
+  if (h.versiones.some((v) => v.principal)) return "principal";
+  return null; // sin marcar — lo resuelve clasificarHilosDeRubro (fallback a la más reciente)
+}
+// Separa los hilos de un mismo rubro de una obra en los 3 baldes de arriba. Si ninguno quedó
+// marcado "principal" (ni por cuentaObra ni por el `principal` legado), por compatibilidad el
+// primero que no sea explícitamente "historial" pasa a ser la principal — así una obra con un
+// solo hilo (el caso de siempre) sigue funcionando sin que el usuario tenga que elegir nada.
+function clasificarHilosDeRubro(hilosRubro) {
+  const marcados = hilosRubro.map((h) => ({ h, marca: cuentaObraDeHilo(h) }));
+  let principal = marcados.find((x) => x.marca === "principal")?.h || null;
+  if (!principal) {
+    const candidato = marcados.find((x) => x.marca !== "historial");
+    if (candidato) { principal = candidato.h; candidato.marca = "principal"; }
+  }
+  const suma = marcados.filter((x) => x.marca === "suma").map((x) => x.h);
+  const historial = marcados.filter((x) => x.h !== principal && x.marca !== "suma").map((x) => x.h);
+  return { principal, suma, historial };
 }
 
 function agruparCotizaciones(cotizaciones) {
@@ -1046,8 +1070,11 @@ function agruparCotizaciones(cotizaciones) {
       // Mismo rubro juntos (para que se vea cuáles compiten entre sí), y adentro lo más nuevo primero.
       hilos.sort((a, b) => (RUBROS_COTIZACION.indexOf(a.rubro) - RUBROS_COTIZACION.indexOf(b.rubro)) || ((b.activa.createdAt || 0) - (a.activa.createdAt || 0)));
       const rubros = [...new Set(hilos.map((h) => h.rubro))];
-      const principales = rubros.map((r) => elegirHiloPrincipal(hilos.filter((h) => h.rubro === r))).filter(Boolean);
-      obras.push({ obra, hilos, principales });
+      const clasificaciones = rubros.map((r) => clasificarHilosDeRubro(hilos.filter((h) => h.rubro === r)));
+      const principales = clasificaciones.map((cl) => cl.principal).filter(Boolean);
+      const sumandose = clasificaciones.flatMap((cl) => cl.suma);
+      const historial = clasificaciones.flatMap((cl) => cl.historial);
+      obras.push({ obra, hilos, principales, sumandose, historial });
     }
     obras.sort((a, b) => {
       const masReciente = (o) => Math.max(...o.hilos.map((h) => h.activa.createdAt || 0));
@@ -1073,9 +1100,10 @@ const ESTADO_COTIZACION_BADGE = {
   Perdida: { color: "#B91C1C", bg: "#FBEAEA" },
   "Sin efecto": { color: "#686D73", bg: "#F2F3F4" },
 };
-// Una cotización por obra y por rubro: la principal (ver elegirHiloPrincipal), en su versión activa.
+// Una cotización por obra y por rubro (la principal, ver clasificarHilosDeRubro), en su versión
+// activa, más las que el usuario marcó explícitamente "se suma a la principal".
 function cotizacionesQueCuentan(clientes) {
-  return clientes.flatMap((g) => g.obras.flatMap((o) => o.principales.map((h) => h.activa)));
+  return clientes.flatMap((g) => g.obras.flatMap((o) => [...o.principales, ...(o.sumandose || [])].map((h) => h.activa)));
 }
 // Resume Total cotizado / Ganadas / Perdidas / Pendientes contando una sola cotización por obra y
 // rubro (la principal), dentro de la lista de grupos de cliente que se le pase.
@@ -1090,6 +1118,25 @@ function resumirCotizaciones(clientes) {
     resumen[estado].total += monto;
   }
   return resumen;
+}
+
+// "Ventas" = Ganadas + Comprometidas, sin contar dos veces la misma obra: una cotización Ganada
+// que ya generó su(s) venta(s) comprometida(s) (comprometida.cotizacionId) se cuenta por el monto
+// de esas comprometidas (puede ser menor si el retiro es parcial), no por el total de la cotización.
+// Una Ganada que todavía no pasó a comprometida cuenta por su propio total.
+function totalVentas(cotizaciones, comprometidas) {
+  const idsConComprometida = new Set((comprometidas || []).map((c) => c.cotizacionId).filter(Boolean));
+  const ganadas = (cotizaciones || []).filter((c) => c.estado === "Ganada");
+  const deGanadasSinComprometida = ganadas
+    .filter((c) => !idsConComprometida.has(c.id))
+    .reduce((acc, c) => acc + calcularTotalCotizacion(c), 0);
+  const deComprometidas = (comprometidas || []).reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
+  return {
+    total: deGanadasSinComprometida + deComprometidas,
+    nGanadas: ganadas.length,
+    nComprometidas: (comprometidas || []).length,
+    nComprometidasPendientes: (comprometidas || []).filter((c) => c.estado === "Comprometida").length,
+  };
 }
 
 // Al marcar una cotización como Ganada / Perdida / Sin efecto se pide el motivo (un click) y un
@@ -2445,20 +2492,18 @@ export default function App() {
   const quitarFichaTecnica = (producto) =>
     updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
 
-  // Una sola cotización "principal" por obra y rubro: al marcar una, se le saca la marca a las demás
-  // de esa obra y ese mismo rubro (las de otros rubros siguen contando aparte).
-  const quitarPrincipalDeObra = (ref, exceptoId) => {
+  // Una sola cotización "principal" por obra y rubro: al marcar una, la que lo era pasa a "suma"
+  // (sigue contando para el total de la obra, pero deja de ser la referencia) — nunca se pierde
+  // sola; si corresponde que deje de contar del todo, el usuario la pasa a Historial a mano.
+  const demoverPrincipalDeObra = (ref, exceptoId) => {
     cotizaciones
-      .filter((x) => x.id !== exceptoId && x.principal && mismaObraYRubroCotizacion(x, ref))
-      .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { principal: false }));
+      .filter((x) => x.id !== exceptoId && mismaObraYRubroCotizacion(x, ref))
+      .filter((x) => (x.cuentaObra || (x.principal ? "principal" : null)) === "principal")
+      .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { cuentaObra: "suma", principal: false }));
   };
   const addCotizacion = (data) => {
-    const { _mantenerPrincipalId, ...resto } = data;
-    if (resto.principal) quitarPrincipalDeObra(resto);
-    // "Mantener la actual": la principal vigente puede ser solo implícita (la más reciente) — hay
-    // que marcarla de verdad, o la nueva (que ahora es la más reciente) le ganaría el lugar.
-    if (_mantenerPrincipalId) updateItem(COLLECTIONS.cotizaciones, _mantenerPrincipalId, { principal: true });
-    addItem(COLLECTIONS.cotizaciones, resto);
+    if (data.cuentaObra === "principal") demoverPrincipalDeObra(data);
+    addItem(COLLECTIONS.cotizaciones, data);
   };
   // A diferencia de addItem/updateItem (que solo loguean el error), acá el error se propaga: si las
   // reglas de Firestore todavía no incluyen "pedidosFacturacion", el formulario tiene que avisarlo.
@@ -2501,29 +2546,16 @@ export default function App() {
   };
   const borrarFacturaObra = (id) => deleteItem(COLLECTIONS.facturasObra, id);
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
+  // El estado (Pendiente/Ganada/Perdida/Sin efecto) y si la cotización cuenta para la obra
+  // (Principal/Suma/Historial, patch.cuentaObra) son cosas separadas a propósito: cambiar una
+  // nunca toca la otra sola, ni fuerza nada en otras cotizaciones de la misma obra — todo lo
+  // decide el usuario a mano, cotización por cotización.
   const updateCotizacion = (id, patch) => {
     const c = cotizaciones.find((x) => x.id === id);
-    if (c && patch.principal === true) quitarPrincipalDeObra(c, id);
+    if (c && (patch.principal === true || patch.cuentaObra === "principal")) demoverPrincipalDeObra(c, id);
     if (c && patch.estado !== undefined) {
-      // Cambiar el estado a mano nunca es un "Sin efecto" automático.
-      patch = { ...patch, sinEfectoAuto: false };
       // Un estado que no es Ganada/Perdida/Sin efecto (volver a Pendiente) borra el motivo anterior.
       if (patch.motivoEstado === undefined && !MOTIVOS_ESTADO_COTIZACION[patch.estado]) patch = { ...patch, motivoEstado: "", comentarioEstado: "", fechaEstado: "" };
-      const hilo = hiloKeyDeCotizacion(c);
-      const otras = cotizaciones.filter((x) => x.id !== id && mismaObraYRubroCotizacion(x, c) && hiloKeyDeCotizacion(x) !== hilo);
-      if (patch.estado === "Ganada" || patch.estado === "Perdida") {
-        // Se definió la obra: esta pasa a ser la principal y el resto de lo que seguía en juego
-        // queda "Sin efecto" — no como Perdida, para no ensuciar el historial de perdidas.
-        quitarPrincipalDeObra(c, id);
-        patch = { ...patch, principal: true };
-        otras
-          .filter((x) => (x.estado || "Pendiente") === "Pendiente")
-          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Sin efecto", sinEfectoAuto: true, motivoEstado: MOTIVO_SIN_EFECTO_AUTO, comentarioEstado: "", fechaEstado: todayISO() }));
-      } else if (patch.estado === "Pendiente") {
-        otras
-          .filter((x) => x.sinEfectoAuto)
-          .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { estado: "Pendiente", sinEfectoAuto: false, motivoEstado: "", comentarioEstado: "", fechaEstado: "" }));
-      }
     }
     updateItem(COLLECTIONS.cotizaciones, id, patch);
   };
@@ -3082,7 +3114,7 @@ export default function App() {
       ],
     },
     ventas: {
-      label: "Ventas y garantías",
+      label: "Garantías",
       rows: () => ventas.map((v) => ({
         "Modelos": (v.lineas || []).map((l) => `${l.cantidad}x ${l.modelo}`).join(", "),
         "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
@@ -3402,13 +3434,13 @@ export default function App() {
     { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine, section: "Movimientos" },
     // Ventas — en orden de embudo: primero se arma la combinación (para proyectos de multi-split),
     // se chequea en el Panel de simulación, y recién ahí se manda la Cotización. Después queda
-    // comprometida (reservada) y al cerrarse pasa a Ventas y garantías. Presupuestos de
+    // comprometida (reservada) y al cerrarse pasa a Garantías (ficha de service). Presupuestos de
     // reparación es un flujo aparte, va al final del bloque.
     { key: "armado-combinaciones", label: "Armado de combinaciones", icon: Layers, section: "Ventas" },
     { key: "simulador", label: "Panel de simulación", icon: FlaskConical, section: "Ventas" },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature, section: "Ventas" },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock, section: "Ventas" },
-    { key: "ventas", label: "Ventas y garantías", icon: ShieldCheck, section: "Ventas" },
+    { key: "ventas", label: "Garantías", icon: ShieldCheck, section: "Ventas" },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer, section: "Ventas" },
     // Clientes
     { key: "clientes", label: "Clientes", icon: Phone, section: "Clientes" },
@@ -4003,7 +4035,7 @@ export default function App() {
         />
       </Drawer>
       <Drawer open={drawer === "cliente"} onClose={() => setDrawer(null)} title="Nuevo cliente">
-        <ClienteForm onSave={(d) => { addCliente(d); setDrawer(null); }} />
+        <ClienteForm grupos={gruposEmpresas} onGuardarGrupos={guardarGruposEmpresas} onSave={(d) => { addCliente(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "precio-mercado"} onClose={() => setDrawer(null)} title="Nuevo precio de mercado">
         <PrecioMercadoForm onSave={(d) => { addPrecioMercado(d); setDrawer(null); }} />
@@ -4958,6 +4990,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
 
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
+  const resumenVentas = useMemo(() => totalVentas(cotizaciones, comprometidas), [cotizaciones, comprometidas]);
   const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
 
   // Un mini-resumen por cada área de la barra de menú, para navegar directo — los números
@@ -4975,9 +5008,14 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
       sub: `Puesto en PY: U$S ${valuacionTransitoData.costoPuestoPy.toLocaleString()}`,
     },
     {
-      label: "Ventas", icon: FileSignature, tab: "cotizaciones",
-      value: `U$S ${resumenCot.Pendiente.total.toLocaleString()} pendiente`,
-      sub: `Entregado sin pagar: U$S ${totalCobranza.entregadoNoPagado.toLocaleString()}`,
+      label: "Ventas", icon: ShieldCheck, tab: "comprometidas",
+      value: `U$S ${resumenVentas.total.toLocaleString()}`,
+      sub: resumenVentas.nComprometidasPendientes > 0 ? `${resumenVentas.nComprometidasPendientes} comprometida(s) por retirar` : "Ganadas + comprometidas",
+    },
+    {
+      label: "Cotizaciones", icon: FileSignature, tab: "cotizaciones",
+      value: `U$S ${resumenCot.Pendiente.total.toLocaleString()}`,
+      sub: `${resumenCot.Pendiente.n} pendiente(s) · entregado sin pagar U$S ${totalCobranza.entregadoNoPagado.toLocaleString()}`,
       subColor: totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : undefined,
     },
     {
@@ -5020,11 +5058,11 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
               ))}
             </div>
           )}
-          <p className="text-xs mt-2" style={{ color: "#92400E" }}>Gestioná el contacto y la decisión del cliente desde la pestaña "Ventas y garantías".</p>
+          <p className="text-xs mt-2" style={{ color: "#92400E" }}>Gestioná el contacto y la decisión del cliente desde la pestaña "Garantías".</p>
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
         {secciones.map((s) => (
           <IndicadorCard
             key={s.label} label={s.label} value={s.value} sub={s.sub} subColor={s.subColor}
@@ -5749,7 +5787,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl font-bold" style={{ color: INK }}>Ventas y garantías</h2>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Garantías</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Fichas de obra vendida — contrato firmado, remitos vinculados y certificado de garantía, con seguimiento de service a 12 y 24 meses.
           </p>
@@ -10469,9 +10507,35 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
   const [conflictoObra, setConflictoObra] = useState(null);
   const [conflictoResuelto, setConflictoResuelto] = useState(false);
   const [eligiendoPrincipal, setEligiendoPrincipal] = useState(false);
+  const [mostrarAvisoDescuento, setMostrarAvisoDescuento] = useState(false);
+  const [avisoDescuentoConfirmado, setAvisoDescuentoConfirmado] = useState("");
 
   const productoSel = productos.find((p) => p.id === productoId);
   const subtotal = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0), 0);
+
+  // Líneas vendidas por debajo del precio de lista del producto — lo que dispara el aviso de
+  // margen antes de guardar (bloqueo suave: hay que revisarlas y confirmar, no se guardan solas).
+  const lineasConDescuento = useMemo(() => {
+    const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
+    return lineas.map((l) => {
+      const producto = productos.find((p) => p.nombre === l.codigo);
+      const precioLista = Number(producto?.precioLista) || 0;
+      const precio = Number(l.precioUnit) || 0;
+      if (!producto || precioLista <= 0 || precio >= precioLista) return null;
+      const costos = calcularCostosProducto(producto, matriz);
+      if (!costos) return null;
+      const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
+      const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
+      const markupPct = ((precio - costos.costoPy) / costos.costoPy) * 100;
+      return {
+        codigo: l.codigo, nombre: nombreProducto(producto), cantidad: Number(l.cantidad) || 0,
+        precioLista, precio, costoPy: costos.costoPy, puntoEquilibrio: costos.costoReal,
+        banda: bandaDescuento(markupPct, catCfg, matriz.costoFinancieroPct), markupPct,
+      };
+    }).filter(Boolean);
+  }, [lineas, productos, matrizCostos]);
+  const firmaDescuento = lineasConDescuento.map((l) => `${l.codigo}:${l.precio}`).join("|");
+  const necesitaAvisoDescuento = lineasConDescuento.length > 0 && avisoDescuentoConfirmado !== firmaDescuento;
 
   // Autocompleta el teléfono si lo tipeado coincide con la empresa (o, si no tiene empresa
   // cargada, con el nombre) de un cliente ya guardado — pero solo mientras el teléfono siga
@@ -10612,6 +10676,10 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
       setError("Agregá al menos un producto.");
       return;
     }
+    if (necesitaAvisoDescuento) {
+      setMostrarAvisoDescuento(true);
+      return;
+    }
     setError("");
     if (editId) {
       guardarEdicion();
@@ -10642,9 +10710,11 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
     setEligiendoPrincipal(true);
   };
 
-  const guardarComoPrincipal = (esLaNueva) => {
+  // El viejo principal (si la nueva pasa a serlo) se demueve solo a "suma" en addCotizacion — acá
+  // solo hay que decidir qué es ESTA cotización nueva.
+  const guardarComoPrincipal = (cuentaObra) => {
     setEligiendoPrincipal(false);
-    guardarFinal(randId(), esLaNueva ? { principal: true } : { _mantenerPrincipalId: hiloPrincipalActual?.activa.id });
+    guardarFinal(randId(), { cuentaObra });
   };
 
   const hilosObraExistente = useMemo(() => {
@@ -10763,6 +10833,14 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
 
       <DescuentoInstalacionCampos dI={dI} subtotal={subtotal} />
 
+      {lineas.length > 0 && (
+        <div className="mb-4">
+          <p className="text-base font-bold mb-1" style={{ color: ACCENT }}>Costo y punto de equilibrio de esta cotización</p>
+          <p className="text-xs mb-1" style={{ color: MUTED }}>Se actualiza solo a medida que agregás o cambiás productos — para tener el margen a la vista antes de guardar.</p>
+          <RentabilidadCotizacionView c={datosComunes()} productos={productos} matrizCostos={matrizCostos} />
+        </div>
+      )}
+
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
       <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>
       <Field label="Fecha de entrega estimada"><TextInput value={fechaEntregaEstimada} onChange={(e) => setFechaEntregaEstimada(e.target.value)} /></Field>
@@ -10772,7 +10850,33 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
 
-      {conflictoObra && (
+      {mostrarAvisoDescuento && (
+        <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#B91C1C", backgroundColor: "#FBEAEA" }}>
+          <p className="text-sm font-medium mb-1" style={{ color: INK }}>Hay producto(s) por debajo del precio de lista</p>
+          <p className="text-xs mb-2" style={{ color: MUTED }}>Revisá el margen antes de guardar:</p>
+          <div className="space-y-1.5 mb-3">
+            {lineasConDescuento.map((l) => (
+              <div key={l.codigo} className="rounded p-2" style={{ backgroundColor: "#FFFFFF" }}>
+                <p className="text-xs font-medium" style={{ color: INK }}>
+                  {l.codigo} <span style={{ color: MUTED, fontWeight: 400 }}>{l.nombre}</span>
+                </p>
+                <p className="text-xs" style={{ color: MUTED }}>
+                  Lista U$S {l.precioLista.toLocaleString()} → cotizado U$S {l.precio.toLocaleString()} · Costo PY U$S {l.costoPy.toLocaleString(undefined, { maximumFractionDigits: 2 })} · Punto de equilibrio U$S {l.puntoEquilibrio.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </p>
+                <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: l.banda.bg, color: l.banda.color }}>
+                  {l.banda.label} ({fmtN(l.markupPct, 0)}% markup sobre Costo PY)
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <PrimaryButton onClick={() => { setAvisoDescuentoConfirmado(firmaDescuento); setMostrarAvisoDescuento(false); }}>Entiendo los márgenes, continuar</PrimaryButton>
+            <SecondaryButton onClick={() => setMostrarAvisoDescuento(false)}>Volver a revisar</SecondaryButton>
+          </div>
+        </div>
+      )}
+
+      {!mostrarAvisoDescuento && conflictoObra && (
         <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
           <p className="text-sm font-medium mb-1" style={{ color: INK }}>Ya hay una cotización para "{obra || cliente}"</p>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
@@ -10785,32 +10889,38 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
           </div>
         </div>
       )}
-      {eligiendoPrincipal && (
+      {!mostrarAvisoDescuento && eligiendoPrincipal && (
         <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
-          <p className="text-sm font-medium mb-1" style={{ color: INK }}>¿Cuál queda como cotización principal de "{obra || cliente}"?</p>
+          <p className="text-sm font-medium mb-1" style={{ color: INK }}>"{obra || cliente}" ya tiene cotización de {categoria || "este rubro"} — ¿qué es esta nueva?</p>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
-            Solo la principal cuenta en el resumen de cotizaciones. Estas son las otras de la obra:
+            Repasá cliente, productos, cantidades y montos de la(s) que ya estaba(n) antes de decidir — el estado (Pendiente/Ganada/Perdida) no cambia con esto, es aparte.
           </p>
-          <div className="space-y-1 mb-3">
-            {(hilosObraExistente?.hilos || []).filter((h) => h.activa.estado !== "Sin efecto").map((h) => (
-              <p key={h.hiloId} className="text-xs" style={{ color: INK }}>
-                · {h.activa.categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(h.activa).toLocaleString()} · {fmtDate(h.activa.fecha)} · {h.activa.estado || "Pendiente"}
-                {h === hiloPrincipalActual && <b style={{ color: ACCENT }}> — la principal hoy</b>}
-              </p>
+          <div className="space-y-2 mb-3">
+            {(hilosObraExistente?.hilos || []).map((h) => (
+              <div key={h.hiloId} className="rounded border p-2" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+                <p className="text-xs font-medium" style={{ color: INK }}>
+                  {h.activa.cliente} — {h.activa.categoria || "Sin categoría"} · {fmtDate(h.activa.fecha)} · {h.activa.estado || "Pendiente"}
+                  {h === hiloPrincipalActual && <b style={{ color: "#15803D" }}> — hoy cuenta (Principal)</b>}
+                  {h !== hiloPrincipalActual && (hilosObraExistente?.sumandose || []).includes(h) && <b style={{ color: "#15803D" }}> — hoy cuenta (Suma)</b>}
+                  {h !== hiloPrincipalActual && (hilosObraExistente?.historial || []).includes(h) && <b style={{ color: "#B91C1C" }}> — Historial, no cuenta</b>}
+                </p>
+                <CotizacionDetalle c={h.activa} productos={productos} />
+              </div>
             ))}
-            <p className="text-xs" style={{ color: INK }}>
-              · <b>Esta nueva</b> · {categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(datosComunes()).toLocaleString()}
-            </p>
+            <div className="rounded border p-2" style={{ borderColor: ACCENT, backgroundColor: "#FFFFFF" }}>
+              <p className="text-xs font-medium" style={{ color: ACCENT }}><b>Esta nueva</b> — {cliente} · {categoria || "Sin categoría"}</p>
+              <CotizacionDetalle c={datosComunes()} productos={productos} />
+            </div>
           </div>
+          <p className="text-xs mb-2" style={{ color: INK }}>¿Esta nueva cotización...?</p>
           <div className="flex gap-2 flex-wrap">
-            <PrimaryButton onClick={() => guardarComoPrincipal(true)}>Esta nueva es la principal</PrimaryButton>
-            {hiloPrincipalActual && (
-              <SecondaryButton onClick={() => guardarComoPrincipal(false)}>Mantener la actual</SecondaryButton>
-            )}
+            <PrimaryButton onClick={() => guardarComoPrincipal("principal")}>Es la Principal (la anterior pasa a Suma)</PrimaryButton>
+            <SecondaryButton onClick={() => guardarComoPrincipal("suma")}>Se suma a la Principal actual</SecondaryButton>
+            <SecondaryButton onClick={() => guardarComoPrincipal("historial")}>Queda en el Historial (no cuenta)</SecondaryButton>
           </div>
         </div>
       )}
-      {!conflictoObra && !eligiendoPrincipal && <PrimaryButton onClick={submit}>{editId ? "Guardar cambios" : "Guardar cotización"}</PrimaryButton>}
+      {!mostrarAvisoDescuento && !conflictoObra && !eligiendoPrincipal && <PrimaryButton onClick={submit}>{editId ? "Guardar cambios" : "Guardar cotización"}</PrimaryButton>}
     </div>
   );
 }
@@ -11406,6 +11516,13 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
           <p className="font-semibold" style={{ color: colorMargen(r.margenEmpresa) }}>{fmtN(r.margenEmpresaPct, 1)}%</p>
         </div>
       </div>
+      <div className="flex items-center justify-between gap-2 mb-2 p-2 rounded" style={{ backgroundColor: "#FDF1E0" }}>
+        <div className="flex items-center gap-1">
+          <p className="text-xs font-medium" style={{ color: "#92400E" }}>Punto de equilibrio (precio mínimo sin pérdida)</p>
+          <InfoTip><p>Costo PY + comisión de venta + costo financiero, ya sumados. Vender a este monto exacto deja Margen empresa U$S 0 — es el piso real para negociar con el cliente, no el Costo PY solo.</p></InfoTip>
+        </div>
+        <p className="text-sm font-bold" style={{ color: "#92400E" }}>U$S {fmt(r.puntoEquilibrioTotal)}</p>
+      </div>
       <p className="text-xs mb-2" style={{ color: MUTED }}>
         Comisión de venta y costo financiero calculados por línea con el % de categoría de la Matriz de costos (Aire Acondicionado vs. resto) sobre Costo PY — el margen empresa ya los tiene descontados.
       </p>
@@ -11624,28 +11741,44 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
 
 // Una obra puede tener varias categorías en paralelo (aires, cocina, termo) — cada una es su
 // propio hilo con su propia versión activa e historial, no una revisión de las otras.
-function HiloCategoriaGrupo({ hilo, esPrincipal, hayVarios, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
+// Las 3 marcas de "cuánto cuenta" un hilo para el total de su obra — independiente del estado
+// (Pendiente/Ganada/Perdida/Sin efecto), ver clasificarHilosDeRubro.
+const CUENTA_OBRA_BADGE = {
+  principal: { label: (rubro) => `Principal de ${rubro} — cuenta en el resumen`, color: "#15803D", bg: "#E9F7EF" },
+  suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — cuenta en el resumen`, color: "#15803D", bg: "#E9F7EF" },
+  historial: { label: () => "Historial — no cuenta en el resumen", color: "#B91C1C", bg: "#FBEAEA" },
+};
+function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
-  const sinEfecto = hilo.activa.estado === "Sin efecto";
+  const badge = CUENTA_OBRA_BADGE[cuentaObra];
+  // Al marcar esta como Principal, la que lo era pasa sola a "Suma" (demoverPrincipalDeObra en
+  // App) — nunca desaparece del total sin que el usuario lo pida a propósito (pasarla a Historial).
+  const marcar = (nueva) => onUpdate(hilo.activa.id, { cuentaObra: nueva, principal: nueva === "principal" });
   return (
     <div>
       {hayVarios && (
         <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-          {esPrincipal ? (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
-              Principal de {hilo.rubro} — cuenta en el resumen
-            </span>
-          ) : (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#F2F3F4", color: "#686D73" }}>
-              {sinEfecto ? "Sin efecto — no cuenta" : `Otra opción de ${hilo.rubro} — no cuenta en el resumen`}
-            </span>
-          )}
-          {!esPrincipal && !sinEfecto && (
-            <button onClick={() => onUpdate(hilo.activa.id, { principal: true })} className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: ACCENT, color: ACCENT }}>
-              Hacer principal
-            </button>
-          )}
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: badge.bg, color: badge.color }}>
+            {badge.label(hilo.rubro)}
+          </span>
+          <div className="flex items-center gap-1">
+            {cuentaObra !== "principal" && (
+              <button onClick={() => marcar("principal")} className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: ACCENT, color: ACCENT }}>
+                Hacer Principal
+              </button>
+            )}
+            {cuentaObra !== "suma" && (
+              <button onClick={() => marcar("suma")} className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: "#15803D", color: "#15803D" }}>
+                {cuentaObra === "principal" ? "Pasar a Suma" : "Sumar al total"}
+              </button>
+            )}
+            {cuentaObra !== "historial" && (
+              <button onClick={() => marcar("historial")} className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: "#B91C1C", color: "#B91C1C" }}>
+                Pasar a Historial
+              </button>
+            )}
+          </div>
         </div>
       )}
       <CotizacionCard
@@ -11697,7 +11830,10 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
         <div className="px-3 pb-3 space-y-3">
           {grupo.hilos.map((h) => (
             <HiloCategoriaGrupo
-              key={h.hiloId} hilo={h} esPrincipal={grupo.principales.includes(h)} hayVarios={grupo.hilos.filter((x) => x.rubro === h.rubro).length > 1} productos={productos} matrizCostos={matrizCostos}
+              key={h.hiloId}
+              hilo={h}
+              cuentaObra={grupo.principales.includes(h) ? "principal" : grupo.sumandose.includes(h) ? "suma" : "historial"}
+              hayVarios={grupo.hilos.filter((x) => x.rubro === h.rubro).length > 1} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
@@ -13529,11 +13665,31 @@ function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, factu
                   <Trash2 size={14} style={{ color: MUTED }} />
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                 <div>
-                  <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Empresa</p>
-                  <ComentarioEditor value={c.empresa} onSave={(v) => onUpdateField(c.id, "empresa", v)} placeholder="Ej: CCI SA" />
-</div>
+                  <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Nombre comercial</p>
+                  <ComentarioEditor
+                    value={c.nombreComercial}
+                    onSave={async (v) => {
+                      await vincularComercialConRazonSocial(v, c.razonSocial, grupos, onGuardarGrupos);
+                      onUpdateField(c.id, "nombreComercial", v);
+                      onUpdateField(c.id, "empresa", v || c.razonSocial || "");
+                    }}
+                    placeholder="Ej: Amati"
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Razón social</p>
+                  <ComentarioEditor
+                    value={c.razonSocial}
+                    onSave={async (v) => {
+                      await vincularComercialConRazonSocial(c.nombreComercial, v, grupos, onGuardarGrupos);
+                      onUpdateField(c.id, "razonSocial", v);
+                      onUpdateField(c.id, "empresa", c.nombreComercial || v || "");
+                    }}
+                    placeholder="Ej: Octagon SA"
+                  />
+                </div>
                 <div>
                   <p className="text-[11px] mb-0.5" style={{ color: MUTED }}>Teléfono / WhatsApp</p>
                   <ComentarioEditor value={c.telefono} onSave={(v) => onUpdateField(c.id, "telefono", v)} placeholder="Ej: 595981234567" />
@@ -13551,26 +13707,53 @@ function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, factu
   );
 }
 
-function ClienteForm({ onSave }) {
+// Agrega (o completa) el grupo de empresa cuyo nombre comercial es `nombreComercial`, sumándole
+// `razonSocial` a su lista de razones sociales — para que la ficha de cliente ya quede agrupada
+// sin tener que ir a "Agrupar empresas" a mano. No hace nada si falta alguno de los dos nombres.
+async function vincularComercialConRazonSocial(nombreComercial, razonSocial, grupos, onGuardarGrupos) {
+  const nc = (nombreComercial || "").trim();
+  const rs = (razonSocial || "").trim();
+  if (!nc || !rs || !onGuardarGrupos) return;
+  const key = nc.toLowerCase();
+  const existente = (grupos || []).find((g) => (g.nombre || "").trim().toLowerCase() === key);
+  const razonesSociales = existente?.razonesSociales || [];
+  if (razonesSociales.some((r) => (r.nombre || "").trim().toLowerCase() === rs.toLowerCase())) return;
+  const nuevoGrupo = {
+    ...(existente || { id: `g${Date.now().toString(36)}`, alias: [] }),
+    nombre: nc,
+    razonesSociales: [...razonesSociales, { nombre: normalizarEmpresa(rs), ruc: "" }],
+  };
+  const resto = (grupos || []).filter((g) => g !== existente);
+  await onGuardarGrupos([...resto, nuevoGrupo]);
+}
+
+function ClienteForm({ onSave, grupos, onGuardarGrupos }) {
   const [nombre, setNombre] = useState("");
-  const [empresa, setEmpresa] = useState("");
+  const [nombreComercial, setNombreComercial] = useState("");
+  const [razonSocial, setRazonSocial] = useState("");
   const [telefono, setTelefono] = useState("");
   const [rol, setRol] = useState("");
   const [error, setError] = useState("");
 
-  const submit = () => {
+  const submit = async () => {
     if (!nombre.trim()) {
       setError("Ingresá el nombre.");
       return;
     }
-    onSave({ nombre: nombre.trim(), empresa: empresa.trim(), telefono: telefono.trim(), rol: rol.trim() });
+    const nc = nombreComercial.trim();
+    const rs = razonSocial.trim();
+    await vincularComercialConRazonSocial(nc, rs, grupos, onGuardarGrupos);
+    onSave({ nombre: nombre.trim(), nombreComercial: nc, razonSocial: rs, empresa: nc || rs, telefono: telefono.trim(), rol: rol.trim() });
   };
 
   return (
     <div>
       <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(capitalizarPalabras(e.target.value))} placeholder="Persona con la que hablás" /></Field>
-      <Field label="Empresa">
-        <TextInput value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ej: CCI SA" />
+      <Field label="Nombre comercial">
+        <TextInput value={nombreComercial} onChange={(e) => setNombreComercial(e.target.value)} placeholder="Ej: Amati (como la conocés vos)" />
+      </Field>
+      <Field label="Razón social">
+        <TextInput value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} placeholder="Ej: Octagon SA (para remito y factura)" />
       </Field>
       <Field label="Teléfono / WhatsApp">
         <TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 595981234567 (con código de país, sin +)" />
@@ -13578,6 +13761,7 @@ function ClienteForm({ onSave }) {
       <Field label="Rol en la empresa">
         <TextInput value={rol} onChange={(e) => setRol(e.target.value)} placeholder="Ej: Dueño, Gerente de compras, Encargada de obra" />
       </Field>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>No hace falta cargar los dos nombres ahora — podés completar el que falte más adelante, desde la ficha del cliente.</p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar cliente</PrimaryButton>
     </div>

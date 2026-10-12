@@ -2519,6 +2519,9 @@ export default function App() {
 
   // Cierre manual: el usuario confirma que ya no hay más que retirar de esta reserva.
   const cerrarComprometida = (id) => updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", fechaCierre: todayISO() });
+  // Fecha de retiro aproximada al cargar la reserva, ajustable después a medida que se va
+  // sabiendo con más precisión cuándo retira el cliente.
+  const updateFechaEntregaComprometida = (id, fechaEntrega) => updateItem(COLLECTIONS.ventasComprometidas, id, { fechaEntrega });
 
   // Cobro: independiente del retiro de mercadería — se puede cobrar sin haber entregado,
   // o entregar sin haber cobrado del todo. Se guarda como lista de pagos en la propia reserva.
@@ -3775,6 +3778,7 @@ export default function App() {
             onRetirar={(id) => setRetiroTarget(id)}
             onCerrar={cerrarComprometida}
             onPago={(id) => setPagoTarget(id)}
+            onFechaEntrega={updateFechaEntregaComprometida}
           />
         )}
 
@@ -5066,6 +5070,19 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
   const resumenVentas = useMemo(() => totalVentas(cotizaciones, comprometidas), [cotizaciones, comprometidas]);
   const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
 
+  // Ventas comprometidas con fecha de retiro cargada, todavía con saldo por retirar — para avisar
+  // con anticipación en qué fecha se va a liberar esa mercadería y, si el producto ya está en
+  // stockBajo, que ese retiro puntual es de los que lo llevan ahí (stockBajo ya descuenta lo
+  // comprometido, así que no hay que recalcular el stock a futuro, solo ordenar por fecha).
+  const proximosRetiros = useMemo(() => {
+    return (comprometidas || [])
+      .filter((c) => c.estado === "Comprometida" && c.fechaEntrega)
+      .map((c) => ({ ...c, pendiente: Math.max(0, (Number(c.cantidad) || 0) - (Number(c.cantidadRetirada) || 0)) }))
+      .filter((c) => c.pendiente > 0)
+      .map((c) => ({ ...c, dias: daysUntil(c.fechaEntrega), bajoStock: stockBajo.some((r) => r.producto.nombre === c.modelo) }))
+      .sort((a, b) => a.fechaEntrega.localeCompare(b.fechaEntrega));
+  }, [comprometidas, stockBajo]);
+
   // Un mini-resumen por cada área de la barra de menú, para navegar directo — los números
   // grandes (stock, historial, detalle) viven en su propia pestaña, acá solo el estado general.
   const secciones = [
@@ -5161,6 +5178,36 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
                 </div>
                 <span style={{ color: s.dias <= 15 ? "#B91C1C" : "#B45309" }}>
                   {s.dias < 0 ? `vencido hace ${Math.abs(s.dias)}d` : `en ${s.dias}d`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Package size={15} style={{ color: ACCENT }} />
+          <h3 className="text-base font-bold" style={{ color: INK }}>Próximos retiros de mercadería</h3>
+          <InfoTip><p>Ventas comprometidas con fecha de retiro cargada y saldo pendiente — para saber con anticipación qué mercadería se va a liberar y cuándo. Si el producto figura en rojo, ya está en "stock bajo" una vez descontado todo lo comprometido.</p></InfoTip>
+        </div>
+        {proximosRetiros.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>No hay retiros con fecha cargada pendientes.</p>
+        ) : (
+          <div className="space-y-2">
+            {proximosRetiros.slice(0, 6).map((c) => (
+              <div key={c.id} className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="font-medium" style={{ color: INK }}>{c.razonSocial || "Sin cliente"}</span>
+                  <span style={{ color: MUTED }}> · {c.obra} · {c.pendiente}× {c.modelo} <ProductoNombre codigo={c.modelo} style={{ color: MUTED }} /></span>
+                  {c.bajoStock && (
+                    <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>
+                      queda en stock bajo
+                    </span>
+                  )}
+                </div>
+                <span style={{ color: c.dias <= 7 ? "#B91C1C" : "#B45309" }}>
+                  {c.dias < 0 ? `vencido hace ${Math.abs(c.dias)}d` : c.dias === 0 ? "hoy" : `en ${c.dias}d`}
                 </span>
               </div>
             ))}
@@ -6008,7 +6055,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
   );
 }
 
-function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onPago }) {
+function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onPago, onFechaEntrega }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
   const totalMonto = pendientes.reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
   const [abiertos, setAbiertos] = useState(() => new Set());
@@ -6080,7 +6127,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
                 {abierto && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-4 pb-4">
                     {g.items.map((c) => (
-                      <ComprometidaCard key={c.id} c={c} onPago={onPago} onRetirar={onRetirar} onCancelar={onCancelar} onCerrar={onCerrar} />
+                      <ComprometidaCard key={c.id} c={c} onPago={onPago} onRetirar={onRetirar} onCancelar={onCancelar} onCerrar={onCerrar} onFechaEntrega={onFechaEntrega} />
                     ))}
                   </div>
                 )}
@@ -6093,7 +6140,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
   );
 }
 
-function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar }) {
+function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar, onFechaEntrega }) {
   const retirado = Number(c.cantidadRetirada) || 0;
   const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
   const badge = COMPROMETIDA_BADGE[c.estado] || COMPROMETIDA_BADGE.Comprometida;
@@ -6117,8 +6164,14 @@ function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar }) {
       <p className="text-sm mt-2" style={{ color: INK }}>
         {retirado} de {c.cantidad} retirado{retirado > 0 && c.estado !== "Retirada" ? ` · saldo ${saldo}` : ""}
       </p>
-      <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-        Monto: U$S {Number(c.monto || 0).toLocaleString("es-PY")} · Entrega estimada: {fmtDate(c.fechaEntrega)}
+      <p className="text-xs mt-0.5 flex items-center gap-1 flex-wrap" style={{ color: MUTED }}>
+        <span>Monto: U$S {Number(c.monto || 0).toLocaleString("es-PY")} · Retiro {c.fechaEntrega ? "estimado" : "sin fecha"}:</span>
+        {onFechaEntrega ? (
+          <input
+            type="date" value={c.fechaEntrega || ""} onChange={(e) => onFechaEntrega(c.id, e.target.value)}
+            className="text-xs px-1 py-0.5 rounded border" style={{ borderColor: BORDER, color: INK }}
+          />
+        ) : fmtDate(c.fechaEntrega)}
       </p>
       <p className="text-xs mt-0.5" style={{ color: saldoPago > 0 ? "#B45309" : "#15803D" }}>
         Pagado: U$S {pagado.toLocaleString("es-PY")} de U$S {Number(c.monto || 0).toLocaleString("es-PY")}

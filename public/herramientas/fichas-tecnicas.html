@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cargar fichas técnicas — AEON</title>
+<style>
+  :root { --ink:#1C1E20; --muted:#686D73; --accent:#565A5F; --accent-light:#EBEBEC; --border:#E4E5E5; --green:#15803D; --green-bg:#E9F7EF; --red:#B91C1C; --red-bg:#FBEAEA; --amber:#B45309; --amber-bg:#FDF1E0; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background:#FAFBFC; color:var(--ink); margin:0; padding:24px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  .card { background:#fff; border:0.5px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .btn { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn-secondary { background:#fff; color:var(--accent); border:1px solid var(--accent); }
+  table { width:100%; border-collapse: collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--border); position: sticky; top:0; background:#fff; }
+  td { padding:6px 8px; border-bottom:1px solid var(--border); vertical-align: middle; }
+  .badge { display:inline-block; padding:2px 7px; border-radius:999px; font-size:10.5px; font-weight:600; }
+  .b-ok { background:var(--green-bg); color:var(--green); }
+  .b-warn { background:var(--amber-bg); color:var(--amber); }
+  .b-bad { background:var(--red-bg); color:var(--red); }
+  .b-muted { background:var(--accent-light); color:var(--accent); }
+  select, input[type=checkbox] { font-size:12px; }
+  select { max-width: 260px; }
+  #tabla-wrap { max-height: 60vh; overflow:auto; border:1px solid var(--border); border-radius:8px; }
+  #log { font-family: ui-monospace, monospace; font-size:11.5px; color:var(--muted); white-space:pre-wrap; max-height:200px; overflow:auto; }
+  .pill-count { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cargar fichas técnicas al catálogo</h1>
+  <p class="sub">Herramienta interna, de un solo uso: lee los PDF de una carpeta local, los empareja con el producto del catálogo que corresponde, y sube el archivo a ese producto. No forma parte de la app — no hace falta tocar nada de esto después.</p>
+
+  <div class="card" id="auth-card">
+    <p id="auth-status">Comprobando sesión…</p>
+  </div>
+
+  <div class="card" id="paso1" style="display:none;">
+    <p style="margin:0 0 10px;"><b>1.</b> Elegí la carpeta "Fichas tecnicas Aeon v2" (con todas sus subcarpetas adentro).</p>
+    <input type="file" id="picker" webkitdirectory multiple />
+  </div>
+
+  <div class="card" id="paso2" style="display:none;">
+    <p style="margin:0 0 4px;"><b>2.</b> Revisá los emparejamientos — los que salieron en rojo o amarillo conviene mirarlos antes de subir. Podés cambiar el producto de cualquier fila con el desplegable, o destildarla para que no se suba.</p>
+    <p class="pill-count" id="resumen-conteo"></p>
+    <div id="tabla-wrap"><table>
+      <thead><tr><th></th><th>Archivo</th><th>Tamaño</th><th>Código detectado</th><th>Producto</th><th>Acción</th></tr></thead>
+      <tbody id="tabla-body"></tbody>
+    </table></div>
+  </div>
+
+  <div class="card" id="paso3" style="display:none;">
+    <p style="margin:0 0 10px;"><b>3.</b> Subir todo lo tildado. Las fichas de más de ~650&nbsp;KB se comprimen automáticamente (se convierten a imagen, pierden un poco de nitidez pero quedan legibles) para entrar en el límite de Firestore.</p>
+    <button class="btn" id="btn-subir">Subir fichas al catálogo</button>
+    <p id="progreso" class="pill-count" style="margin-top:10px;"></p>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script type="module">
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+
+  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  const { getAuth, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+  const { getFirestore, collection, getDocs, doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+  const { PDFDocument } = await import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm");
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBFLyjp_fuT-HT-UkZTtgNsxRzk-wmZbG0",
+    authDomain: "aeon-stock-app.firebaseapp.com",
+    projectId: "aeon-stock-app",
+    storageBucket: "aeon-stock-app.firebasestorage.app",
+    messagingSenderId: "939610902966",
+    appId: "1:939610902966:web:b8bd4ff1e1f193eccc7117",
+  };
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  const TARGET_BYTES = 665600; // ~650 KB crudos -> deja margen bajo el límite de 1 MB del documento
+
+  const authStatusEl = document.getElementById("auth-status");
+  const paso1 = document.getElementById("paso1");
+  const picker = document.getElementById("picker");
+
+  let productos = [];
+
+  const user = await new Promise((resolve) => {
+    const unsub = onAuthStateChanged(auth, (u) => { unsub(); resolve(u); });
+  });
+
+  if (!user) {
+    authStatusEl.innerHTML = 'No hay una sesión activa en este navegador. Abrí la <a href="../" target="_blank">app de AEON</a> en esta misma pestaña del navegador, iniciá sesión ahí, y volvé a cargar esta página.';
+  } else {
+    const snap = await getDocs(collection(db, "productos"));
+    snap.forEach((d) => productos.push({ id: d.id, ...d.data() }));
+    authStatusEl.innerHTML = `Sesión activa: <b>${user.email}</b> · ${productos.length} productos cargados del catálogo.`;
+    paso1.style.display = "block";
+  }
+
+  function normalizar(s) {
+    return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function emparejar(codigo) {
+    const exact = productos.find((p) => p.nombre === codigo);
+    if (exact) return { producto: exact, confianza: "exacto" };
+    const normCodigo = normalizar(codigo);
+    const normMatches = productos.filter((p) => normalizar(p.nombre) === normCodigo);
+    if (normMatches.length === 1) return { producto: normMatches[0], confianza: "normalizado" };
+    const fuzzy = productos.filter((p) => {
+      const np = normalizar(p.nombre);
+      return np && normCodigo && (np.includes(normCodigo) || normCodigo.includes(np));
+    });
+    if (fuzzy.length === 1) return { producto: fuzzy[0], confianza: "aproximado" };
+    return { producto: null, confianza: fuzzy.length > 1 ? "ambiguo" : "sin-match" };
+  }
+
+  function fmtBytes(n) {
+    return n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(n / 1024)} KB`;
+  }
+
+  let filas = [];
+
+  picker.addEventListener("change", () => {
+    const files = Array.from(picker.files).filter((f) => /\.pdf$/i.test(f.name));
+    filas = files.map((file) => {
+      const base = file.name.replace(/\.pdf$/i, "");
+      const codigo = base.replace(/^ficha\s*tecnica\s*/i, "").trim();
+      const match = emparejar(codigo);
+      return { file, codigo, match, incluir: !!match.producto, productoIdManual: match.producto ? match.producto.id : "" };
+    });
+    renderTabla();
+    document.getElementById("paso2").style.display = "block";
+    document.getElementById("paso3").style.display = "block";
+  });
+
+  function badgeConfianza(c) {
+    if (c === "exacto") return '<span class="badge b-ok">exacto</span>';
+    if (c === "normalizado") return '<span class="badge b-ok">match</span>';
+    if (c === "aproximado") return '<span class="badge b-warn">aproximado</span>';
+    if (c === "ambiguo") return '<span class="badge b-bad">ambiguo</span>';
+    return '<span class="badge b-bad">sin match</span>';
+  }
+
+  function renderTabla() {
+    const tbody = document.getElementById("tabla-body");
+    tbody.innerHTML = "";
+    filas.forEach((fila, idx) => {
+      const tr = document.createElement("tr");
+      const opciones = productos
+        .slice()
+        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+        .map((p) => `<option value="${p.id}" ${p.id === fila.productoIdManual ? "selected" : ""}>${p.nombre}</option>`)
+        .join("");
+      tr.innerHTML = `
+        <td><input type="checkbox" data-idx="${idx}" class="chk" ${fila.incluir ? "checked" : ""} /></td>
+        <td title="${fila.file.webkitRelativePath}">${fila.file.name}</td>
+        <td>${fmtBytes(fila.file.size)}${fila.file.size > TARGET_BYTES ? ' <span class="badge b-warn">se comprime</span>' : ""}</td>
+        <td>${fila.codigo} ${badgeConfianza(fila.match.confianza)}</td>
+        <td><select data-idx="${idx}" class="sel-producto"><option value="">— sin asociar —</option>${opciones}</select></td>
+        <td id="estado-${idx}" class="pill-count">pendiente</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    document.querySelectorAll(".chk").forEach((el) => el.addEventListener("change", (e) => {
+      filas[+e.target.dataset.idx].incluir = e.target.checked;
+    }));
+    document.querySelectorAll(".sel-producto").forEach((el) => el.addEventListener("change", (e) => {
+      const i = +e.target.dataset.idx;
+      filas[i].productoIdManual = e.target.value;
+      filas[i].incluir = !!e.target.value;
+      document.querySelector(`.chk[data-idx="${i}"]`).checked = filas[i].incluir;
+    }));
+    const conMatch = filas.filter((f) => f.match.producto).length;
+    document.getElementById("resumen-conteo").textContent =
+      `${filas.length} archivo(s) encontrados · ${conMatch} emparejados automáticamente · ${filas.length - conMatch} necesitan que elijas el producto a mano (o quedan sin subir).`;
+  }
+
+  function arrayBufferToBase64(buf) {
+    let binary = "";
+    const bytes = new Uint8Array(buf);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  async function comprimirPdf(arrayBuffer) {
+    let quality = 0.72, scale = 1.6;
+    let out = null;
+    for (let intento = 0; intento < 4; intento++) {
+      const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+      const outDoc = await PDFDocument.create();
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        const page = await pdfDoc.getPage(i);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const ctx = canvas.getContext("2d");
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const jpegUrl = canvas.toDataURL("image/jpeg", quality);
+        const jpegBytes = Uint8Array.from(atob(jpegUrl.split(",")[1]), (c) => c.charCodeAt(0));
+        const img = await outDoc.embedJpg(jpegBytes);
+        const outPage = outDoc.addPage([viewport.width, viewport.height]);
+        outPage.drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+      }
+      out = await outDoc.save();
+      if (out.byteLength <= TARGET_BYTES) break;
+      quality = Math.max(0.35, quality - 0.15);
+      scale = Math.max(0.9, scale - 0.3);
+    }
+    return out;
+  }
+
+  function log(msg) {
+    const el = document.getElementById("log");
+    el.textContent += msg + "\n";
+    el.scrollTop = el.scrollHeight;
+  }
+
+  document.getElementById("btn-subir").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-subir");
+    btn.disabled = true;
+    const activas = filas.filter((f) => f.incluir && f.productoIdManual);
+    let ok = 0, error = 0;
+    for (let i = 0; i < filas.length; i++) {
+      const fila = filas[i];
+      const estadoEl = document.getElementById(`estado-${i}`);
+      if (!fila.incluir || !fila.productoIdManual) { estadoEl.textContent = "omitida"; continue; }
+      document.getElementById("progreso").textContent = `Subiendo ${ok + error + 1} de ${activas.length}…`;
+      estadoEl.textContent = "leyendo…";
+      try {
+        const buf = await fila.file.arrayBuffer();
+        let finalBytes = new Uint8Array(buf);
+        if (buf.byteLength > TARGET_BYTES) {
+          estadoEl.textContent = "comprimiendo…";
+          finalBytes = await comprimirPdf(buf);
+          log(`${fila.file.name}: ${fmtBytes(buf.byteLength)} → ${fmtBytes(finalBytes.byteLength)} comprimido`);
+        }
+        const base64 = arrayBufferToBase64(finalBytes.buffer || finalBytes);
+        const dataUrl = `data:application/pdf;base64,${base64}`;
+        await updateDoc(doc(db, "productos", fila.productoIdManual), {
+          fichaTecnicaData: dataUrl,
+          fichaTecnicaNombre: fila.file.name,
+        });
+        estadoEl.innerHTML = '<span class="badge b-ok">subida</span>';
+        ok++;
+      } catch (e) {
+        console.error(e);
+        estadoEl.innerHTML = '<span class="badge b-bad">error</span>';
+        log(`${fila.file.name}: ERROR — ${e.message || e}`);
+        error++;
+      }
+    }
+    document.getElementById("progreso").textContent = `Listo: ${ok} subida(s), ${error} error(es), ${filas.length - ok - error} omitida(s).`;
+    btn.disabled = false;
+  });
+</script>
+</body>
+</html>

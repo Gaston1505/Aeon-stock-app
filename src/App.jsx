@@ -3698,6 +3698,7 @@ export default function App() {
           <PanelView
             ventasCerradas={ventasCerradas} cotizaciones={cotizaciones} comprometidas={comprometidas}
             presupuestosReparacion={presupuestosReparacion} cuentasObras={listaObrasCuenta}
+            productos={productos} equipos={equipos} grupos={gruposEmpresas}
           />
         )}
 
@@ -5575,7 +5576,7 @@ function ReparacionMantenimientoCard({ presupuestos }) {
   );
 }
 
-function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion, cuentasObras }) {
+function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion, cuentasObras, productos, equipos, grupos }) {
   const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
   const hoy = todayISO();
   const mesActual = mesPrefijo(hoy);
@@ -5598,25 +5599,44 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
   const tasaConversion = totalGanadaPerdida > 0 ? (resumenCot.Ganada.n / totalGanadaPerdida) * 100 : null;
 
   const hace90 = new Date(Date.parse(hoy) - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Clave por código comercial, pero el label que se muestra siempre nombra el producto además
+  // del código — el código solo no dice qué es sin tener el catálogo al lado.
   const topProductos = useMemo(() => {
     const map = new Map();
     for (const v of ventasCerradas) {
       if (!v.fecha || v.fecha < hace90) continue;
-      const key = v.codigo || v.modelo || "—";
-      map.set(key, (map.get(key) || 0) + (Number(v.cantidad) || 0));
+      const codigo = v.codigo || v.modelo || "—";
+      map.set(codigo, (map.get(codigo) || 0) + (Number(v.cantidad) || 0));
     }
-    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [ventasCerradas, hace90]);
+    return [...map.entries()]
+      .map(([codigo, cantidad]) => ({ codigo, cantidad, nombre: nombreProducto(productoDeCodigo(codigo, equipos || [], productos || [])) }))
+      .sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
+  }, [ventasCerradas, hace90, productos, equipos]);
+  const topProductosRanking = topProductos.map((p) => [p.nombre ? `${p.nombre} (${p.codigo})` : p.codigo, p.cantidad]);
 
+  // Agrupa por empresa resuelta (nombre comercial, ver "Agrupar empresas" en Clientes) en vez de
+  // por el texto suelto de cada cotización, y al nombre comercial le suma la(s) razón(es) social(es)
+  // configuradas — así "Amati" y "Octagon SA" ya no aparecen como si fueran 2 clientes distintos.
   const topClientes = useMemo(() => {
     const map = new Map();
     for (const c of cotizaciones) {
       if (c.estado !== "Ganada") continue;
-      const key = (c.cliente || "").trim() || "(Sin cliente)";
-      map.set(key, (map.get(key) || 0) + calcularTotalCotizacion(c));
+      const raw = (c.cliente || "").trim() || "(Sin cliente)";
+      const r = resolverEmpresa(raw, grupos || []);
+      const key = r ? r.key : raw.toLowerCase();
+      const prev = map.get(key) || { nombre: r ? r.nombre : raw, total: 0 };
+      prev.total += calcularTotalCotizacion(c);
+      map.set(key, prev);
     }
-    return [...map.entries()].filter(([, total]) => total > 0).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [cotizaciones]);
+    return [...map.values()]
+      .filter((x) => x.total > 0)
+      .map((x) => {
+        const razones = (grupos || []).find((g) => (g.nombre || "").trim().toLowerCase() === x.nombre.trim().toLowerCase())?.razonesSociales || [];
+        const razonTxt = razones.length > 0 ? ` (${razones.map((r) => r.nombre).join(", ")})` : "";
+        return [`${x.nombre}${razonTxt}`, x.total];
+      })
+      .sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [cotizaciones, grupos]);
 
   return (
     <div>
@@ -5644,8 +5664,8 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
         />
         <IndicadorCard
           label="Producto más vendido (90 días)"
-          value={topProductos[0] ? topProductos[0][0] : "—"}
-          sub={topProductos[0] ? `${topProductos[0][1]} unidad(es)` : "Sin ventas registradas"}
+          value={topProductos[0] ? (topProductos[0].nombre || topProductos[0].codigo) : "—"}
+          sub={topProductos[0] ? `${topProductos[0].codigo} · ${topProductos[0].cantidad} unidad(es)` : "Sin ventas registradas"}
         />
         <IndicadorCard
           label="Entregado sin pagar"
@@ -5661,7 +5681,7 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
           <RankingCard
             title="Top 5 productos — últimos 90 días"
-            rows={topProductos}
+            rows={topProductosRanking}
             valueLabel={(v) => `${v} un.`}
           />
           <RankingCard
@@ -7725,6 +7745,12 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
   const toggleLinea = (idx) => setSeleccion((s) => ({ ...s, [idx]: !s[idx] }));
   const setCantidadLinea = (idx, v) => setCantidades((c) => ({ ...c, [idx]: v }));
 
+  // El descuento de la cotización es global (% o monto sobre el subtotal), no por línea — se
+  // prorratea igual que en el resto de la app (ver desglosarTotalCotizacion / Reporte para Seguro)
+  // para que el monto de la comprometida sea el precio YA con descuento, no el de la línea sola.
+  const dCot = useMemo(() => desglosarTotalCotizacion(cotizacion || {}), [cotizacion]);
+  const factorDescuentoCot = dCot.subtotal > 0 ? (dCot.subtotal - dCot.descuentoMonto) / dCot.subtotal : 1;
+
   const submit = () => {
     if (!cotizacion) {
       setError("Elegí una cotización.");
@@ -7745,7 +7771,8 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
         restante -= tomar;
       }
       if (batches.length > 0) {
-        lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnit, batches });
+        const precioConDescuento = Math.round((Number(f.precioUnit) || 0) * factorDescuentoCot * 100) / 100;
+        lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: precioConDescuento, batches });
       }
     });
     if (lineasParaGenerar.length === 0) {
@@ -7775,11 +7802,17 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
           <Field label="Fecha de entrega estimada"><TextInput type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} placeholder="Opcional" /></Field>
 
           <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Líneas de la cotización</p>
+          {factorDescuentoCot < 1 && (
+            <p className="text-xs mb-2 px-2.5 py-2 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+              Esta cotización tiene {fmtN(dCot.descuentoPct || (dCot.descuentoMonto / dCot.subtotal) * 100, 1)}% de descuento — el precio de cada línea de acá abajo ya lo tiene aplicado; la venta comprometida se genera con ese precio final, no con el de lista de la cotización.
+            </p>
+          )}
           <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
             {filas.map((f, idx) => {
               const sinStock = f.stockDisponible === 0;
               const stockInsuficiente = f.stockDisponible > 0 && f.stockDisponible < f.pendiente;
               const yaCompleto = f.pendiente === 0;
+              const precioFinal = Math.round((Number(f.precioUnit) || 0) * factorDescuentoCot * 100) / 100;
               return (
                 <div key={idx} className="px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER, opacity: sinStock || yaCompleto ? 0.55 : 1 }}>
                   <div className="flex items-center gap-2">
@@ -7789,7 +7822,10 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
                     />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium" style={{ color: INK }}><ProductoNombre codigo={f.codigo} fallback={f.descripcion || f.codigo} /></span>
-                      <span style={{ color: MUTED }}> · {f.codigo} · U$S {Number(f.precioUnit).toLocaleString("es-PY")} c/u</span>
+                      <span style={{ color: MUTED }}>
+                        {" "}· {f.codigo} · U$S {precioFinal.toLocaleString("es-PY")} c/u
+                        {factorDescuentoCot < 1 && ` (lista U$S ${Number(f.precioUnit).toLocaleString("es-PY")})`}
+                      </span>
                     </div>
                     {seleccion[idx] && !sinStock && !yaCompleto && (
                       <input
@@ -8746,7 +8782,7 @@ function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
       <FilaCosto label="Costo puesto en PY" formula="Costo origen + Comisión agente + Flete + Despacho" valor={costos.costoPy} destacado />
       <FilaCosto label="Comisión venta" formula={`Costo PY × ${catCfg.comisionVentaPct}% (${costos.categoria === "aires" ? "Aire Acondicionado" : "Electrodomésticos"})`} valor={costos.comisionVenta} />
       <FilaCosto label="Costo financiero" formula={`Costo PY × ${matriz.costoFinancieroPct}%`} valor={costos.costoFinanciero} />
-      <FilaCosto label="Costo Real" formula="Costo PY + Comisión venta + Costo financiero" valor={costos.costoReal} destacado />
+      <FilaCosto label="Costo Real (precio mínimo / punto de equilibrio)" formula="Costo PY + Comisión venta + Costo financiero" valor={costos.costoReal} destacado />
       <p className="text-[10px] pt-1" style={{ color: MUTED }}>
         Markup mínimo admisible (sobre Costo PY): {costos.margenMinimoPct}% · Ideal: {costos.margenIdealMinPct}%-{costos.margenIdealMaxPct}%
       </p>
@@ -8754,8 +8790,9 @@ function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
   );
 }
 
-function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo }) {
+function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizCostos }) {
   const tieneCosto = p.costoOrigen || p.costoPy;
+  const costosVivos = useMemo(() => calcularCostosProducto(p, matrizCostos || MATRIZ_COSTOS_DEFAULT), [p, matrizCostos]);
   return (
     <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-start gap-3 mb-2">
@@ -8814,6 +8851,11 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo }) {
           {tieneCosto && (
             <p className="text-xs" style={{ color: MUTED }}>
               Origen U$S {Number(p.costoOrigen || 0).toLocaleString("es-PY")} · Puesto en PY U$S {Number(p.costoPy || 0).toLocaleString("es-PY")}
+            </p>
+          )}
+          {costosVivos && (
+            <p className="text-xs font-medium" style={{ color: "#92400E" }}>
+              Precio mínimo (punto de equilibrio): U$S {costosVivos.costoReal.toLocaleString("es-PY", { maximumFractionDigits: 2 })}
             </p>
           )}
           {p.contenedorTipo && (
@@ -9219,12 +9261,12 @@ function ListaPreciosPanel({ productos, onCerrar }) {
 
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
-function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo }) {
+function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo, matrizCostos }) {
   if (nodo.productos) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {nodo.productos.map((p) => (
-          <ProductoCard key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockEquipo={stockPorModelo.get(p.nombre)} />
+          <ProductoCard key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockEquipo={stockPorModelo.get(p.nombre)} matrizCostos={matrizCostos} />
         ))}
       </div>
     );
@@ -9235,7 +9277,7 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorM
         <div key={hijo.valor}>
           <p className={CATEGORIA_TITULO_CLASE[Math.min(nivel, 3)]} style={{ color: nivel === 0 ? INK : MUTED }}>{hijo.valor}</p>
           <div className="mt-2">
-            <CategoriaNodo nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} />
+            <CategoriaNodo nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} matrizCostos={matrizCostos} />
           </div>
         </div>
       ))}
@@ -9446,7 +9488,7 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
       ) : modo === "productos" && !buscando && !hayProductosEnTab ? (
         <EmptyState icon={Tag} title="Sin productos en esta categoría" subtitle="Elegí otra pestaña o cargá un producto nuevo acá." />
       ) : (
-        <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} />
+        <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} matrizCostos={matrizCostos} />
       )}
 
       <Drawer open={verTablaMulti} onClose={() => setVerTablaMulti(false)} title="Tabla de combinaciones Multi Split">
@@ -10631,7 +10673,8 @@ function IndicadorDescuentoLinea({ producto, precioUnit, matrizCostos }) {
       style={{ backgroundColor: banda.bg, color: banda.color }}
       title={`Markup actual sobre Costo PY: ${fmtN(markupPct, 1)}% (piso ${catCfg.margenMinimoPct}%, ideal ${catCfg.margenIdealMinPct}-${catCfg.margenIdealMaxPct}%)`}
     >
-      {banda.label} ({fmtN(markupPct, 0)}%){maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${fmtN(maxDesc, 0)}%` : ""}
+      {banda.label} ({fmtN(markupPct, 0)}%) · mín. U$S {costos.costoReal.toLocaleString("es-PY", { maximumFractionDigits: 2 })}
+      {maxDesc != null && maxDesc > 0 ? ` · máx. desc. ${fmtN(maxDesc, 0)}%` : ""}
     </span>
   );
 }
@@ -10916,6 +10959,9 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
         </Field>
         {productoSel && (
           <>
+            {/* Margen y punto de equilibrio del producto solo, antes de definir cantidad — la
+                decisión de a cuánto cotizarlo suele tomarse mirando esto primero. */}
+            <div className="mb-2"><IndicadorDescuentoLinea producto={productoSel} precioUnit={precioNuevo} matrizCostos={matrizCostos} /></div>
             <div className="flex gap-2">
               <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
               <Field label="Precio Unit. U$S"><TextInput type="number" value={precioNuevo} onChange={(e) => setPrecioNuevo(e.target.value)} /></Field>
@@ -11222,6 +11268,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
         </Field>
         {productoSel && (
           <>
+            <div className="mb-2"><IndicadorDescuentoLinea producto={productoSel} precioUnit={precioNuevo} matrizCostos={matrizCostos} /></div>
             <div className="flex gap-2">
               <Field label="Cantidad"><TextInput type="number" min="1" value={cantidadNueva} onChange={(e) => setCantidadNueva(e.target.value)} /></Field>
               <Field label="Precio Unit. U$S"><TextInput type="number" value={precioNuevo} onChange={(e) => setPrecioNuevo(e.target.value)} /></Field>

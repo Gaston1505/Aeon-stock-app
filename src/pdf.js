@@ -488,7 +488,8 @@ export function fmtFecha(iso) {
 }
 
 export function nombreArchivoCotizacion(cotizacion) {
-  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}.pdf`;
+  const categoria = (cotizacion.categoria || "").trim().replace(/\s+/g, "_");
+  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}${categoria ? `_${categoria}` : ""}.pdf`;
 }
 
 export async function downloadCotizacionPdf(cotizacion) {

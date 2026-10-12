@@ -307,7 +307,8 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
 }
 
 export function nombreArchivoCotizacionExcel(cotizacion) {
-  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}.xlsx`;
+  const categoria = (cotizacion.categoria || "").trim().replace(/\s+/g, "_");
+  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}${categoria ? `_${categoria}` : ""}.xlsx`;
 }
 
 export async function downloadCotizacionExcel(cotizacion) {

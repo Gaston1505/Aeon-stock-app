@@ -222,7 +222,7 @@ function fmtDate(d) {
 // Number.prototype.toFixed en todo el código, que siempre usa punto decimal sin separador de
 // miles (formato de EE.UU.) sin importar el idioma del navegador.
 function fmtN(n, decimales = 2) {
-  return (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
+  return (Number(n) || 0).toLocaleString("es-PY", { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
 }
 // Pone mayúscula la primera letra de cada palabra (nombre de cliente/constructora) sin tocar
 // el resto de cada palabra — así una sigla ya escrita en mayúsculas (CCI, SA) no se rompe.
@@ -4804,7 +4804,7 @@ function ComprometidaPagoBox({ comprometidas }) {
             {c.saldoPago <= 0
               ? "pagado por completo"
               : c.pagado > 0
-                ? `pago parcial: U$S ${c.pagado.toLocaleString()} de U$S ${(Number(c.monto) || 0).toLocaleString()}`
+                ? `pago parcial: U$S ${c.pagado.toLocaleString("es-PY")} de U$S ${(Number(c.monto) || 0).toLocaleString("es-PY")}`
                 : "sin pago"}
           </p>
         ))}
@@ -4864,7 +4864,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
                     <td className="px-3 py-2" style={{ color: INK }}>{v.obra || "—"}</td>
                     <td className="px-3 py-2" style={{ color: INK }}><CodigoNombre codigo={v.modelo} /></td>
                     <td className="px-3 py-2" style={{ color: INK }}>{v.cantidad}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{Number(v.monto || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}>{Number(v.monto || 0).toLocaleString("es-PY")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4872,7 +4872,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
                 <tr style={{ backgroundColor: ACCENT_LIGHT }}>
                   <td colSpan={4} className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>Total</td>
                   <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalCantidad}</td>
-                  <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalMonto.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalMonto.toLocaleString("es-PY")}</td>
                 </tr>
               </tfoot>
             </table>
@@ -4893,7 +4893,7 @@ function VentasCerradasPanel({ ventasCerradas }) {
                   <tr key={p.modelo} className="border-b last:border-0" style={{ borderColor: BORDER }}>
                     <td className="px-3 py-2" style={{ color: INK }}><CodigoNombre codigo={p.modelo} /></td>
                     <td className="px-3 py-2" style={{ color: INK }}>{p.cantidad}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{p.monto.toLocaleString()}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}>{p.monto.toLocaleString("es-PY")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4998,24 +4998,24 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
   const secciones = [
     {
       label: "Depósito", icon: Warehouse, tab: "deposito",
-      value: totalUnidades.toLocaleString(),
+      value: totalUnidades.toLocaleString("es-PY"),
       sub: stockBajo.length > 0 ? `${stockBajo.length} producto(s) con stock bajo` : "Stock sin alertas",
       subColor: stockBajo.length > 0 ? "#B91C1C" : undefined,
     },
     {
       label: "Tránsito", icon: Ship, tab: "transito",
       value: transitoEnCamino.length,
-      sub: `Puesto en PY: U$S ${valuacionTransitoData.costoPuestoPy.toLocaleString()}`,
+      sub: `Puesto en PY: U$S ${valuacionTransitoData.costoPuestoPy.toLocaleString("es-PY")}`,
     },
     {
       label: "Ventas", icon: ShieldCheck, tab: "comprometidas",
-      value: `U$S ${resumenVentas.total.toLocaleString()}`,
+      value: `U$S ${resumenVentas.total.toLocaleString("es-PY")}`,
       sub: resumenVentas.nComprometidasPendientes > 0 ? `${resumenVentas.nComprometidasPendientes} comprometida(s) por retirar` : "Ganadas + comprometidas",
     },
     {
       label: "Cotizaciones", icon: FileSignature, tab: "cotizaciones",
-      value: `U$S ${resumenCot.Pendiente.total.toLocaleString()}`,
-      sub: `${resumenCot.Pendiente.n} pendiente(s) · entregado sin pagar U$S ${totalCobranza.entregadoNoPagado.toLocaleString()}`,
+      value: `U$S ${resumenCot.Pendiente.total.toLocaleString("es-PY")}`,
+      sub: `${resumenCot.Pendiente.n} pendiente(s) · entregado sin pagar U$S ${totalCobranza.entregadoNoPagado.toLocaleString("es-PY")}`,
       subColor: totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : undefined,
     },
     {
@@ -5409,7 +5409,7 @@ function GraficoTendenciaVentas({ ventasDirectas, comprometidas }) {
                 <div
                   className="w-full rounded-t"
                   style={{ height: `${Math.max(2, (m.total / max) * 100)}%`, backgroundColor: i === meses.length - 1 ? ACCENT : ACCENT_LIGHT }}
-                  title={`${m.label}: U$S ${m.total.toLocaleString()}`}
+                  title={`${m.label}: U$S ${m.total.toLocaleString("es-PY")}`}
                 />
               </div>
             ))}
@@ -5508,7 +5508,7 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <IndicadorCard
           label="Ventas del mes"
-          value={`U$S ${ventasMes.toLocaleString()}`}
+          value={`U$S ${ventasMes.toLocaleString("es-PY")}`}
           sub={variacion === null ? "Sin datos del mes anterior" : `${variacion >= 0 ? "▲" : "▼"} ${fmtN(Math.abs(variacion), 0)}% vs. mes anterior`}
           subColor={variacion === null ? MUTED : variacion >= 0 ? "#15803D" : "#B91C1C"}
         />
@@ -5520,7 +5520,7 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
         <IndicadorCard
           label="Cotizaciones en juego"
           value={resumenCot.Pendiente.n}
-          sub={`U$S ${resumenCot.Pendiente.total.toLocaleString()} pendientes de definir`}
+          sub={`U$S ${resumenCot.Pendiente.total.toLocaleString("es-PY")} pendientes de definir`}
         />
         <IndicadorCard
           label="Producto más vendido (90 días)"
@@ -5529,8 +5529,8 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
         />
         <IndicadorCard
           label="Entregado sin pagar"
-          value={`U$S ${totalCobranza.entregadoNoPagado.toLocaleString()}`}
-          sub={`Cobrado U$S ${totalCobranza.cobrado.toLocaleString()} de U$S ${totalCobranza.contrato.toLocaleString()} contratados`}
+          value={`U$S ${totalCobranza.entregadoNoPagado.toLocaleString("es-PY")}`}
+          sub={`Cobrado U$S ${totalCobranza.cobrado.toLocaleString("es-PY")} de U$S ${totalCobranza.contrato.toLocaleString("es-PY")} contratados`}
           subColor={totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : MUTED}
         />
       </div>
@@ -5547,7 +5547,7 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
           <RankingCard
             title="Top clientes — cotizaciones ganadas"
             rows={topClientes}
-            valueLabel={(v) => `U$S ${v.toLocaleString()}`}
+            valueLabel={(v) => `U$S ${v.toLocaleString("es-PY")}`}
           />
         </div>
       )}
@@ -5950,7 +5950,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
 
       {pendientes.length > 0 && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-          {pendientes.length} venta(s) comprometida(s) con saldo pendiente — total U$S {totalMonto.toLocaleString()}
+          {pendientes.length} venta(s) comprometida(s) con saldo pendiente — total U$S {totalMonto.toLocaleString("es-PY")}
         </div>
       )}
 
@@ -5972,8 +5972,8 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
                     <p className="text-xs mt-1" style={{ color: MUTED }}>
                       {g.items.length} producto{g.items.length !== 1 ? "s" : ""}
                       {pendientesG > 0 ? ` · ${pendientesG} con saldo por retirar` : " · todo retirado"}
-                      {` · U$S ${g.monto.toLocaleString()}`}
-                      {saldoPagoG > 0 ? ` · saldo de pago U$S ${saldoPagoG.toLocaleString()}` : " · pagado por completo"}
+                      {` · U$S ${g.monto.toLocaleString("es-PY")}`}
+                      {saldoPagoG > 0 ? ` · saldo de pago U$S ${saldoPagoG.toLocaleString("es-PY")}` : " · pagado por completo"}
                     </p>
                   </div>
                   <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
@@ -6019,11 +6019,11 @@ function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar }) {
         {retirado} de {c.cantidad} retirado{retirado > 0 && c.estado !== "Retirada" ? ` · saldo ${saldo}` : ""}
       </p>
       <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-        Monto: U$S {Number(c.monto || 0).toLocaleString()} · Entrega estimada: {fmtDate(c.fechaEntrega)}
+        Monto: U$S {Number(c.monto || 0).toLocaleString("es-PY")} · Entrega estimada: {fmtDate(c.fechaEntrega)}
       </p>
       <p className="text-xs mt-0.5" style={{ color: saldoPago > 0 ? "#B45309" : "#15803D" }}>
-        Pagado: U$S {pagado.toLocaleString()} de U$S {Number(c.monto || 0).toLocaleString()}
-        {saldoPago > 0 ? ` · saldo U$S ${saldoPago.toLocaleString()}` : " · pagado por completo"}
+        Pagado: U$S {pagado.toLocaleString("es-PY")} de U$S {Number(c.monto || 0).toLocaleString("es-PY")}
+        {saldoPago > 0 ? ` · saldo U$S ${saldoPago.toLocaleString("es-PY")}` : " · pagado por completo"}
       </p>
       <div className="mt-2">
         <button onClick={() => onPago(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
@@ -7637,7 +7637,7 @@ function ComprometidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas,
                     />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium" style={{ color: INK }}><ProductoNombre codigo={f.codigo} fallback={f.descripcion || f.codigo} /></span>
-                      <span style={{ color: MUTED }}> · {f.codigo} · U$S {Number(f.precioUnit).toLocaleString()} c/u</span>
+                      <span style={{ color: MUTED }}> · {f.codigo} · U$S {Number(f.precioUnit).toLocaleString("es-PY")} c/u</span>
                     </div>
                     {seleccion[idx] && !sinStock && !yaCompleto && (
                       <input
@@ -8104,7 +8104,7 @@ function ComprometidaForm({ equipos, productos, onSave }) {
       </Field>
       {equipo && productoCatalogo && (
         <p className="text-xs mb-3" style={{ color: MUTED }}>
-          Precio de lista: U$S {Number(productoCatalogo.precioLista || 0).toLocaleString()} — el monto se sugiere solo, pero se puede editar libremente si se negoció otro precio.
+          Precio de lista: U$S {Number(productoCatalogo.precioLista || 0).toLocaleString("es-PY")} — el monto se sugiere solo, pero se puede editar libremente si se negoció otro precio.
         </p>
       )}
       {equipo && (
@@ -8266,7 +8266,7 @@ function PagosForm({ comprometida, onAgregar, onQuitar }) {
       <div className="mb-4 p-3 rounded" style={{ backgroundColor: "#F7F8FA" }}>
         <p className="text-sm font-medium" style={{ color: INK }}>{comprometida.razonSocial} — {comprometida.obra}</p>
         <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-          Pagado U$S {pagado.toLocaleString()} de U$S {total.toLocaleString()} · saldo U$S {saldo.toLocaleString()}
+          Pagado U$S {pagado.toLocaleString("es-PY")} de U$S {total.toLocaleString("es-PY")} · saldo U$S {saldo.toLocaleString("es-PY")}
         </p>
       </div>
 
@@ -8275,7 +8275,7 @@ function PagosForm({ comprometida, onAgregar, onQuitar }) {
           {pagos.map((p, i) => (
             <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
               <div>
-                <span className="font-medium" style={{ color: INK }}>U$S {Number(p.monto).toLocaleString()}</span>
+                <span className="font-medium" style={{ color: INK }}>U$S {Number(p.monto).toLocaleString("es-PY")}</span>
                 <span style={{ color: MUTED }}> · {p.formaPago} · {fmtDate(p.fecha)}</span>
               </div>
               <button onClick={() => onQuitar(i)}><X size={13} style={{ color: MUTED }} /></button>
@@ -8459,7 +8459,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
       <Field label="Precio de lista (venta) U$S"><TextInput type="number" value={precioLista} onChange={(e) => { setPrecioLista(e.target.value); setPrecioManual(true); }} /></Field>
       {sugerido && (
         <div className="mb-3 -mt-2 text-xs" style={{ color: MUTED }}>
-          Según las métricas: <b style={{ color: INK }}>U$S {sugerido.precio.toLocaleString()}</b> = Costo PY U$S {fmtN(sugerido.costoPy)} × (1 + {fmtN(sugerido.markup.pct, 1)}% de markup de lista{sugerido.markup.origen === "propio" ? " propio" : ` del grupo "${ETIQUETAS_MARKUP_LISTA[sugerido.markup.clave] || sugerido.markup.clave}"`}).
+          Según las métricas: <b style={{ color: INK }}>U$S {sugerido.precio.toLocaleString("es-PY")}</b> = Costo PY U$S {fmtN(sugerido.costoPy)} × (1 + {fmtN(sugerido.markup.pct, 1)}% de markup de lista{sugerido.markup.origen === "propio" ? " propio" : ` del grupo "${ETIQUETAS_MARKUP_LISTA[sugerido.markup.clave] || sugerido.markup.clave}"`}).
           {Number(precioLista) !== sugerido.precio && (
             <button type="button" onClick={() => { setPrecioLista(String(sugerido.precio)); setPrecioManual(false); }} className="ml-1.5 underline" style={{ color: ACCENT }}>Usar este precio</button>
           )}
@@ -8576,7 +8576,7 @@ function FilaCosto({ label, formula, valor, destacado }) {
         <p className="text-[10px]" style={{ color: MUTED }}>{formula}</p>
       </div>
       <span className={destacado ? "text-sm font-semibold shrink-0" : "text-xs shrink-0"} style={{ color: destacado ? ACCENT : INK }}>
-        U$S {valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        U$S {valor.toLocaleString("es-PY", { maximumFractionDigits: 2 })}
       </span>
     </div>
   );
@@ -8589,7 +8589,7 @@ function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
   return (
     <div className="space-y-1.5">
       <FilaCosto label="Comisión agente" formula={`Costo origen × ${matriz.comisionAgentePct}%`} valor={costos.comisionAgente} />
-      <FilaCosto label="Flete" formula={`U$S ${fleteUsd40HQ.toLocaleString()} (40HQ) ÷ ${contenedorCantidad} unidades`} valor={costos.flete} />
+      <FilaCosto label="Flete" formula={`U$S ${fleteUsd40HQ.toLocaleString("es-PY")} (40HQ) ÷ ${contenedorCantidad} unidades`} valor={costos.flete} />
       <FilaCosto label="Despacho" formula={`(Costo origen + Flete) × ${despachoPctEfectivo}%`} valor={costos.despacho} />
       <FilaCosto label="Costo puesto en PY" formula="Costo origen + Comisión agente + Flete + Despacho" valor={costos.costoPy} destacado />
       <FilaCosto label="Comisión venta" formula={`Costo PY × ${catCfg.comisionVentaPct}% (${costos.categoria === "aires" ? "Aire Acondicionado" : "Electrodomésticos"})`} valor={costos.comisionVenta} />
@@ -8634,7 +8634,7 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo }) {
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString()}</p>
+        <p className="text-sm font-medium" style={{ color: INK }}>U$S {Number(p.precioLista || 0).toLocaleString("es-PY")}</p>
         {p.noDisponible && (
           <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>
             No disponible para la venta
@@ -8661,7 +8661,7 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo }) {
           <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Info interna — no aparece en la cotización</p>
           {tieneCosto && (
             <p className="text-xs" style={{ color: MUTED }}>
-              Origen U$S {Number(p.costoOrigen || 0).toLocaleString()} · Puesto en PY U$S {Number(p.costoPy || 0).toLocaleString()}
+              Origen U$S {Number(p.costoOrigen || 0).toLocaleString("es-PY")} · Puesto en PY U$S {Number(p.costoPy || 0).toLocaleString("es-PY")}
             </p>
           )}
           {p.contenedorTipo && (
@@ -8972,9 +8972,9 @@ function PreciosSegunMetricasPanel({ productos, matrizCostos, onAplicar, onCerra
                     <td className="text-right px-2 py-1.5">{fmtN(f.p.costoOrigen)}</td>
                     <td className="text-right px-2 py-1.5">{fmtN(f.s.costoPy)}</td>
                     <td className="text-right px-2 py-1.5">{fmtN(f.s.markup.pct, 1)}%{f.s.markup.origen === "propio" ? " (propio)" : ""}</td>
-                    <td className="text-right px-2 py-1.5">U$S {f.actual.toLocaleString()}</td>
+                    <td className="text-right px-2 py-1.5">U$S {f.actual.toLocaleString("es-PY")}</td>
                     <td className="text-right px-2 py-1.5 font-semibold" style={{ color: f.dif > 0 ? "#B45309" : "#15803D" }}>
-                      U$S {f.s.precio.toLocaleString()} <span className="font-normal">({f.dif > 0 ? "+" : ""}{f.dif.toLocaleString()})</span>
+                      U$S {f.s.precio.toLocaleString("es-PY")} <span className="font-normal">({f.dif > 0 ? "+" : ""}{f.dif.toLocaleString("es-PY")})</span>
                     </td>
                   </tr>
                 ))}
@@ -9118,7 +9118,7 @@ function TablaCombinacionesMultiSplit({ productos }) {
         const cantidades = [...new Set((MULTI_SPLIT_COMBINACIONES[btu] || []).map((c) => c.n))].sort((a, b) => a - b);
         return (
           <div key={btu} className="mb-5">
-            <p className="text-sm font-bold mb-2" style={{ color: INK }}>{producto.nombre} — {btu.toLocaleString()} BTU exterior</p>
+            <p className="text-sm font-bold mb-2" style={{ color: INK }}>{producto.nombre} — {btu.toLocaleString("es-PY")} BTU exterior</p>
             {cantidades.map((n) => {
               const combosDeN = (MULTI_SPLIT_COMBINACIONES[btu] || []).filter((c) => c.n === n);
               return (
@@ -9800,7 +9800,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
       ) : (
         <>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
-            Costo Luis ₲ {costoLuisGs.toLocaleString()} · Sugerido AEON ₲ {montoAeonGs.toLocaleString()}
+            Costo Luis ₲ {costoLuisGs.toLocaleString("es-PY")} · Sugerido AEON ₲ {montoAeonGs.toLocaleString("es-PY")}
           </p>
           <Field label="Tipo de cambio hoy (₲ por U$S)">
             <TextInput type="number" value={tipoCambio} onChange={(e) => setTipoCambio(e.target.value)} placeholder="Ej: 7300" />
@@ -10449,7 +10449,7 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
       {subtotal > 0 && (
         <div className="px-2.5 py-2 mb-3 mt-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
           <span>Total final</span>
-          <span>U$S {calcularTotalConDescuentoInstalacion(subtotal, dI).toLocaleString()}</span>
+          <span>U$S {calcularTotalConDescuentoInstalacion(subtotal, dI).toLocaleString("es-PY")}</span>
         </div>
       )}
     </>
@@ -10816,7 +10816,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
                     onChange={(e) => actualizarLinea(i, "precioUnit", Number(e.target.value) || 0)}
                     className="border rounded px-1 py-0.5 text-xs" style={{ width: 72, borderColor: BORDER }}
                   />
-                  <span style={{ color: MUTED }}>= U$S {((Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0)).toLocaleString()}</span>
+                  <span style={{ color: MUTED }}>= U$S {((Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0)).toLocaleString("es-PY")}</span>
                 </div>
                 <div className="mt-1">
                   <IndicadorDescuentoLinea producto={productos.find((p) => p.nombre === l.codigo)} precioUnit={l.precioUnit} matrizCostos={matrizCostos} />
@@ -10826,7 +10826,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
             </div>
           ))}
           <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Subtotal</span><span>U$S {subtotal.toLocaleString()}</span>
+            <span>Subtotal</span><span>U$S {subtotal.toLocaleString("es-PY")}</span>
           </div>
         </div>
       )}
@@ -10861,7 +10861,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
                   {l.codigo} <span style={{ color: MUTED, fontWeight: 400 }}>{l.nombre}</span>
                 </p>
                 <p className="text-xs" style={{ color: MUTED }}>
-                  Lista U$S {l.precioLista.toLocaleString()} → cotizado U$S {l.precio.toLocaleString()} · Costo PY U$S {l.costoPy.toLocaleString(undefined, { maximumFractionDigits: 2 })} · Punto de equilibrio U$S {l.puntoEquilibrio.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  Lista U$S {l.precioLista.toLocaleString("es-PY")} → cotizado U$S {l.precio.toLocaleString("es-PY")} · Costo PY U$S {l.costoPy.toLocaleString("es-PY", { maximumFractionDigits: 2 })} · Punto de equilibrio U$S {l.puntoEquilibrio.toLocaleString("es-PY", { maximumFractionDigits: 2 })}
                 </p>
                 <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: l.banda.bg, color: l.banda.color }}>
                   {l.banda.label} ({fmtN(l.markupPct, 0)}% markup sobre Costo PY)
@@ -10880,7 +10880,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
         <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
           <p className="text-sm font-medium mb-1" style={{ color: INK }}>Ya hay una cotización para "{obra || cliente}"</p>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
-            {conflictoObra.categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(conflictoObra).toLocaleString()} · {fmtDate(conflictoObra.fecha)}
+            {conflictoObra.categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(conflictoObra).toLocaleString("es-PY")} · {fmtDate(conflictoObra.fecha)}
           </p>
           <p className="text-xs mb-2" style={{ color: INK }}>¿Qué es esta cotización nueva?</p>
           <div className="flex gap-2 flex-wrap">
@@ -11122,7 +11122,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
                         onChange={(e) => actualizarLinea(i, "precioUnit", Number(e.target.value) || 0)}
                         className="border rounded px-1 py-0.5 text-xs" style={{ width: 72, borderColor: BORDER }}
                       />
-                      <span style={{ color: MUTED }}>= U$S {((Number(f.cantidad) || 0) * (Number(f.precioUnit) || 0)).toLocaleString()}</span>
+                      <span style={{ color: MUTED }}>= U$S {((Number(f.cantidad) || 0) * (Number(f.precioUnit) || 0)).toLocaleString("es-PY")}</span>
                       <span className="px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.label}</span>
                       <IndicadorDescuentoLinea producto={productos.find((p) => p.nombre === f.codigo)} precioUnit={f.precioUnit} matrizCostos={matrizCostos} />
                     </div>
@@ -11143,7 +11143,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
             );
           })}
           <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Subtotal</span><span>U$S {subtotal.toLocaleString()}</span>
+            <span>Subtotal</span><span>U$S {subtotal.toLocaleString("es-PY")}</span>
           </div>
         </div>
       )}
@@ -11218,8 +11218,8 @@ function CotizacionDetalle({ c, productos }) {
                   </td>
                   <td className="text-right px-1">{cant}</td>
                   {hayRetiradas && <td className="text-right px-1">{Number(retiradas[l.codigo]) || 0}</td>}
-                  <td className="text-right px-1">{precio.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                  <td className="text-right pl-1 font-medium">{(cant * precio).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                  <td className="text-right px-1">{precio.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</td>
+                  <td className="text-right pl-1 font-medium">{(cant * precio).toLocaleString("es-PY", { maximumFractionDigits: 2 })}</td>
                 </tr>
               );
             })}
@@ -11227,16 +11227,16 @@ function CotizacionDetalle({ c, productos }) {
         </table>
       </div>
       <div className="mt-2 pt-2 space-y-0.5 text-xs text-right" style={{ borderTop: `0.5px solid ${BORDER}`, color: INK }}>
-        <p>Equipos: <b>U$S {d.subtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></p>
+        <p>Equipos: <b>U$S {d.subtotal.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</b></p>
         {d.descuentoMonto > 0 && (
           <p style={{ color: "#B45309" }}>
-            Descuento {c.descuentoEsPorcentaje ? `${d.descuentoPct}%` : ""}: <b>-U$S {d.descuentoMonto.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>
+            Descuento {c.descuentoEsPorcentaje ? `${d.descuentoPct}%` : ""}: <b>-U$S {d.descuentoMonto.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</b>
           </p>
         )}
         {d.instalacionMonto > 0 && (
-          <p>Instalación{c.instalacionDescripcion ? ` (${c.instalacionDescripcion})` : ""}: <b>+U$S {d.instalacionMonto.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></p>
+          <p>Instalación{c.instalacionDescripcion ? ` (${c.instalacionDescripcion})` : ""}: <b>+U$S {d.instalacionMonto.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</b></p>
         )}
-        <p className="text-sm" style={{ color: ACCENT }}>Total: <b>U$S {d.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></p>
+        <p className="text-sm" style={{ color: ACCENT }}>Total: <b>U$S {d.total.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</b></p>
       </div>
       <div className="mt-2 pt-2 space-y-0.5" style={{ borderTop: `0.5px solid ${BORDER}` }}>
         {filaInfo("Forma de pago", c.formaPago)}
@@ -11298,7 +11298,7 @@ function ResumenCotizaciones({ resumen, grupos, productos }) {
         style={{ backgroundColor: bg, outline: activo ? `2px solid ${color}` : "none", outlineOffset: -2 }}
       >
         <p className="text-xs" style={{ color }}>{label}{n != null ? ` (${n})` : ""}</p>
-        <p className="text-sm font-semibold" style={{ color }}>U$S {total.toLocaleString()}</p>
+        <p className="text-sm font-semibold" style={{ color }}>U$S {total.toLocaleString("es-PY")}</p>
       </button>
     );
   };
@@ -11333,7 +11333,7 @@ function ResumenCotizaciones({ resumen, grupos, productos }) {
                       </span>
                     </span>
                     <span className="flex items-center gap-1.5 shrink-0 text-sm font-semibold" style={{ color: ACCENT }}>
-                      U$S {calcularTotalCotizacion(f.c).toLocaleString()}
+                      U$S {calcularTotalCotizacion(f.c).toLocaleString("es-PY")}
                       <Eye size={14} style={{ color: MUTED }} />
                     </span>
                   </button>
@@ -11432,7 +11432,7 @@ function ResumenMotivosCotizaciones({ grupos }) {
                       <button type="button" className="w-full text-left" onClick={() => setVerCasos(verCasos === clave ? null : clave)}>
                         <div className="flex justify-between gap-2 text-xs" style={{ color: INK }}>
                           <span>{i.motivo}</span>
-                          <span className="whitespace-nowrap font-medium">{i.n} · U$S {i.total.toLocaleString()}</span>
+                          <span className="whitespace-nowrap font-medium">{i.n} · U$S {i.total.toLocaleString("es-PY")}</span>
                         </div>
                         <div className="h-1.5 rounded mt-0.5" style={{ backgroundColor: "rgba(255,255,255,0.7)" }}>
                           <div className="h-1.5 rounded" style={{ width: `${(i.n / maxN) * 100}%`, backgroundColor: badge.color }} />
@@ -11442,7 +11442,7 @@ function ResumenMotivosCotizaciones({ grupos }) {
                         <div className="mt-1 space-y-1">
                           {i.casos.map((k, idx) => (
                             <p key={idx} className="text-[11px] px-1.5 py-1 rounded" style={{ backgroundColor: "rgba(255,255,255,0.8)", color: INK }}>
-                              <b>{k.cliente}{k.obra ? ` — ${k.obra}` : ""}</b> · U$S {k.monto.toLocaleString()}{k.comentario ? ` · ${k.comentario}` : ""}
+                              <b>{k.cliente}{k.obra ? ` — ${k.obra}` : ""}</b> · U$S {k.monto.toLocaleString("es-PY")}{k.comentario ? ` · ${k.comentario}` : ""}
                             </p>
                           ))}
                         </div>
@@ -11469,7 +11469,7 @@ const SALIDA_COTIZACION_BADGE = {
 function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf, descargandoId }) {
   const r = useMemo(() => calcularRentabilidadCotizacion(c, productos, matrizCostos), [c, productos, matrizCostos]);
   const colorMargen = (m) => (m >= 0 ? "#15803D" : "#B91C1C");
-  const fmt = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const fmt = (n) => n.toLocaleString("es-PY", { maximumFractionDigits: 2 });
   return (
     <div className="mt-2 p-2.5 rounded" style={{ backgroundColor: "#F7F8FA" }}>
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -11546,7 +11546,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
               </span>
             </div>
             <p style={{ color: MUTED }}>
-              {f.cantidad} × U$S {f.precioUnit.toLocaleString()} = U$S {fmt(f.ventaNeta)}
+              {f.cantidad} × U$S {f.precioUnit.toLocaleString("es-PY")} = U$S {fmt(f.ventaNeta)}
               {!f.sinCosto && ` · costo U$S ${fmt(f.costoTotal)} · margen U$S ${fmt(f.margen)}`}
             </p>
             {f.bandaCostoReal && (
@@ -11595,7 +11595,7 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
         {(c.nombre || (c.categoria && !RUBROS_COTIZACION.includes(c.categoria))) && <CodeTag>{c.nombre || c.categoria}</CodeTag>}
       </div>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-        <p className="text-sm" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString()}</p>
+        <p className="text-sm" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString("es-PY")}</p>
         {badgeSalida && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: badgeSalida.bg, color: badgeSalida.color }}>
             {badgeSalida.label}
@@ -11614,12 +11614,12 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
       </div>
       {(c.incluirDescuento || c.incluirInstalacion) && (d.descuentoMonto > 0 || d.instalacionMonto > 0) && (
         <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-          Equipos U$S {d.subtotal.toLocaleString()}
+          Equipos U$S {d.subtotal.toLocaleString("es-PY")}
           {d.descuentoMonto > 0 && (
-            <> · Descuento {c.descuentoEsPorcentaje ? `${d.descuentoPct}%` : `U$S ${d.descuentoMonto.toLocaleString()}`} (-U$S {d.descuentoMonto.toLocaleString(undefined, { maximumFractionDigits: 2 })})</>
+            <> · Descuento {c.descuentoEsPorcentaje ? `${d.descuentoPct}%` : `U$S ${d.descuentoMonto.toLocaleString("es-PY")}`} (-U$S {d.descuentoMonto.toLocaleString("es-PY", { maximumFractionDigits: 2 })})</>
           )}
-          {d.instalacionMonto > 0 && <> · Instalación +U$S {d.instalacionMonto.toLocaleString()}</>}
-          {" "}· Total U$S {d.total.toLocaleString()}
+          {d.instalacionMonto > 0 && <> · Instalación +U$S {d.instalacionMonto.toLocaleString("es-PY")}</>}
+          {" "}· Total U$S {d.total.toLocaleString("es-PY")}
         </p>
       )}
       <button
@@ -11822,7 +11822,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>{nHilos} cotización{nHilos > 1 ? "es" : ""}</p>
         </div>
         <div className="flex items-center gap-2 text-xs shrink-0">
-          <span style={{ color: ACCENT }}>U$S {resumen.total.toLocaleString()}</span>
+          <span style={{ color: ACCENT }}>U$S {resumen.total.toLocaleString("es-PY")}</span>
           {abierto ? <ChevronUp size={15} style={{ color: MUTED }} /> : <ChevronDown size={15} style={{ color: MUTED }} />}
         </div>
       </button>
@@ -11862,7 +11862,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>{nObras} obra{nObras > 1 ? "s" : ""}</p>
         </div>
         <div className="flex items-center gap-3 text-xs flex-wrap shrink-0">
-          <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString()}</span>
+          <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString("es-PY")}</span>
           {ESTADOS_RESUMEN.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
               {estado}: {resumen[estado].n}
@@ -12592,13 +12592,13 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
                 <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
                   <div className="min-w-0">
                     <span className="font-medium" style={{ color: INK }}>{l.categoria}</span>
-                    <span style={{ color: MUTED }}> · {l.detalle} · cant. {l.cantidad} × ₲ {Number(l.precioUnitario).toLocaleString()} = ₲ {(l.cantidad * l.precioUnitario).toLocaleString()}</span>
+                    <span style={{ color: MUTED }}> · {l.detalle} · cant. {l.cantidad} × ₲ {Number(l.precioUnitario).toLocaleString("es-PY")} = ₲ {(l.cantidad * l.precioUnitario).toLocaleString("es-PY")}</span>
                   </div>
                   <button onClick={() => quitarLineaMtto(i)}><X size={13} style={{ color: MUTED }} /></button>
                 </div>
               ))}
               <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-                <span>Subtotal mantenimiento</span><span>₲ {subtotalMtto.toLocaleString()}</span>
+                <span>Subtotal mantenimiento</span><span>₲ {subtotalMtto.toLocaleString("es-PY")}</span>
               </div>
             </div>
           )}
@@ -12627,13 +12627,13 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
             <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
               <div className="min-w-0">
                 <span className="font-medium" style={{ color: INK }}>{l.item}</span>
-                <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.costoUnitario).toLocaleString()} = U$S {(l.cantidad * l.costoUnitario).toLocaleString()}</span>
+                <span style={{ color: MUTED }}> · cant. {l.cantidad} × U$S {Number(l.costoUnitario).toLocaleString("es-PY")} = U$S {(l.cantidad * l.costoUnitario).toLocaleString("es-PY")}</span>
               </div>
               <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
             </div>
           ))}
           <div className="px-2.5 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-            <span>Subtotal repuestos</span><span>U$S {subtotal.toLocaleString()}</span>
+            <span>Subtotal repuestos</span><span>U$S {subtotal.toLocaleString("es-PY")}</span>
           </div>
         </div>
       )}
@@ -12674,7 +12674,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
           {lineas.length > 0 && (
             <div className="px-2.5 py-2 mb-3 mt-3 text-sm font-semibold flex justify-between rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
               <span>Total final</span>
-              <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0) + totalServicios).toLocaleString()}</span>
+              <span>U$S {(subtotal + (incluirInstalacion ? Number(instalacionMonto) || 0 : 0) + totalServicios).toLocaleString("es-PY")}</span>
             </div>
           )}
         </>
@@ -12737,11 +12737,11 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
                 {p.equipoAfectado && <p className="text-xs mt-1" style={{ color: MUTED }}>{p.equipoAfectado}</p>}
                 {esMtto ? (
                   <p className="text-sm mt-2" style={{ color: INK }}>
-                    {(p.lineasMantenimiento || []).length} servicio(s) · ₲ {subtotalMtto.toLocaleString()}
-                    {(p.lineas || []).length > 0 && ` · +${(p.lineas || []).length} repuesto(s) U$S ${subtotal.toLocaleString()}`}
+                    {(p.lineasMantenimiento || []).length} servicio(s) · ₲ {subtotalMtto.toLocaleString("es-PY")}
+                    {(p.lineas || []).length > 0 && ` · +${(p.lineas || []).length} repuesto(s) U$S ${subtotal.toLocaleString("es-PY")}`}
                   </p>
                 ) : (
-                  <p className="text-sm mt-2" style={{ color: INK }}>{(p.lineas || []).length} repuesto(s) · U$S {total.toLocaleString()}</p>
+                  <p className="text-sm mt-2" style={{ color: INK }}>{(p.lineas || []).length} repuesto(s) · U$S {total.toLocaleString("es-PY")}</p>
                 )}
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
                   <button
@@ -12779,7 +12779,7 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
 // Salidas (solo las de motivo Venta) y lo contratado de las cotizaciones Ganadas.
 const MAX_ADJUNTO_BYTES = 600 * 1024;
 const TIPOS_PAGO_OBRA = ["Adelanto", "Pago parcial", "Saldo final", "Otro"];
-const usd = (n) => `U$S ${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const usd = (n) => `U$S ${(Number(n) || 0).toLocaleString("es-PY", { maximumFractionDigits: 2 })}`;
 const idFichaObra = (empresaKey, obraKey) => `${encodeURIComponent(empresaKey)}__${encodeURIComponent(obraKey)}`;
 const textoErrorFirestore = (e, coleccion) =>
   e?.code === "permission-denied"
@@ -13905,7 +13905,7 @@ function PrecioMercadoCard({ r, productos, productosPorGrupo, onDelete, onUpdate
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>{r.fecha} · {r.fuenteTipo}</p>
           {enMoneda && (
             <p className="text-sm font-semibold mt-1" style={{ color: ACCENT }}>
-              {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString()}`}
+              {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString("es-PY", { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString("es-PY")}`}
               {enMoneda.convertido && <span className="font-normal" style={{ color: MUTED }}> (convertido)</span>}
             </p>
           )}
@@ -13945,7 +13945,7 @@ function PrecioMercadoCard({ r, productos, productosPorGrupo, onDelete, onUpdate
           className="mt-2 px-2.5 py-2 rounded-md text-xs flex items-center justify-between flex-wrap gap-1"
           style={{ backgroundColor: diferencia > 0 ? "#ECFDF5" : diferencia < 0 ? "#FEF2F2" : "#F7F8FA", color: INK }}
         >
-          <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
+          <span>Nuestro precio: U$S {nuestro.toLocaleString("es-PY")}</span>
           {diferencia !== null && (
             <span className="font-semibold">
               {/* diferencia = (precio del competidor - nuestro) / nuestro — positiva significa que el
@@ -14364,7 +14364,7 @@ function PrecioMayoristaCard({ r, productos, productosPorGrupo, onDelete, onUpda
           </div>
           {enMoneda && (
             <p className="text-sm font-semibold mt-1" style={{ color: ACCENT }}>
-              {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString()}`}
+              {monedaVista === "usd" ? `U$S ${enMoneda.valor.toLocaleString("es-PY", { maximumFractionDigits: 2 })}` : `Gs ${Math.round(enMoneda.valor).toLocaleString("es-PY")}`}
               {" "}c/u
               {enMoneda.convertido && <span className="font-normal" style={{ color: MUTED }}> (convertido)</span>}
             </p>
@@ -14431,7 +14431,7 @@ function PrecioMayoristaCard({ r, productos, productosPorGrupo, onDelete, onUpda
           className="mt-2 px-2.5 py-2 rounded-md text-xs flex items-center justify-between flex-wrap gap-1"
           style={{ backgroundColor: diferencia > 0 ? "#ECFDF5" : diferencia < 0 ? "#FEF2F2" : "#F7F8FA", color: INK }}
         >
-          <span>Nuestro precio: U$S {nuestro.toLocaleString()}</span>
+          <span>Nuestro precio: U$S {nuestro.toLocaleString("es-PY")}</span>
           {diferencia !== null && (
             <span className="font-semibold">
               {diferencia > 0 ? "Estamos más baratos" : diferencia < 0 ? "Estamos más caros" : "Mismo precio"} ({diferencia > 0 ? "+" : ""}{fmtN(diferencia, 1)}%)
@@ -14588,7 +14588,7 @@ function ComprometerLineaTransitoForm({ envio, lineaIdx, cotizaciones, compromet
           </Field>
           {cotizacion && lineaCotizacion && (
             <p className="text-xs mb-2" style={{ color: MUTED }}>
-              Pendiente en esa cotización: {pendienteCotizacion} · precio negociado: U$S {Number(lineaCotizacion.precioUnit).toLocaleString()} c/u
+              Pendiente en esa cotización: {pendienteCotizacion} · precio negociado: U$S {Number(lineaCotizacion.precioUnit).toLocaleString("es-PY")} c/u
             </p>
           )}
         </>
@@ -14938,7 +14938,7 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
   return (
     <Section
       title="Tránsito"
-      subtitle={`Envíos fabricándose o en camino desde China — todavía no es stock físico. ${enCamino.length} envío(s) en camino · ${totalUnidades} unidad(es) · U$S ${totalCosto.toLocaleString()} en costos.`}
+      subtitle={`Envíos fabricándose o en camino desde China — todavía no es stock físico. ${enCamino.length} envío(s) en camino · ${totalUnidades} unidad(es) · U$S ${totalCosto.toLocaleString("es-PY")} en costos.`}
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo envío"
     >
@@ -14975,7 +14975,7 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                     </button>
                   </div>
                 </div>
-                <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString()} en costos totales</p>
+                <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString("es-PY")} en costos totales</p>
                 <div className="mt-1.5 space-y-1.5">
                   {(t.lineas || []).map((l, i) => {
                     const comprometido = comprometidoEnLineaTransito(l);
@@ -15045,8 +15045,8 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                                 · {r.modeloAsociado}{r.codigoPieza ? ` · pieza ${r.codigoPieza}` : ""} —{" "}
                                 {r.descripcion && <span className="font-medium" style={{ color: INK }}>{r.descripcion}</span>}
                                 {" "}· cant. {r.cantidad}
-                                {Number(r.costoOrigen) > 0 && ` · origen U$S ${Number(r.costoOrigen).toLocaleString()} c/u`}
-                                {Number(r.precioVenta) > 0 && ` · venta U$S ${Number(r.precioVenta).toLocaleString()} c/u`}
+                                {Number(r.costoOrigen) > 0 && ` · origen U$S ${Number(r.costoOrigen).toLocaleString("es-PY")} c/u`}
+                                {Number(r.precioVenta) > 0 && ` · venta U$S ${Number(r.precioVenta).toLocaleString("es-PY")} c/u`}
                               </span>
                               {!llegado && (
                                 <button onClick={() => onQuitarRepuesto(t, r.id)} title="Quitar repuesto">
@@ -15064,7 +15064,7 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                   <summary className="text-xs cursor-pointer" style={{ color: ACCENT }}>Ver desglose de costos</summary>
                   <div className="mt-1.5 space-y-0.5">
                     {CONCEPTOS_COSTO_TRANSITO.map((c) => (
-                      <p key={c.key} className="text-xs" style={{ color: MUTED }}>{c.label}: U$S {(Number(t[c.key]) || 0).toLocaleString()}</p>
+                      <p key={c.key} className="text-xs" style={{ color: MUTED }}>{c.label}: U$S {(Number(t[c.key]) || 0).toLocaleString("es-PY")}</p>
                     ))}
                   </div>
                 </details>
@@ -15185,7 +15185,7 @@ function TransitoForm({ envio, productos, onSave }) {
         <Field label="Despacho U$S"><TextInput type="number" value={despacho} onChange={(e) => setDespacho(e.target.value)} placeholder="Opcional" /></Field>
         <Field label="Seguro U$S"><TextInput type="number" value={seguro} onChange={(e) => setSeguro(e.target.value)} placeholder="Opcional" /></Field>
       </div>
-      <p className="text-xs mb-3" style={{ color: MUTED }}>Costo total del envío: U$S {costoTotal.toLocaleString()}</p>
+      <p className="text-xs mb-3" style={{ color: MUTED }}>Costo total del envío: U$S {costoTotal.toLocaleString("es-PY")}</p>
 
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
@@ -15260,7 +15260,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
             Toda la mercadería física en Paraguay — equipos activos, repuestos y Zona de playa sin clasificar.
-            {" "}{filas.length} modelo(s) · {totalCant} unidad(es) · U$S {totalValor.toLocaleString()}.
+            {" "}{filas.length} modelo(s) · {totalCant} unidad(es) · U$S {totalValor.toLocaleString("es-PY")}.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -15289,11 +15289,11 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
             if (row.esTotal) {
               if (key === "categoria") return "";
               if (key === "valorUnitario") return "";
-              if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString()}</strong>;
+              if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString("es-PY")}</strong>;
               if (key === "modelo" || key === "cantidad") return <strong>{row[key]}</strong>;
             }
-            if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString()}` : "—";
-            if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString()}` : "—"; }
+            if (key === "valorUnitario") return row.valorUnitario ? `U$S ${row.valorUnitario.toLocaleString("es-PY")}` : "—";
+            if (key === "valorTotal") { const t = row.cantidad * row.valorUnitario; return t ? `U$S ${t.toLocaleString("es-PY")}` : "—"; }
             return row[key] ?? "—";
           }}
         />
@@ -15393,7 +15393,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       ["Cliente", "Obra", "Monto U$S", "Estado", "Categorías (monto U$S)"],
       ...detalleCotizaciones.map((d) => [
         d.cliente, d.obra, d.monto, d.estado,
-        d.categorias.map((c) => `${c.label}: ${c.monto.toLocaleString()}`).join(" · "),
+        d.categorias.map((c) => `${c.label}: ${c.monto.toLocaleString("es-PY")}`).join(" · "),
       ]),
     ]), "Cotizaciones");
     const totObras = totalesCuentasObras(cuentasObras);
@@ -15445,7 +15445,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Físico en Paraguay (U$S {totalFisico.toLocaleString()}) + tránsito (U$S {costosTransito.total.toLocaleString()} en costos) + cotizaciones + cuenta por obra.
+            Físico en Paraguay (U$S {totalFisico.toLocaleString("es-PY")}) + tránsito (U$S {costosTransito.total.toLocaleString("es-PY")} en costos) + cotizaciones + cuenta por obra.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -15459,7 +15459,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       )}
       <ComprometidaPagoBox comprometidas={comprometidas} />
 
-      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString()}</p>
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Físico en Paraguay — U$S {totalFisico.toLocaleString("es-PY")}</p>
       {filasFisicoPorCategoria.length === 0 ? (
         <p className="text-sm mb-4" style={{ color: MUTED }}>No hay mercadería física cargada.</p>
       ) : (
@@ -15474,18 +15474,18 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
             ]}
             renderCell={(key, row) => {
               if (row.esTotal) {
-                if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString()}</strong>;
+                if (key === "valorTotal") return <strong>U$S {row.valorTotal.toLocaleString("es-PY")}</strong>;
                 if (key === "categoria") return <strong>{row.categoria}</strong>;
                 return "";
               }
-              if (key === "valorTotal") return row.valorTotal ? `U$S ${row.valorTotal.toLocaleString()}` : "—";
+              if (key === "valorTotal") return row.valorTotal ? `U$S ${row.valorTotal.toLocaleString("es-PY")}` : "—";
               return row[key] ?? "—";
             }}
           />
         </div>
       )}
 
-      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>En tránsito — costos (U$S {costosTransito.total.toLocaleString()})</p>
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>En tránsito — costos (U$S {costosTransito.total.toLocaleString("es-PY")})</p>
       {transito.length === 0 ? (
         <p className="text-sm mb-6" style={{ color: MUTED }}>No hay envíos en tránsito cargados.</p>
       ) : (
@@ -15497,22 +15497,22 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
               { id: "tc-total", esTotal: true, concepto: "TOTAL", monto: costosTransito.total },
             ]}
             renderCell={(key, row) => {
-              if (row.esTotal) return key === "monto" ? <strong>U$S {row.monto.toLocaleString()}</strong> : <strong>{row.concepto}</strong>;
-              return key === "monto" ? `U$S ${row.monto.toLocaleString()}` : row[key];
+              if (row.esTotal) return key === "monto" ? <strong>U$S {row.monto.toLocaleString("es-PY")}</strong> : <strong>{row.concepto}</strong>;
+              return key === "monto" ? `U$S ${row.monto.toLocaleString("es-PY")}` : row[key];
             }}
           />
           <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
               <p className="text-xs" style={{ color: ACCENT }}>Costo en origen</p>
-              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.costoOrigen.toLocaleString()}</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.costoOrigen.toLocaleString("es-PY")}</p>
             </div>
             <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
               <p className="text-xs" style={{ color: ACCENT }}>Costo puesto en PY</p>
-              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.costoPuestoPy.toLocaleString()}</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.costoPuestoPy.toLocaleString("es-PY")}</p>
             </div>
             <div className="px-3 py-2 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
               <p className="text-xs" style={{ color: ACCENT }}>Venta a precio de lista</p>
-              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.ventaPrecioLista.toLocaleString()}</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {valuacionTransitoData.ventaPrecioLista.toLocaleString("es-PY")}</p>
             </div>
           </div>
         </div>
@@ -15520,12 +15520,12 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
 
       <div className="mb-6">
         <div className="flex items-center gap-1 mb-2">
-          <p className="text-base font-bold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString()}</p>
+          <p className="text-base font-bold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString("es-PY")}</p>
         </div>
         <div className="flex items-center gap-3 text-xs mb-2 flex-wrap">
           {ESTADOS_RESUMEN.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
-              {estado}: {resumenCot[estado].n} · U$S {resumenCot[estado].total.toLocaleString()}
+              {estado}: {resumenCot[estado].n} · U$S {resumenCot[estado].total.toLocaleString("es-PY")}
             </span>
           ))}
         </div>
@@ -15541,11 +15541,11 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
             ]}
             renderCell={(key, row) => {
               if (row.esTotal) {
-                if (key === "monto") return <strong>U$S {row.monto.toLocaleString()}</strong>;
+                if (key === "monto") return <strong>U$S {row.monto.toLocaleString("es-PY")}</strong>;
                 if (key === "cliente") return <strong>{row.cliente}</strong>;
                 return "";
               }
-              if (key === "monto") return `U$S ${row.monto.toLocaleString()}`;
+              if (key === "monto") return `U$S ${row.monto.toLocaleString("es-PY")}`;
               if (key === "estado") return (
                 <span
                   className="text-xs px-1.5 py-0.5 rounded font-medium"
@@ -15559,7 +15559,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
                   <p>{row.obra}</p>
                   {row.categorias?.length > 0 && (
                     <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
-                      {row.categorias.map((c) => `${c.label}: U$S ${c.monto.toLocaleString()}`).join(" · ")}
+                      {row.categorias.map((c) => `${c.label}: U$S ${c.monto.toLocaleString("es-PY")}`).join(" · ")}
                     </p>
                   )}
                 </div>

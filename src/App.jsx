@@ -2362,6 +2362,13 @@ export default function App() {
     }
   };
   const deleteMovimiento = (id) => deleteItem(COLLECTIONS.movimientos, id);
+  const updateMovimiento = (id, patch) => updateItem(COLLECTIONS.movimientos, id, patch);
+  // Foto de remito cargada en cualquier momento después de la salida, no solo al cargarla — se
+  // guarda en la primera línea del grupo, que es de donde la lee RemitoGrupoCard para mostrarla.
+  const subirFotoRemito = async (grupo, file) => {
+    const dataUrl = await readFileAsDataUrl(file);
+    updateMovimiento(grupo.items[0].id, { fotoRemito: dataUrl });
+  };
 
   // Genera una o más salidas (una por cada lote de equipo usado) a partir de una cotización
   // Ganada. `lineas` viene de SalidaDesdeCotizacionForm ya resuelto contra stock disponible:
@@ -3791,6 +3798,7 @@ export default function App() {
             <SalidasPorRemito
               movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
+              onSubirFoto={subirFotoRemito}
               onPedido={esAdmin ? ((g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }) : undefined}
             />
           </Section>
@@ -4344,7 +4352,13 @@ function CodigoComercialCell({ registro, equipos, productos }) {
   );
 }
 
-function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, acciones, children }) {
+function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, onSubirFoto, acciones, children }) {
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite volver a elegir el mismo archivo si hace falta reemplazar
+    if (file && onSubirFoto) onSubirFoto(file);
+  };
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 p-4 text-left">
@@ -4360,9 +4374,20 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
               <Camera size={16} style={{ color: ACCENT }} />
             </span>
           )}
+          {onSubirFoto && (
+            <span
+              role="button" title={foto ? "Cambiar foto del remito" : "Subir foto del remito"}
+              onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
+            >
+              <Upload size={16} style={{ color: foto ? MUTED : ACCENT }} />
+            </span>
+          )}
           <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
         </div>
       </button>
+      {/* Fuera del <button> de arriba a propósito: un <input type="file"> real no puede ir anidado
+          dentro de otro control interactivo sin volverse quisquilloso en algunos navegadores. */}
+      {onSubirFoto && <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />}
       {abierto && <div className="px-4 pb-4">{children}</div>}
     </div>
   );
@@ -4391,7 +4416,7 @@ function resumenRemito(g, unidadSingular, unidadPlural) {
   return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${g.unidades !== 1 ? unidadPlural : unidadSingular}${rubros ? " · " + rubros : ""}`;
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbierto, onDelete, onVerFoto, onPedido }) {
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onPedido }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const productoDe = (m) => productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
@@ -4430,7 +4455,9 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbie
             linea={[fmtDate(m0.fecha), destino, motivos].filter(Boolean).join(" · ")}
             resumen={resumenRemito(g, "unidad", "unidades")}
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
-            foto={foto} onVerFoto={onVerFoto} acciones={accionPedido}
+            foto={foto} onVerFoto={onVerFoto}
+            onSubirFoto={onSubirFoto && ((file) => onSubirFoto(g, file))}
+            acciones={accionPedido}
           >
             <Table
               columns={[

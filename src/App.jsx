@@ -224,6 +224,50 @@ function fmtDate(d) {
 function fmtN(n, decimales = 2) {
   return (Number(n) || 0).toLocaleString("es-PY", { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
 }
+// Ancho de columna automático para hojas de Excel crudas (XLSX.utils.json_to_sheet): sin esto,
+// Excel arranca con un ancho fijo angosto (igual para todas las columnas, tengan 3 caracteres o
+// 80) y el contenido se ve cortado hasta que alguien agranda la columna a mano. Se calcula según
+// el texto más largo de cada columna (encabezado incluido), con un piso y un techo para que una
+// sola celda con un párrafo largo no estire el resto de la hoja.
+function autoAnchoColumnas(rows) {
+  if (!rows || rows.length === 0) return [];
+  const claves = Object.keys(rows[0]);
+  return claves.map((clave) => {
+    const masLargo = rows.reduce((max, row) => {
+      const v = row[clave];
+      const largo = v === null || v === undefined ? 0 : String(v).length;
+      return Math.max(max, largo);
+    }, clave.length);
+    return { wch: Math.min(Math.max(masLargo + 2, 10), 60) };
+  });
+}
+// Igual que autoAnchoColumnas pero para hojas armadas con aoa_to_sheet (arreglo de arreglos, sin
+// encabezado de objeto) — mide por posición de columna en vez de por clave.
+function autoAnchoColumnasAoA(filas) {
+  if (!filas || filas.length === 0) return [];
+  const nCols = Math.max(...filas.map((f) => f.length));
+  const anchos = [];
+  for (let i = 0; i < nCols; i++) {
+    const masLargo = filas.reduce((max, fila) => {
+      const v = fila[i];
+      const largo = v === null || v === undefined ? 0 : String(v).length;
+      return Math.max(max, largo);
+    }, 0);
+    anchos.push({ wch: Math.min(Math.max(masLargo + 2, 10), 60) });
+  }
+  return anchos;
+}
+// Atajo para el caso de siempre: armar la hoja Y calcularle el ancho de columna en un solo paso.
+function sheetConAnchoAuto(filas) {
+  const ws = XLSX.utils.json_to_sheet(filas);
+  ws["!cols"] = autoAnchoColumnas(filas);
+  return ws;
+}
+function sheetAoaConAnchoAuto(filas) {
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  ws["!cols"] = autoAnchoColumnasAoA(filas);
+  return ws;
+}
 // Pone mayúscula la primera letra de cada palabra (nombre de cliente/constructora) sin tocar
 // el resto de cada palabra — así una sigla ya escrita en mayúsculas (CCI, SA) no se rompe.
 function capitalizarPalabras(s) {
@@ -1358,7 +1402,7 @@ function parseCatalogoExcel(arrayBuffer) {
 }
 function descargarPlantillaCatalogo() {
   const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet([{
+  const filas = [{
     "Nombre / código": "AE-AC-2T-30-ON",
     "Categoría principal": "Cocina", "Subcategoría": "Anafe", "Subcategoría 2": "Vitrocerámica", "Subcategoría 3": "2",
     "Orden (número)": 2,
@@ -1366,7 +1410,9 @@ function descargarPlantillaCatalogo() {
     "Especificación - etiqueta": "Potencia nominal", "Especificación - valor": "3000W",
     "Precio de lista U$S": 99, "Costo de origen U$S": 55, "Costo puesto en PY U$S": 70,
     "Contenedor tipo": "40HQ", "Contenedor cantidad": 420, "Stock disponible": 5,
-  }]);
+  }];
+  const ws = XLSX.utils.json_to_sheet(filas);
+  ws["!cols"] = autoAnchoColumnas(filas);
   XLSX.utils.book_append_sheet(wb, ws, "Catálogo");
   XLSX.writeFile(wb, "Plantilla_Catalogo_AEON.xlsx");
 }
@@ -3007,14 +3053,14 @@ export default function App() {
 
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
-    const wsEquipos = XLSX.utils.json_to_sheet(equipos.map((e) => ({
+    const wsEquipos = sheetConAnchoAuto(equipos.map((e) => ({
       "Código interno": e.codigo, "N° de serie": e.serie, "Modelo": e.modelo,
       "Fecha ingreso": e.fechaIngreso, "Estado actual": e.estado, "Ubicación": e.ubicacion,
       "Cantidad": e.cantidad || 1, "Comprometido": e.comprometido || 0,
       "Sin marca": e.sinMarca ? "Sí" : "No",
       "Motivo de baja": e.motivoBaja || "", "Comentario": e.notas || "",
     })));
-    const wsMov = XLSX.utils.json_to_sheet(movimientos.map((m) => ({
+    const wsMov = sheetConAnchoAuto(movimientos.map((m) => ({
       "Fecha": m.fecha, "Categoría de origen": m.categoriaLabel, "Código": m.codigo,
       "Modelo": m.modelo, "Cantidad": m.cantidad, "Motivo": m.motivo, "Cliente": m.cliente,
       "Obra": m.obra, "Monto U$S": m.monto,
@@ -3024,11 +3070,11 @@ export default function App() {
       "Foto adjunta": m.fotoRemito ? "Sí" : "No",
       "Observaciones": m.observaciones,
     })));
-    const wsEnt = XLSX.utils.json_to_sheet(entradas.map((e) => ({
+    const wsEnt = sheetConAnchoAuto(entradas.map((e) => ({
       "Fecha": e.fecha, "Código": e.codigo, "Tipo de entrada": e.tipo, "Origen": e.origen,
       "Motivo": e.motivo, "Estado resultante": e.estadoResultante, "Responsable": e.responsable,
     })));
-    const wsVentas = XLSX.utils.json_to_sheet(ventas.map((v) => ({
+    const wsVentas = sheetConAnchoAuto(ventas.map((v) => ({
       "Modelos": (v.lineas || []).map((l) => `${l.cantidad}x ${l.modelo}`).join(", "),
       "Cliente": v.cliente, "Obra": v.obra, "Fecha venta": v.fechaVenta,
       "Desde cotización": v.cotizacionId ? "Sí" : "No",
@@ -3039,16 +3085,16 @@ export default function App() {
       "Contactado service 2": v.contactadoService2 ? "Sí" : "No", "Fecha contacto service 2": v.fechaContactoService2 || "",
       "Decisión service 2": v.decisionService2 || "", "Cita service 2": v.citaService2 ? `${fmtDate(v.citaService2.fecha)} ${v.citaService2.hora || ""}` : "",
     })));
-    const wsRepuestos = XLSX.utils.json_to_sheet(productos.filter((p) => p.categoriaPrincipal === "Repuestos").map((p) => ({
+    const wsRepuestos = sheetConAnchoAuto(productos.filter((p) => p.categoriaPrincipal === "Repuestos").map((p) => ({
       "Código": p.nombre, "Código de pieza (fábrica)": p.codigoFabrica, "Descripción": p.descripcion,
       "Tipo de equipo": p.subcategoria, "Código de equipo": p.subcategoria2,
       "Costo origen U$S": p.costoOrigen, "Costo puesto en PY U$S": p.costoPy,
       "Precio de lista U$S": p.precioLista, "Stock disponible": p.stockDisponible,
     })));
-    const wsPlaya = XLSX.utils.json_to_sheet(playa.map((p) => ({
+    const wsPlaya = sheetConAnchoAuto(playa.map((p) => ({
       "Fecha": p.fecha, "Descripción": p.descripcion, "Origen": p.origen, "Cantidad": p.cantidad || 1, "Notas": p.notas,
     })));
-    const wsComprometidas = XLSX.utils.json_to_sheet(comprometidas.map((c) => ({
+    const wsComprometidas = sheetConAnchoAuto(comprometidas.map((c) => ({
       "Fecha": c.fecha, "Razón social": c.razonSocial, "Obra": c.obra, "Producto": c.modelo,
       "Cantidad": c.cantidad, "Monto U$S": c.monto, "Fecha entrega estimada": c.fechaEntrega,
       "Estado": c.estado,
@@ -3215,7 +3261,7 @@ export default function App() {
     const prefijo = cfg.label.replace(/\s+/g, "_").replace(/[^\w-]/g, "");
     if (formato === "excel") {
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), cfg.label.slice(0, 31));
+      XLSX.utils.book_append_sheet(wb, sheetConAnchoAuto(rows), cfg.label.slice(0, 31));
       XLSX.writeFile(wb, `${prefijo}_${todayISO()}.xlsx`);
     } else {
       await downloadListaPdf(cfg.label.toUpperCase(), cfg.columnasPdf, rows, todayISO(), prefijo);
@@ -6150,7 +6196,7 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField, onUp
     const totalValor = filas.reduce((acc, f) => acc + f["Valor total U$S"], 0);
     filas.push({ "Modelo": "TOTAL", "Código": "", "Marca": "", "Cantidad": totalCant, "Valor unitario U$S": "", "Valor total U$S": totalValor });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), "Muestras");
+    XLSX.utils.book_append_sheet(wb, sheetConAnchoAuto(filas), "Muestras");
     XLSX.writeFile(wb, `Reporte_Muestras_Seguro_${todayISO()}.xlsx`);
   };
 
@@ -15369,10 +15415,10 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
 
   const handleExcel = () => {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasFisicoPorCategoria.map((f) => ({
+    XLSX.utils.book_append_sheet(wb, sheetConAnchoAuto(filasFisicoPorCategoria.map((f) => ({
       "Categoría": f.categoria, "Valor total U$S": f.valorTotal,
     }))), "Físico Paraguay");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    XLSX.utils.book_append_sheet(wb, sheetAoaConAnchoAuto([
       ["Costos del envío (desglosados)"],
       ["Concepto", "Monto U$S"],
       ...costosTransito.filas.map((f) => [f.concepto, f.monto]),
@@ -15383,7 +15429,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       ["Costo puesto en PY — origen + costos del envío (U$S)", valuacionTransitoData.costoPuestoPy],
       ["Venta a precio de lista (U$S)", valuacionTransitoData.ventaPrecioLista],
     ]), "Tránsito");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    XLSX.utils.book_append_sheet(wb, sheetAoaConAnchoAuto([
       ["Resumen de cotizaciones"],
       ["Total cotizado (U$S)", resumenCot.total],
       ["Pendiente — cantidad / monto U$S", resumenCot.Pendiente.n, resumenCot.Pendiente.total],
@@ -15397,7 +15443,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       ]),
     ]), "Cotizaciones");
     const totObras = totalesCuentasObras(cuentasObras);
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    XLSX.utils.book_append_sheet(wb, sheetAoaConAnchoAuto([
       ["Cliente", "Razón social", "Obra", "Contratado U$S", "Adelanto pactado %", "Adelanto pactado U$S", "Adelanto cobrado U$S", "Entregado U$S", "Unidades entregadas", "Unidades contratadas", "Cobrado U$S", "Entregado sin pagar U$S", "Falta entregar U$S", "Falta cobrar U$S", "Facturado U$S"],
       ...cuentaObrasData.map((d) => [d.cliente, d.razonSocial || "", d.obra, d.contrato, d.adelantoPct, d.adelantoPactado, d.adelantoCobrado, d.entregado, d.unidadesEntregadas, d.unidadesContratadas, d.cobrado, d.sinPagar, d.faltaEntregar, d.faltaCobrar, d.facturado]),
       ["TOTAL", "", "", totObras.contrato, "", totObras.adelantoPactado, totObras.adelantoCobrado, totObras.montoEntregado, totObras.unidadesEntregadas, totObras.unidadesContratadas, totObras.cobrado, totObras.entregadoNoPagado, totObras.restanteEntrega, totObras.restanteCobro, totObras.facturado],

@@ -5855,6 +5855,14 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
     onUpdateField(venta.id, "contratoData", data);
     onUpdateField(venta.id, "contratoNombre", file.name);
   };
+  // La factura la manda Administración por mail una vez facturada la venta — se adjunta acá para
+  // tener la ficha completa y poder descargársela al cliente sin tener que ir a buscar el mail.
+  const handleFactura = async (venta, file) => {
+    if (!file) return;
+    const data = await readFileAsDataUrl(file);
+    onUpdateField(venta.id, "facturaData", data);
+    onUpdateField(venta.id, "facturaNombre", file.name);
+  };
 
   return (
     <div>
@@ -5970,6 +5978,24 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                     >
                       <FileSignature size={13} /> Adjuntar contrato firmado
                       <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleContrato(v, e.target.files?.[0])} />
+                    </label>
+                  )}
+                  {v.facturaData ? (
+                    <a
+                      href={v.facturaData} download={v.facturaNombre || `Factura_${v.cliente || "cliente"}.pdf`}
+                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                      style={{ borderColor: BORDER, color: ACCENT }}
+                    >
+                      <FileText size={13} /> Descargar factura
+                    </a>
+                  ) : (
+                    <label
+                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1 cursor-pointer"
+                      style={{ borderColor: BORDER, color: MUTED }}
+                      title="La PDF que manda Administración una vez facturada la venta"
+                    >
+                      <FileText size={13} /> Adjuntar factura
+                      <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleFactura(v, e.target.files?.[0])} />
                     </label>
                   )}
                 </div>

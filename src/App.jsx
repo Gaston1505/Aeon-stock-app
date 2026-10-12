@@ -3698,7 +3698,7 @@ export default function App() {
           <PanelView
             ventasCerradas={ventasCerradas} cotizaciones={cotizaciones} comprometidas={comprometidas}
             presupuestosReparacion={presupuestosReparacion} cuentasObras={listaObrasCuenta}
-            productos={productos} equipos={equipos} grupos={gruposEmpresas}
+            productos={productos} equipos={equipos} gruposEmpresas={gruposEmpresas}
           />
         )}
 
@@ -5576,7 +5576,7 @@ function ReparacionMantenimientoCard({ presupuestos }) {
   );
 }
 
-function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion, cuentasObras, productos, equipos, grupos }) {
+function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosReparacion, cuentasObras, productos, equipos, gruposEmpresas }) {
   const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
   const hoy = todayISO();
   const mesActual = mesPrefijo(hoy);
@@ -5622,7 +5622,7 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
     for (const c of cotizaciones) {
       if (c.estado !== "Ganada") continue;
       const raw = (c.cliente || "").trim() || "(Sin cliente)";
-      const r = resolverEmpresa(raw, grupos || []);
+      const r = resolverEmpresa(raw, gruposEmpresas || []);
       const key = r ? r.key : raw.toLowerCase();
       const prev = map.get(key) || { nombre: r ? r.nombre : raw, total: 0 };
       prev.total += calcularTotalCotizacion(c);
@@ -5631,12 +5631,12 @@ function PanelView({ ventasCerradas, cotizaciones, comprometidas, presupuestosRe
     return [...map.values()]
       .filter((x) => x.total > 0)
       .map((x) => {
-        const razones = (grupos || []).find((g) => (g.nombre || "").trim().toLowerCase() === x.nombre.trim().toLowerCase())?.razonesSociales || [];
+        const razones = (gruposEmpresas || []).find((g) => (g.nombre || "").trim().toLowerCase() === x.nombre.trim().toLowerCase())?.razonesSociales || [];
         const razonTxt = razones.length > 0 ? ` (${razones.map((r) => r.nombre).join(", ")})` : "";
         return [`${x.nombre}${razonTxt}`, x.total];
       })
       .sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [cotizaciones, grupos]);
+  }, [cotizaciones, gruposEmpresas]);
 
   return (
     <div>

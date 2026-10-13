@@ -4186,6 +4186,7 @@ export default function App() {
         <SalidaDesdeCotizacionForm
           cotizaciones={cotizaciones}
           equipos={equipos}
+          comprometidas={comprometidas}
           onGenerar={(cotizacion, lineas, remitoData) => { generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData); setDrawer(null); }}
         />
       </Drawer>
@@ -7442,7 +7443,19 @@ function candidatosParaLinea(equipos, codigoLinea) {
     .sort((a, b) => b.disponible - a.disponible);
 }
 
-function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
+// Pendiente real para despachar directo desde la cotización (sin pasar por Ventas
+// comprometidas): lo contratado, menos lo ya retirado, menos lo que ya tiene una Venta
+// Comprometida generada contra esta misma cotización — esa parte ya reservó un lote de equipo
+// específico (equipo.comprometido) y solo se puede retirar correctamente desde "Ventas
+// comprometidas" (que además cierra esa reserva); si se retirara acá se duplicaría el despacho.
+function pendienteSalidaDeLinea(cot, l, comprometidas) {
+  const retiradas = cot.lineasRetiradas || {};
+  const bruto = Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0));
+  const yaComprometido = yaComprometidoParaLinea(cot.id, l.codigo, comprometidas);
+  return Math.max(0, bruto - yaComprometido);
+}
+
+function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGenerar }) {
   const [cotizacionId, setCotizacionId] = useState("");
   const [seleccion, setSeleccion] = useState({});
   const [cantidades, setCantidades] = useState({});
@@ -7463,22 +7476,22 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
   const cotizacionesGanadas = useMemo(() => {
     return cotizaciones
       .filter((c) => c.estado === "Ganada")
-      .filter((c) => (c.lineas || []).some((l) => (Number(l.cantidad) || 0) - (Number((c.lineasRetiradas || {})[l.codigo]) || 0) > 0))
+      .filter((c) => (c.lineas || []).some((l) => pendienteSalidaDeLinea(c, l, comprometidas) > 0))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  }, [cotizaciones]);
+  }, [cotizaciones, comprometidas]);
 
   const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
 
   const filas = useMemo(() => {
     if (!cotizacion) return [];
-    const retiradas = cotizacion.lineasRetiradas || {};
     return (cotizacion.lineas || []).map((l) => {
-      const pendiente = Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0));
+      const pendiente = pendienteSalidaDeLinea(cotizacion, l, comprometidas);
+      const yaComprometido = yaComprometidoParaLinea(cotizacion.id, l.codigo, comprometidas);
       const candidatos = candidatosParaLinea(equipos, l.codigo);
       const stockDisponible = candidatos.reduce((acc, e) => acc + e.disponible, 0);
-      return { ...l, pendiente, candidatos, stockDisponible };
+      return { ...l, pendiente, yaComprometido, candidatos, stockDisponible };
     });
-  }, [cotizacion, equipos]);
+  }, [cotizacion, equipos, comprometidas]);
 
   // seleccion/cantidades van por índice de línea, no por código — una cotización puede tener
   // el mismo código en dos líneas distintas (nada lo impide al armarla), y si usáramos el
@@ -7487,11 +7500,10 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
     setCotizacionId(id);
     const c = cotizaciones.find((x) => x.id === id);
     if (!c) { setSeleccion({}); setCantidades({}); return; }
-    const retiradas = c.lineasRetiradas || {};
     const nuevaSel = {};
     const nuevaCant = {};
     (c.lineas || []).forEach((l, idx) => {
-      const pendiente = Math.max(0, (Number(l.cantidad) || 0) - (Number(retiradas[l.codigo]) || 0));
+      const pendiente = pendienteSalidaDeLinea(c, l, comprometidas);
       const stockDisponible = candidatosParaLinea(equipos, l.codigo).reduce((acc, e) => acc + e.disponible, 0);
       const aRetirar = Math.min(pendiente, stockDisponible);
       nuevaSel[idx] = aRetirar > 0;
@@ -7604,10 +7616,16 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, onGenerar }) {
                     )}
                   </div>
                   <div className="mt-1 pl-6" style={{ color: MUTED }}>
-                    {yaCompleto && "Ya se generó la salida completa de este producto."}
+                    {yaCompleto && f.yaComprometido === 0 && "Ya se generó la salida completa de este producto."}
+                    {yaCompleto && f.yaComprometido > 0 && "Todo lo pendiente de este producto ya tiene una Venta Comprometida generada."}
                     {!yaCompleto && sinStock && "Sin stock disponible en depósito — no se puede incluir en esta salida."}
                     {!yaCompleto && !sinStock && stockInsuficiente && `Pendiente: ${f.pendiente} · solo hay ${f.stockDisponible} disponible(s).`}
                     {!yaCompleto && !sinStock && !stockInsuficiente && `Pendiente: ${f.pendiente} · disponible: ${f.stockDisponible}.`}
+                    {f.yaComprometido > 0 && (
+                      <span className="block" style={{ color: "#B45309" }}>
+                        {f.yaComprometido} unidad(es) más ya tienen una Venta Comprometida generada para esta cotización — retiralas desde "Ventas comprometidas", no desde acá.
+                      </span>
+                    )}
                   </div>
                 </div>
               );

@@ -29,6 +29,7 @@ import {
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
   COMPANY, fmtFecha,
 } from "./pdf";
+import { prepararPdfParaFirestore } from "./pdfCompress";
 
 // ---------- Design tokens (paleta derivada del gris del logo AEON, #686D73) ----------
 const INK = "#1C1E20";
@@ -5924,19 +5925,27 @@ const COMPROMETIDA_BADGE = {
 };
 
 function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, descargandoId, pdfError }) {
+  // Firestore guarda todo el documento en un límite de 1 MB — un contrato o factura escaneada
+  // puede pesar más que eso fácil. prepararPdfParaFirestore lo comprime solo cuando hace falta
+  // (misma lógica ya probada en la herramienta de fichas técnicas), así no falla en silencio.
+  const [avisoAdjunto, setAvisoAdjunto] = useState(null);
   const handleContrato = async (venta, file) => {
     if (!file) return;
-    const data = await readFileAsDataUrl(file);
-    onUpdateField(venta.id, "contratoData", data);
+    setAvisoAdjunto(null);
+    const { dataUrl, comprimido } = await prepararPdfParaFirestore(file);
+    onUpdateField(venta.id, "contratoData", dataUrl);
     onUpdateField(venta.id, "contratoNombre", file.name);
+    if (comprimido) setAvisoAdjunto("El contrato pesaba más de 650 KB — se comprimió para poder guardarlo (puede perder algo de nitidez).");
   };
   // La factura la manda Administración por mail una vez facturada la venta — se adjunta acá para
   // tener la ficha completa y poder descargársela al cliente sin tener que ir a buscar el mail.
   const handleFactura = async (venta, file) => {
     if (!file) return;
-    const data = await readFileAsDataUrl(file);
-    onUpdateField(venta.id, "facturaData", data);
+    setAvisoAdjunto(null);
+    const { dataUrl, comprimido } = await prepararPdfParaFirestore(file);
+    onUpdateField(venta.id, "facturaData", dataUrl);
     onUpdateField(venta.id, "facturaNombre", file.name);
+    if (comprimido) setAvisoAdjunto("La factura pesaba más de 650 KB — se comprimió para poder guardarla (puede perder algo de nitidez).");
   };
 
   return (
@@ -5956,6 +5965,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
       </div>
 
       {pdfError && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{pdfError}</p>}
+      {avisoAdjunto && <p className="text-xs mb-3" style={{ color: "#B45309" }}>{avisoAdjunto}</p>}
 
       {ventas.length === 0 ? (
         <EmptyState icon={ShieldCheck} title="No hay ventas registradas" subtitle="Generá una ficha desde una cotización Ganada o cargala manualmente." />
@@ -8556,6 +8566,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
   const [noDisponible, setNoDisponible] = useState(!!producto?.noDisponible);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
+  const [avisoFicha, setAvisoFicha] = useState("");
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
 
@@ -8595,12 +8606,8 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
   const handleFicha = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    if (file.size > MAX_FICHA_BYTES) {
-      setError(`Ese PDF pesa ${fmtN(file.size / 1024, 0)}KB — el máximo es ${fmtN(MAX_FICHA_BYTES / 1024, 0)}KB. Probá comprimirlo o recortar imágenes pesadas.`);
-      e.target.value = "";
-      return;
-    }
     setError("");
+    setAvisoFicha(file.size > MAX_FICHA_BYTES ? `Pesa ${fmtN(file.size / 1024, 0)}KB — se va a comprimir automáticamente al guardar (puede perder algo de nitidez).` : "");
     setFichaFile(file);
   };
 
@@ -8614,8 +8621,8 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
     try {
       let ficha = {};
       if (fichaFile) {
-        const fichaTecnicaData = await readFileAsDataUrl(fichaFile);
-        ficha = { fichaTecnicaData, fichaTecnicaNombre: fichaFile.name };
+        const { dataUrl } = await prepararPdfParaFirestore(fichaFile);
+        ficha = { fichaTecnicaData: dataUrl, fichaTecnicaNombre: fichaFile.name };
       } else if (producto) {
         // conservar la ficha técnica existente si no se subió una nueva
         ficha = { fichaTecnicaData: producto.fichaTecnicaData || "", fichaTecnicaNombre: producto.fichaTecnicaNombre || "" };
@@ -8746,10 +8753,11 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         </div>
       )}
 
-      <Field label={`Ficha técnica (PDF, máx. ${fmtN(MAX_FICHA_BYTES / 1024, 0)}KB)`}>
+      <Field label="Ficha técnica (PDF)">
         <input type="file" accept="application/pdf" onChange={handleFicha} className="text-xs" />
       </Field>
       {fichaFile && <p className="text-xs mb-2" style={{ color: MUTED }}>{fichaFile.name} ({fmtN(fichaFile.size / 1024, 0)}KB)</p>}
+      {avisoFicha && <p className="text-xs mb-2" style={{ color: "#B45309" }}>{avisoFicha}</p>}
 
       {producto?.fichaTecnicaNombre && !fichaFile && (
         <p className="text-xs mb-2" style={{ color: MUTED }}>Ficha técnica actual: {producto.fichaTecnicaNombre} (se conserva si no subís una nueva)</p>

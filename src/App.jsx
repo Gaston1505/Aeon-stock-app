@@ -10935,28 +10935,11 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
           Precargado desde el Panel de simulación — revisá los datos antes de guardar.
         </p>
       )}
-      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-      <Field label="Cliente (constructora/desarrolladora — sale en el PDF)">
-        <SelectorCliente
-          clientes={clientes} value={cliente} onChange={handleClienteChange} onSeleccionar={handleSeleccionarCliente}
-          placeholder="Nombre de la empresa o del contacto"
-        />
-      </Field>
-      <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
-        <TextInput
-          value={telefono}
-          onChange={(e) => { setTelefono(e.target.value); telefonoAutoRef.current = null; }}
-          placeholder="Ej: 595981234567 (con código de país, sin +)"
-        />
-      </Field>
-      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Usá el mismo nombre si es una obra que ya cotizaste" /></Field>
-      <Field label="Categoría — cada una cuenta aparte dentro de la misma obra"><SelectorRubro value={categoria} onChange={setCategoria} /></Field>
-      <Field label="Nombre / referencia (opcional — ej: Opción 1, nombre del archivo)"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
 
-      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos (no aparecen en el PDF)</p>
-      <Field label="Cliente real / inversor"><TextInput value={clienteReal} onChange={(e) => setClienteReal(e.target.value)} placeholder="Ej: Pepe Gómez" /></Field>
-
-      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos</p>
+      {/* Productos primero: en una reunión con el cliente lo más común es ya saber qué cotizar
+          antes de tener cerrado el nombre de la obra — no hace falta completar cliente/obra para
+          empezar a cargar productos. */}
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Productos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
         <Field label="Producto del catálogo">
           <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
@@ -11042,6 +11025,27 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
           <RentabilidadCotizacionView c={datosComunes()} productos={productos} matrizCostos={matrizCostos} />
         </div>
       )}
+
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Cliente (constructora/desarrolladora — sale en el PDF)">
+        <SelectorCliente
+          clientes={clientes} value={cliente} onChange={handleClienteChange} onSeleccionar={handleSeleccionarCliente}
+          placeholder="Nombre de la empresa o del contacto"
+        />
+      </Field>
+      <Field label="Teléfono / WhatsApp del cliente (opcional — se autocompleta si ya lo cargaste antes)">
+        <TextInput
+          value={telefono}
+          onChange={(e) => { setTelefono(e.target.value); telefonoAutoRef.current = null; }}
+          placeholder="Ej: 595981234567 (con código de país, sin +)"
+        />
+      </Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Usá el mismo nombre si es una obra que ya cotizaste" /></Field>
+      <Field label="Categoría — cada una cuenta aparte dentro de la misma obra"><SelectorRubro value={categoria} onChange={setCategoria} /></Field>
+      <Field label="Nombre / referencia (opcional — ej: Opción 1, nombre del archivo)"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos (no aparecen en el PDF)</p>
+      <Field label="Cliente real / inversor"><TextInput value={clienteReal} onChange={(e) => setClienteReal(e.target.value)} placeholder="Ej: Pepe Gómez" /></Field>
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos del PDF</p>
       <Field label="Comentarios (opcional)"><TextInput value={comentarios} onChange={(e) => setComentarios(e.target.value)} /></Field>

@@ -5103,15 +5103,19 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
       sub: `Puesto en PY: U$S ${valuacionTransitoData.costoPuestoPy.toLocaleString("es-PY")}`,
     },
     {
+      // "Entregado sin pagar" es plata de una venta ya concretada (se entregó mercadería) —
+      // pertenece acá, no a Cotizaciones, que es solo lo que todavía se está negociando.
       label: "Ventas", icon: ShieldCheck, tab: "comprometidas",
       value: `U$S ${resumenVentas.total.toLocaleString("es-PY")}`,
-      sub: resumenVentas.nComprometidasPendientes > 0 ? `${resumenVentas.nComprometidasPendientes} comprometida(s) por retirar` : "Ganadas + comprometidas",
+      sub: totalCobranza.entregadoNoPagado > 0
+        ? `Entregado sin pagar: U$S ${totalCobranza.entregadoNoPagado.toLocaleString("es-PY")}`
+        : (resumenVentas.nComprometidasPendientes > 0 ? `${resumenVentas.nComprometidasPendientes} comprometida(s) por retirar` : "Ganadas + comprometidas"),
+      subColor: totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : undefined,
     },
     {
       label: "Cotizaciones", icon: FileSignature, tab: "cotizaciones",
       value: `U$S ${resumenCot.Pendiente.total.toLocaleString("es-PY")}`,
-      sub: `${resumenCot.Pendiente.n} pendiente(s) · entregado sin pagar U$S ${totalCobranza.entregadoNoPagado.toLocaleString("es-PY")}`,
-      subColor: totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : undefined,
+      sub: `${resumenCot.Pendiente.n} pendiente(s) de definir`,
     },
     {
       label: "Clientes", icon: Phone, tab: "clientes",

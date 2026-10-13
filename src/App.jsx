@@ -934,14 +934,16 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     let comisionVentaLinea = 0;
     let costoFinancieroLinea = 0;
     let bandaCostoReal = null;
+    let puntoEquilibrioUnit = null;
     const precioNeto = precioUnit * factorDescuento;
     if (producto) {
       const categoria = producto.categoriaPrincipal === "Aire Acondicionado" ? "aires" : "otros";
       const catCfg = matriz.categorias[categoria] || MATRIZ_COSTOS_DEFAULT.categorias[categoria];
       comisionVentaLinea = costoTotal * (Number(catCfg.comisionVentaPct) || 0) / 100;
       costoFinancieroLinea = costoTotal * (Number(matriz.costoFinancieroPct) || 0) / 100;
+      const costos = calcularCostosProducto(producto, matriz);
+      if (costos) puntoEquilibrioUnit = costos.costoReal;
       if (precioNeto > 0) {
-        const costos = calcularCostosProducto(producto, matriz);
         const costoReal = costos ? costos.costoReal : costoUnit;
         if (costoReal > 0 && costos) bandaCostoReal = bandaDescuento(((precioNeto - costos.costoPy) / costos.costoPy) * 100, catCfg, matriz.costoFinancieroPct);
       }
@@ -950,7 +952,7 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     const margenNetoPct = costoTotal > 0 ? (margenNeto / costoTotal) * 100 : 0;
     return {
       codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct,
-      comisionVentaLinea, costoFinancieroLinea, margenNeto, margenNetoPct, sinCosto, bandaCostoReal,
+      comisionVentaLinea, costoFinancieroLinea, margenNeto, margenNetoPct, sinCosto, bandaCostoReal, puntoEquilibrioUnit,
     };
   });
 
@@ -1577,10 +1579,12 @@ function SecondaryButton({ children, onClick, disabled = false }) {
 function Drawer({ open, onClose, title, children }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" style={{ backgroundColor: "rgba(15,23,32,0.4)" }} onClick={onClose}>
+    // Sin onClick en el fondo a propósito: un formulario cargado a medias (ej. una cotización
+    // nueva) se perdía con un solo click afuera sin querer. Ahora solo se cierra con la X o un
+    // botón explícito (Cancelar/Guardar) del propio formulario.
+    <div className="fixed inset-0 z-50 flex justify-end" style={{ backgroundColor: "rgba(15,23,32,0.4)" }}>
       <div
         className="w-full max-w-md h-full bg-white overflow-y-auto shadow-xl"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: BORDER }}>
           <h3 className="text-base font-bold" style={{ color: INK }}>{title}</h3>
@@ -11076,31 +11080,31 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
 
       {!mostrarAvisoDescuento && conflictoObra && (
         <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
-          <p className="text-sm font-medium mb-1" style={{ color: INK }}>Ya hay una cotización para "{obra || cliente}"</p>
+          <p className="text-sm font-medium mb-1" style={{ color: INK }}>"{obra || cliente}" ya tiene una cotización de {conflictoObra.categoria || "este rubro"} cargada</p>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
-            {conflictoObra.categoria || "Sin categoría"} · U$S {calcularTotalCotizacion(conflictoObra).toLocaleString("es-PY")} · {fmtDate(conflictoObra.fecha)}
+            La que ya existe: U$S {calcularTotalCotizacion(conflictoObra).toLocaleString("es-PY")}, del {fmtDate(conflictoObra.fecha)}.
           </p>
-          <p className="text-xs mb-2" style={{ color: INK }}>¿Qué es esta cotización nueva?</p>
+          <p className="text-xs mb-2" style={{ color: INK }}>¿Esta cotización que estás cargando ahora es...?</p>
           <div className="flex gap-2 flex-wrap">
-            <SecondaryButton onClick={elegirEsRevision}>Es una revisión de esa</SecondaryButton>
-            <PrimaryButton onClick={elegirEsAparte}>Es aparte, misma obra</PrimaryButton>
+            <SecondaryButton onClick={elegirEsRevision}>Una corrección de esa misma (reemplaza sus datos, pero conserva el historial de versiones)</SecondaryButton>
+            <PrimaryButton onClick={elegirEsAparte}>Una cotización distinta para la misma obra (ej: otra opción, u otra etapa)</PrimaryButton>
           </div>
         </div>
       )}
       {!mostrarAvisoDescuento && eligiendoPrincipal && (
         <div className="p-3 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
-          <p className="text-sm font-medium mb-1" style={{ color: INK }}>"{obra || cliente}" ya tiene cotización de {categoria || "este rubro"} — ¿qué es esta nueva?</p>
+          <p className="text-sm font-medium mb-1" style={{ color: INK }}>"{obra || cliente}" va a quedar con 2 cotizaciones de {categoria || "este rubro"} — ¿cuánto tiene que sumar el total de la obra?</p>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
-            Repasá cliente, productos, cantidades y montos de la(s) que ya estaba(n) antes de decidir — el estado (Pendiente/Ganada/Perdida) no cambia con esto, es aparte.
+            Esto SOLO decide qué se suma en los resúmenes de la obra. No toca el estado (Pendiente/Ganada/Perdida) de ninguna de las dos — eso lo seguís cambiando vos, cuando quieras, en cada una por separado. Repasá los datos de las dos antes de elegir:
           </p>
           <div className="space-y-2 mb-3">
             {(hilosObraExistente?.hilos || []).map((h) => (
               <div key={h.hiloId} className="rounded border p-2" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
                 <p className="text-xs font-medium" style={{ color: INK }}>
                   {h.activa.cliente} — {h.activa.categoria || "Sin categoría"} · {fmtDate(h.activa.fecha)} · {h.activa.estado || "Pendiente"}
-                  {h === hiloPrincipalActual && <b style={{ color: "#15803D" }}> — hoy cuenta (Principal)</b>}
-                  {h !== hiloPrincipalActual && (hilosObraExistente?.sumandose || []).includes(h) && <b style={{ color: "#15803D" }}> — hoy cuenta (Suma)</b>}
-                  {h !== hiloPrincipalActual && (hilosObraExistente?.historial || []).includes(h) && <b style={{ color: "#B91C1C" }}> — Historial, no cuenta</b>}
+                  {h === hiloPrincipalActual && <b style={{ color: "#15803D" }}> — hoy suma al total (es la Principal)</b>}
+                  {h !== hiloPrincipalActual && (hilosObraExistente?.sumandose || []).includes(h) && <b style={{ color: "#15803D" }}> — hoy suma al total</b>}
+                  {h !== hiloPrincipalActual && (hilosObraExistente?.historial || []).includes(h) && <b style={{ color: "#B91C1C" }}> — NO suma (Historial)</b>}
                 </p>
                 <CotizacionDetalle c={h.activa} productos={productos} />
               </div>
@@ -11110,11 +11114,11 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
               <CotizacionDetalle c={datosComunes()} productos={productos} />
             </div>
           </div>
-          <p className="text-xs mb-2" style={{ color: INK }}>¿Esta nueva cotización...?</p>
-          <div className="flex gap-2 flex-wrap">
-            <PrimaryButton onClick={() => guardarComoPrincipal("principal")}>Es la Principal (la anterior pasa a Suma)</PrimaryButton>
-            <SecondaryButton onClick={() => guardarComoPrincipal("suma")}>Se suma a la Principal actual</SecondaryButton>
-            <SecondaryButton onClick={() => guardarComoPrincipal("historial")}>Queda en el Historial (no cuenta)</SecondaryButton>
+          <p className="text-xs mb-2" style={{ color: INK }}>Elegí qué hacer con <b>esta cotización nueva</b>:</p>
+          <div className="flex flex-col gap-2 items-start">
+            <PrimaryButton onClick={() => guardarComoPrincipal("principal")}>Suma al total, y pasa a ser la Principal (la anterior sigue sumando, pero deja de ser la destacada)</PrimaryButton>
+            <SecondaryButton onClick={() => guardarComoPrincipal("suma")}>Suma al total, pero la anterior sigue siendo la Principal</SecondaryButton>
+            <SecondaryButton onClick={() => guardarComoPrincipal("historial")}>NO suma al total — queda guardada aparte, como Historial</SecondaryButton>
           </div>
         </div>
       )}
@@ -11751,6 +11755,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
             {f.bandaCostoReal && (
               <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: f.bandaCostoReal.bg, color: f.bandaCostoReal.color }}>
                 Vs. Costo Real: {f.bandaCostoReal.label}
+                {f.puntoEquilibrioUnit != null && ` · mín. U$S ${f.puntoEquilibrioUnit.toLocaleString("es-PY", { maximumFractionDigits: 2 })} c/u`}
               </span>
             )}
           </div>
@@ -11943,9 +11948,9 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
 // Las 3 marcas de "cuánto cuenta" un hilo para el total de su obra — independiente del estado
 // (Pendiente/Ganada/Perdida/Sin efecto), ver clasificarHilosDeRubro.
 const CUENTA_OBRA_BADGE = {
-  principal: { label: (rubro) => `Principal de ${rubro} — cuenta en el resumen`, color: "#15803D", bg: "#E9F7EF" },
-  suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — cuenta en el resumen`, color: "#15803D", bg: "#E9F7EF" },
-  historial: { label: () => "Historial — no cuenta en el resumen", color: "#B91C1C", bg: "#FBEAEA" },
+  principal: { label: (rubro) => `Principal de ${rubro} — suma al total de la obra`, color: "#15803D", bg: "#E9F7EF" },
+  suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
+  historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
 function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
   const [expandido, setExpandido] = useState(false);

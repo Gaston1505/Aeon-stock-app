@@ -4187,6 +4187,7 @@ export default function App() {
           cotizaciones={cotizaciones}
           equipos={equipos}
           comprometidas={comprometidas}
+          grupos={gruposEmpresas}
           onGenerar={(cotizacion, lineas, remitoData) => { generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData); setDrawer(null); }}
         />
       </Drawer>
@@ -4224,6 +4225,7 @@ export default function App() {
         {retiroTarget && (
           <RetiroParcialForm
             comprometida={comprometidas.find((c) => c.id === retiroTarget)}
+            grupos={gruposEmpresas}
             onSave={(d) => {
               const c = comprometidas.find((x) => x.id === retiroTarget);
               retirarParcial(retiroTarget, d);
@@ -7455,7 +7457,7 @@ function pendienteSalidaDeLinea(cot, l, comprometidas) {
   return Math.max(0, bruto - yaComprometido);
 }
 
-function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGenerar }) {
+function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, grupos, onGenerar }) {
   const [cotizacionId, setCotizacionId] = useState("");
   const [seleccion, setSeleccion] = useState({});
   const [cantidades, setCantidades] = useState({});
@@ -7482,6 +7484,14 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGen
 
   const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
 
+  // El precio de cada línea de la cotización es el de lista — si la cotización tiene descuento
+  // global, hay que prorratearlo acá también (igual que en ComprometidaDesdeCotizacionForm), o el
+  // monto que queda en Salidas (y de ahí en el estado de cuenta de la obra) sale inflado.
+  const dCot = useMemo(() => desglosarTotalCotizacion(cotizacion || {}), [cotizacion]);
+  const factorDescuentoCot = dCot.subtotal > 0 ? (dCot.subtotal - dCot.descuentoMonto) / dCot.subtotal : 1;
+
+  const razonesCliente = useMemo(() => (cotizacion ? razonesSocialesDeNombre(cotizacion.cliente, grupos) : []), [cotizacion, grupos]);
+
   const filas = useMemo(() => {
     if (!cotizacion) return [];
     return (cotizacion.lineas || []).map((l) => {
@@ -7489,9 +7499,10 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGen
       const yaComprometido = yaComprometidoParaLinea(cotizacion.id, l.codigo, comprometidas);
       const candidatos = candidatosParaLinea(equipos, l.codigo);
       const stockDisponible = candidatos.reduce((acc, e) => acc + e.disponible, 0);
-      return { ...l, pendiente, yaComprometido, candidatos, stockDisponible };
+      const precioUnitFinal = Math.round((Number(l.precioUnit) || 0) * factorDescuentoCot * 100) / 100;
+      return { ...l, pendiente, yaComprometido, candidatos, stockDisponible, precioUnitFinal };
     });
-  }, [cotizacion, equipos, comprometidas]);
+  }, [cotizacion, equipos, comprometidas, factorDescuentoCot]);
 
   // seleccion/cantidades van por índice de línea, no por código — una cotización puede tener
   // el mismo código en dos líneas distintas (nada lo impide al armarla), y si usáramos el
@@ -7512,6 +7523,17 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGen
     setSeleccion(nuevaSel);
     setCantidades(nuevaCant);
     setError("");
+    // Precarga razón social + RUC del cliente ya registrado (si tiene una sola razón social
+    // configurada se completa directo; si tiene varias, se arranca con la primera y el usuario
+    // puede cambiarla con el selector que aparece más abajo).
+    const razones = razonesSocialesDeNombre(c.cliente, grupos);
+    if (razones.length > 0) {
+      setEmpresaCliente(razones[0].nombre || c.cliente || "");
+      setRucCliente(razones[0].ruc || "");
+    } else {
+      setEmpresaCliente(c.cliente || "");
+      setRucCliente("");
+    }
   };
 
   const toggleLinea = (idx) => setSeleccion((s) => ({ ...s, [idx]: !s[idx] }));
@@ -7559,7 +7581,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGen
         restante -= tomar;
       }
       if (batches.length > 0) {
-        lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnit, cantidad: cantidad - restante, batches });
+        lineasParaGenerar.push({ codigo: f.codigo, descripcion: f.descripcion, precioUnit: f.precioUnitFinal, cantidad: cantidad - restante, batches });
       }
     });
     if (lineasParaGenerar.length === 0) {
@@ -7588,6 +7610,12 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGen
 
       {cotizacion && (
         <>
+          {factorDescuentoCot < 1 && (
+            <p className="text-xs mt-2 mb-1 p-2 rounded" style={{ backgroundColor: "#FDF1E0", color: "#9A3412" }}>
+              Esta cotización tiene {fmtN(dCot.descuentoPct || (dCot.descuentoMonto / dCot.subtotal) * 100, 1)}% de descuento —
+              el monto de esta salida se va a registrar ya con ese descuento aplicado, no al precio de lista.
+            </p>
+          )}
           <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Productos a retirar</p>
           <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
             {filas.map((f, idx) => {
@@ -7637,6 +7665,21 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, onGen
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
       <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
+      {razonesCliente.length > 1 && (
+        <Field label="Razón social registrada (elegí cuál usar)">
+          <Select
+            value={rucCliente}
+            onChange={(e) => {
+              const r = razonesCliente.find((x) => (x.ruc || "") === e.target.value);
+              if (r) { setEmpresaCliente(r.nombre || ""); setRucCliente(r.ruc || ""); }
+            }}
+          >
+            {razonesCliente.map((r, i) => (
+              <option key={i} value={r.ruc || ""}>{r.nombre}{r.ruc ? ` (RUC ${r.ruc})` : ""}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
       <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
       <Field label="N° de remito"><TextInput value={remito} onChange={(e) => setRemito(e.target.value)} /></Field>
@@ -8370,15 +8413,19 @@ function ComprometidaForm({ equipos, productos, onSave }) {
   );
 }
 
-function RetiroParcialForm({ comprometida, onSave }) {
+function RetiroParcialForm({ comprometida, grupos, onSave }) {
   const retirado = Number(comprometida.cantidadRetirada) || 0;
   const saldo = Math.max(0, (Number(comprometida.cantidad) || 0) - retirado);
+  // comprometida.razonSocial en realidad guarda el nombre comercial del cliente (así lo arma
+  // generarComprometidaDesdeCotizacion) — acá se busca la razón social con RUC que corresponda,
+  // para no tener que escribirlo de nuevo si el cliente ya está registrado.
+  const razonesCliente = razonesSocialesDeNombre(comprometida.razonSocial, grupos);
 
   const [cantidad, setCantidad] = useState(saldo);
   const [fecha, setFecha] = useState(todayISO());
   const [lugarSalida, setLugarSalida] = useState("Depósito principal");
-  const [empresaCliente, setEmpresaCliente] = useState(comprometida.razonSocial || "");
-  const [rucCliente, setRucCliente] = useState("");
+  const [empresaCliente, setEmpresaCliente] = useState(razonesCliente[0]?.nombre || comprometida.razonSocial || "");
+  const [rucCliente, setRucCliente] = useState(razonesCliente[0]?.ruc || "");
   const [obra, setObra] = useState(comprometida.obra || "");
   const [remito, setRemito] = useState("");
   const [responsable, setResponsable] = useState("");
@@ -8433,6 +8480,21 @@ function RetiroParcialForm({ comprometida, onSave }) {
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
+      {razonesCliente.length > 1 && (
+        <Field label="Razón social registrada (elegí cuál usar)">
+          <Select
+            value={rucCliente}
+            onChange={(e) => {
+              const r = razonesCliente.find((x) => (x.ruc || "") === e.target.value);
+              if (r) { setEmpresaCliente(r.nombre || ""); setRucCliente(r.ruc || ""); }
+            }}
+          >
+            {razonesCliente.map((r, i) => (
+              <option key={i} value={r.ruc || ""}>{r.nombre}{r.ruc ? ` (RUC ${r.ruc})` : ""}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
       <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
@@ -11786,9 +11848,12 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
               {f.cantidad} × U$S {f.precioUnit.toLocaleString("es-PY")} = U$S {fmt(f.ventaNeta)}
               {!f.sinCosto && ` · costo U$S ${fmt(f.costoTotal)} · margen U$S ${fmt(f.margen)}`}
             </p>
-            {f.bandaCostoReal && (
-              <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: f.bandaCostoReal.bg, color: f.bandaCostoReal.color }}>
-                Vs. Costo Real: {f.bandaCostoReal.label}
+            {(f.bandaCostoReal || f.puntoEquilibrioUnit != null) && (
+              <span
+                className="inline-block mt-1 px-1.5 py-0.5 rounded-full font-medium"
+                style={{ backgroundColor: f.bandaCostoReal?.bg || "#F2F3F4", color: f.bandaCostoReal?.color || MUTED }}
+              >
+                {f.bandaCostoReal ? `Vs. Costo Real: ${f.bandaCostoReal.label}` : "Punto de equilibrio"}
                 {f.puntoEquilibrioUnit != null && ` · mín. U$S ${f.puntoEquilibrioUnit.toLocaleString("es-PY", { maximumFractionDigits: 2 })} c/u`}
               </span>
             )}
@@ -13603,6 +13668,19 @@ function rucDeRazonSocial(nombre, grupos) {
     if (r?.ruc) return r.ruc;
   }
   return "";
+}
+// Razones sociales con RUC configuradas para un nombre de cliente, sea nombre comercial (o alias,
+// vía resolverEmpresa) o ya la razón social exacta de algún grupo — para precargar el campo de RUC
+// de un remito en vez de tener que escribirlo cada vez.
+function razonesSocialesDeNombre(nombre, grupos) {
+  const r = resolverEmpresa(nombre, grupos);
+  if (r?.grupo?.razonesSociales?.length) return r.grupo.razonesSociales;
+  const k = normClave(nombre);
+  for (const g of grupos || []) {
+    const rs = (g.razonesSociales || []).find((x) => normClave(x.nombre) === k);
+    if (rs) return [rs];
+  }
+  return [];
 }
 // Cuenta de cada obra (clave `${empresa.key}|${obra.key}`): contrato / entregado / cobrado / facturado.
 function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometidas, productos, equipos, grupos = [] }) {

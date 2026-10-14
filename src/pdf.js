@@ -1925,7 +1925,7 @@ export async function generateRentabilidadPdf(cotizacion, r) {
     y -= 12;
   }
   if (r.instalacionMonto > 0) {
-    text(`Instalación/servicios ${money(r.instalacionMonto)} sumado a la venta — costo del técnico ${money(r.costoInstalacion)}.`, MARGIN, y, { size: 7, color: MUTED });
+    text(`Instalación/servicios ${money(r.instalacionMonto)} (costo del técnico ${money(r.costoInstalacion)}) — se cobra aparte y no entra en los indicadores de arriba.`, MARGIN, y, { size: 7, color: MUTED });
     y -= 12;
   }
   y -= 4;

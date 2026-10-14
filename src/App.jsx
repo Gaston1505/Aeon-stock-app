@@ -971,8 +971,14 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   const costoServiciosSugeridos = serviciosAdicionales.reduce((acc, s) => acc + (Number(s.costoLuisUsd) || 0), 0);
   const montoInstalacionManual = Math.max(0, instalacionMonto - montoServiciosSugeridos);
   const costoInstalacion = montoInstalacionManual * (1 - MARGEN_INSTALACION_PCT / 100) + costoServiciosSugeridos;
-  const ventaTotal = ventaProductos + instalacionMonto;
-  const costoTotal = costoProductos + costoInstalacion;
+  // La instalación/servicios es un negocio aparte (se le paga a un técnico tercero, con su propio
+  // margen fijo del 15%) — no entra en ningún indicador de rentabilidad de productos: ni en el
+  // margen bruto, ni el markup, ni el punto de equilibrio para negociar descuento. Solo se suma al
+  // total que paga el cliente (eso ya lo hace calcularTotalCotizacion, para la cotización/PDF en
+  // sí). Acá "Venta"/"Costo" son solo de productos; instalacionMonto/costoInstalacion se muestran
+  // aparte, como nota.
+  const ventaTotal = ventaProductos;
+  const costoTotal = costoProductos;
   const margenTotal = ventaTotal - costoTotal;
   // % sobre Costo PY (markup), no sobre venta — consistente con la Matriz de costos y el
   // indicador de piso/ideal por línea (25-30% markup ahí equivale a ~20-23% de margen sobre
@@ -986,7 +992,7 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
   const margenEmpresaPct = costoTotal > 0 ? (margenEmpresa / costoTotal) * 100 : 0;
   // El precio mínimo de venta sin pérdida real: Costo PY + comisión de venta + costo financiero.
   // Vender exactamente a este monto da margen empresa U$S 0 — es la referencia para saber hasta
-  // dónde se puede bajar negociando con el cliente.
+  // dónde se puede bajar negociando con el cliente. Solo de productos, instalación aparte.
   const puntoEquilibrioTotal = costoTotal + comisionVentaTotal + costoFinancieroTotal;
 
   return {
@@ -11916,9 +11922,10 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
       )}
       {r.instalacionMonto > 0 && (
         <p className="text-xs mb-1.5" style={{ color: MUTED }}>
-          Instalación/servicios U$S {fmt(r.instalacionMonto)} sumado a la venta — costo del técnico U$S {fmt(r.costoInstalacion)}
-          {" "}({r.instalacionMonto > 0 ? fmtN((r.costoInstalacion / r.instalacionMonto) * 100, 0) : 0}%
-          {r.serviciosAdicionales?.length > 0 ? ", con costo real de Luis donde se cargó con el sugeridor" : ", estimado"}).
+          Instalación/servicios U$S {fmt(r.instalacionMonto)} (costo del técnico U$S {fmt(r.costoInstalacion)}
+          {" "}{r.instalacionMonto > 0 ? fmtN((r.costoInstalacion / r.instalacionMonto) * 100, 0) : 0}%
+          {r.serviciosAdicionales?.length > 0 ? ", con costo real de Luis donde se cargó con el sugeridor" : ", estimado"}) —
+          se cobra aparte y NO entra en ninguno de los indicadores de arriba (venta, margen, markup ni punto de equilibrio son solo de productos).
         </p>
       )}
       <div className="rounded border overflow-hidden" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>

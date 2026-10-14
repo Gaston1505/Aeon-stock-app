@@ -498,14 +498,15 @@ export async function downloadCotizacionPdf(cotizacion) {
 }
 
 // ---------- Fichas técnicas combinadas ----------
-// Devuelve los bytes del PDF combinado, o null si ninguna línea tiene ficha técnica cargada.
-export async function generateFichasTecnicasPdf(cotizacion) {
+// Núcleo compartido: junta en un solo PDF la ficha técnica de cada item con fichaTecnicaData,
+// sin repetir el mismo código dos veces. Devuelve null si no hay ninguna ficha para combinar.
+async function combinarFichasTecnicas(items) {
   const vistos = new Set();
   const fichas = [];
-  for (const linea of cotizacion.lineas || []) {
-    if (linea.fichaTecnicaData && !vistos.has(linea.codigo)) {
-      vistos.add(linea.codigo);
-      fichas.push(linea);
+  for (const it of items) {
+    if (it.fichaTecnicaData && !vistos.has(it.codigo)) {
+      vistos.add(it.codigo);
+      fichas.push(it);
     }
   }
   if (fichas.length === 0) return null;
@@ -526,6 +527,11 @@ export async function generateFichasTecnicasPdf(cotizacion) {
   return out.save();
 }
 
+// Devuelve los bytes del PDF combinado, o null si ninguna línea tiene ficha técnica cargada.
+export async function generateFichasTecnicasPdf(cotizacion) {
+  return combinarFichasTecnicas(cotizacion.lineas || []);
+}
+
 export function nombreArchivoFichasTecnicas(cotizacion) {
   return `Fichas_tecnicas_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}.pdf`;
 }
@@ -534,6 +540,23 @@ export async function downloadFichasTecnicasPdf(cotizacion) {
   const bytes = await generateFichasTecnicasPdf(cotizacion);
   if (!bytes) return false;
   downloadBlob(bytes, nombreArchivoFichasTecnicas(cotizacion), "application/pdf");
+  return true;
+}
+
+// Misma idea pero a partir de una selección libre de productos del catálogo (sin pasar por una
+// cotización) — para cuando el cliente pregunta por uno o varios modelos sueltos.
+export async function generateFichasTecnicasPdfDeProductos(productos) {
+  return combinarFichasTecnicas((productos || []).map((p) => ({ codigo: p.nombre, fichaTecnicaData: p.fichaTecnicaData })));
+}
+
+export function nombreArchivoFichasTecnicasProductos() {
+  return `Fichas_tecnicas_${new Date().toISOString().slice(0, 10)}.pdf`;
+}
+
+export async function downloadFichasTecnicasPdfDeProductos(productos) {
+  const bytes = await generateFichasTecnicasPdfDeProductos(productos);
+  if (!bytes) return false;
+  downloadBlob(bytes, nombreArchivoFichasTecnicasProductos(), "application/pdf");
   return true;
 }
 

@@ -20,6 +20,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebas
 import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
+  generateFichasTecnicasPdfDeProductos, nombreArchivoFichasTecnicasProductos, downloadFichasTecnicasPdfDeProductos,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
@@ -2767,6 +2768,28 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  // Igual que handleCompartirFichas, pero para una selección libre de productos del catálogo
+  // (sin pasar por una cotización armada) — ej. el cliente pregunta por uno o varios modelos sueltos.
+  const handleCompartirFichasProductos = async (productosSeleccionados) => {
+    setDescargandoId("catalogo:compartir-fichas");
+    setPdfError("");
+    try {
+      const bytes = await generateFichasTecnicasPdfDeProductos(productosSeleccionados);
+      if (!bytes) {
+        setPdfError("Ninguno de los productos seleccionados tiene ficha técnica cargada.");
+        setDescargandoId(null);
+        return;
+      }
+      const nombres = productosSeleccionados.map((p) => nombreProducto(p) || p.nombre).join(", ");
+      const ok = await compartirArchivo(bytes, nombreArchivoFichasTecnicasProductos(), `Fichas técnicas — ${nombres}`);
+      if (!ok) await downloadFichasTecnicasPdfDeProductos(productosSeleccionados);
+    } catch (e) {
+      console.error("Error compartiendo fichas técnicas del catálogo", e);
+      setPdfError("No se pudo compartir el PDF de fichas técnicas. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const handleDescargarGarantiaPdf = async (venta) => {
     setDescargandoId(venta.id + ":garantia");
     setPdfError("");
@@ -3870,6 +3893,9 @@ export default function App() {
             onImportar={handleImportarCatalogo}
             importando={importandoCatalogo}
             importResultado={importResultado}
+            onCompartirFichasProductos={handleCompartirFichasProductos}
+            descargandoId={descargandoId}
+            pdfError={pdfError}
           />
         )}
 
@@ -8886,7 +8912,7 @@ function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
   );
 }
 
-function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizCostos }) {
+function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizCostos, seleccionable, seleccionado, onToggleSeleccion }) {
   const tieneCosto = p.costoOrigen || p.costoPy;
   const costosVivos = useMemo(() => calcularCostosProducto(p, matrizCostos || MATRIZ_COSTOS_DEFAULT), [p, matrizCostos]);
   return (
@@ -8974,6 +9000,15 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizC
           </div>
         ) : (
           <span className="text-xs" style={{ color: MUTED }}>Sin ficha técnica</span>
+        )}
+        {seleccionable && (
+          <label className="flex items-center gap-1.5 text-xs" style={{ color: p.fichaTecnicaData ? INK : MUTED, opacity: p.fichaTecnicaData ? 1 : 0.5 }}>
+            <input
+              type="checkbox" checked={!!seleccionado} disabled={!p.fichaTecnicaData}
+              onChange={() => onToggleSeleccion(p)}
+            />
+            Compartir
+          </label>
         )}
       </div>
     </div>
@@ -9357,12 +9392,16 @@ function ListaPreciosPanel({ productos, onCerrar }) {
 
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
-function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo, matrizCostos }) {
+function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo, matrizCostos, seleccionable, seleccionados, onToggleSeleccion }) {
   if (nodo.productos) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {nodo.productos.map((p) => (
-          <ProductoCard key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockEquipo={stockPorModelo.get(p.nombre)} matrizCostos={matrizCostos} />
+          <ProductoCard
+            key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha}
+            stockEquipo={stockPorModelo.get(p.nombre)} matrizCostos={matrizCostos}
+            seleccionable={seleccionable} seleccionado={seleccionados?.has(p.id)} onToggleSeleccion={onToggleSeleccion}
+          />
         ))}
       </div>
     );
@@ -9373,7 +9412,11 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorM
         <div key={hijo.valor}>
           <p className={CATEGORIA_TITULO_CLASE[Math.min(nivel, 3)]} style={{ color: nivel === 0 ? INK : MUTED }}>{hijo.valor}</p>
           <div className="mt-2">
-            <CategoriaNodo nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} matrizCostos={matrizCostos} />
+            <CategoriaNodo
+              nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha}
+              stockPorModelo={stockPorModelo} matrizCostos={matrizCostos}
+              seleccionable={seleccionable} seleccionados={seleccionados} onToggleSeleccion={onToggleSeleccion}
+            />
           </div>
         </div>
       ))}
@@ -9439,13 +9482,27 @@ function TablaCombinacionesMultiSplit({ productos }) {
   );
 }
 
-function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecios, equipos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial }) {
+function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecios, equipos, query, onQuery, onNew, onEdit, onDelete, onQuitarFicha, onImportar, importando, importResultado, modoInicial, onCompartirFichasProductos, descargandoId, pdfError }) {
   const fileInputRef = useRef(null);
   const [modo, setModo] = useState(modoInicial === "repuestos" ? "repuestos" : "productos"); // "productos" | "repuestos" — carpetas totalmente separadas
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
   const [verTablaMulti, setVerTablaMulti] = useState(false);
   const [verListaPrecios, setVerListaPrecios] = useState(false);
   const [verMetricas, setVerMetricas] = useState(false);
+  // Compartir fichas técnicas de una selección libre de productos (sin pasar por una
+  // cotización) — se arma un solo PDF combinado y se comparte (o descarga si no hay share nativo).
+  const [modoCompartir, setModoCompartir] = useState(false);
+  const [seleccionados, setSeleccionados] = useState(() => new Set());
+  const toggleSeleccion = (p) => setSeleccionados((s) => {
+    const next = new Set(s);
+    if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+    return next;
+  });
+  const salirModoCompartir = () => { setModoCompartir(false); setSeleccionados(new Set()); };
+  const productosSeleccionados = useMemo(
+    () => (productosTodos || productos).filter((p) => seleccionados.has(p.id)),
+    [productosTodos, productos, seleccionados]
+  );
 
   // Stock vendible por modelo, para mostrarlo directo en la tarjeta del producto — misma
   // cuenta que usa Depósito (todo menos Vendido/Dado de baja, que ya salieron del circuito).
@@ -9518,6 +9575,9 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
           <SearchBox value={query} onChange={onQuery} />
           <SecondaryButton onClick={() => setVerListaPrecios((v) => !v)}><FileText size={14} /> Lista de precios</SecondaryButton>
           <SecondaryButton onClick={() => setVerMetricas((v) => !v)}><Calculator size={14} /> Precios según métricas</SecondaryButton>
+          <SecondaryButton onClick={() => (modoCompartir ? salirModoCompartir() : setModoCompartir(true))}>
+            <Share2 size={14} /> {modoCompartir ? "Cancelar selección" : "Compartir fichas"}
+          </SecondaryButton>
           <SecondaryButton onClick={descargarPlantillaCatalogo}><Download size={14} /> Plantilla</SecondaryButton>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="hidden" />
           <SecondaryButton onClick={() => fileInputRef.current?.click()}>
@@ -9575,6 +9635,13 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
         <p className="text-xs mb-3" style={{ color: MUTED }}>Resultados de búsqueda en todo el catálogo de productos.</p>
       )}
 
+      {modoCompartir && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm flex items-center justify-between gap-3 flex-wrap" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+          <span>Marcá "Compartir" en los productos que querés mandar (solo los que tienen ficha técnica cargada) — {seleccionados.size} seleccionado(s).</span>
+          <SecondaryButton onClick={salirModoCompartir}>Cancelar</SecondaryButton>
+        </div>
+      )}
+
       {productosFiltrados.length === 0 ? (
         <EmptyState
           icon={Tag}
@@ -9584,7 +9651,26 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
       ) : modo === "productos" && !buscando && !hayProductosEnTab ? (
         <EmptyState icon={Tag} title="Sin productos en esta categoría" subtitle="Elegí otra pestaña o cargá un producto nuevo acá." />
       ) : (
-        <CategoriaNodo nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha} stockPorModelo={stockPorModelo} matrizCostos={matrizCostos} />
+        <CategoriaNodo
+          nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha}
+          stockPorModelo={stockPorModelo} matrizCostos={matrizCostos}
+          seleccionable={modoCompartir} seleccionados={seleccionados} onToggleSeleccion={toggleSeleccion}
+        />
+      )}
+
+      {modoCompartir && seleccionados.size > 0 && (
+        <div className="sticky bottom-3 mt-4 flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 rounded-lg shadow" style={{ backgroundColor: "#FFFFFF", border: `1px solid ${BORDER}` }}>
+          <span className="text-sm" style={{ color: INK }}>{seleccionados.size} ficha(s) técnica(s) seleccionada(s)</span>
+          <div className="flex items-center gap-2">
+            {pdfError && <span className="text-xs" style={{ color: "#B91C1C" }}>{pdfError}</span>}
+            <PrimaryButton
+              onClick={() => onCompartirFichasProductos(productosSeleccionados)}
+              disabled={descargandoId === "catalogo:compartir-fichas"}
+            >
+              <Share2 size={14} /> {descargandoId === "catalogo:compartir-fichas" ? "Generando..." : "Compartir fichas"}
+            </PrimaryButton>
+          </div>
+        </div>
       )}
 
       <Drawer open={verTablaMulti} onClose={() => setVerTablaMulti(false)} title="Tabla de combinaciones Multi Split">

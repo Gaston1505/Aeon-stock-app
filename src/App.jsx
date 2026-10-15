@@ -1710,6 +1710,26 @@ function PhotoViewer({ src, onClose }) {
   );
 }
 
+// Miniatura de una foto recién cargada (remito, etc.) con dos acciones bien separadas: tocar la
+// foto la amplía en un visor de solo lectura (tocar afuera o la X solo cierra, nunca borra nada);
+// "Quitar foto" es la única forma de borrarla. Antes el botón de borrar era una X chiquita
+// superpuesta a la miniatura, fácil de tocar sin querer pensando que solo se cerraba una vista.
+function FotoCargadaPreview({ src, onQuitar, alt = "Foto" }) {
+  const [verFoto, setVerFoto] = useState(false);
+  if (!src) return null;
+  return (
+    <div className="mb-3">
+      <button type="button" onClick={() => setVerFoto(true)} className="block p-0 border-0" style={{ backgroundColor: "transparent", cursor: "pointer" }}>
+        <img src={src} alt={alt} className="rounded border" style={{ maxWidth: 160, borderColor: BORDER }} />
+      </button>
+      <button type="button" onClick={onQuitar} className="text-xs mt-1 flex items-center gap-1" style={{ color: "#B91C1C" }}>
+        <Trash2 size={12} /> Quitar foto
+      </button>
+      <PhotoViewer src={verFoto ? src : null} onClose={() => setVerFoto(false)} />
+    </div>
+  );
+}
+
 function Table({ columns, rows, onDelete, renderCell }) {
   if (rows.length === 0) {
     return <EmptyState icon={Package} title="Todavía no hay registros" subtitle="Usá el botón de arriba para cargar el primero." />;
@@ -7187,14 +7207,7 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave,
         <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
-      {fotoRemito && (
-        <div className="mb-3 relative inline-block">
-          <img src={fotoRemito} alt="Remito" className="rounded border" style={{ maxWidth: 160, borderColor: BORDER }} />
-          <button onClick={() => setFotoRemito("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
-            <X size={12} color="#FFFFFF" />
-          </button>
-        </div>
-      )}
+      <FotoCargadaPreview src={fotoRemito} onQuitar={() => setFotoRemito("")} alt="Remito" />
 
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} /></Field>
       {!esAdmin && (
@@ -7730,14 +7743,7 @@ function SalidaDesdeCotizacionForm({ cotizaciones, equipos, comprometidas, grupo
         <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
-      {fotoRemito && (
-        <div className="mb-3 relative inline-block">
-          <img src={fotoRemito} alt="Remito" className="rounded border" style={{ maxWidth: 160, borderColor: BORDER }} />
-          <button onClick={() => setFotoRemito("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
-            <X size={12} color="#FFFFFF" />
-          </button>
-        </div>
-      )}
+      <FotoCargadaPreview src={fotoRemito} onQuitar={() => setFotoRemito("")} alt="Remito" />
 
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
@@ -8546,14 +8552,7 @@ function RetiroParcialForm({ comprometida, grupos, onSave }) {
         <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
-      {fotoRemito && (
-        <div className="mb-3 relative inline-block">
-          <img src={fotoRemito} alt="Remito" className="rounded border" style={{ maxWidth: 160, borderColor: BORDER }} />
-          <button onClick={() => setFotoRemito("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
-            <X size={12} color="#FFFFFF" />
-          </button>
-        </div>
-      )}
+      <FotoCargadaPreview src={fotoRemito} onQuitar={() => setFotoRemito("")} alt="Remito" />
 
       <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Opcional" /></Field>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}

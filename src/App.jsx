@@ -220,6 +220,13 @@ function fmtDate(d) {
   const [y, m, day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
+// Fecha + hora real de cuando se cargó algo (createdAt, timestamp de Date.now() que pone
+// addItem/guardarConteo en todo lo que se guarda) — distinto de "fecha", que es la fecha del
+// remito/evento tal cual la escribe el usuario y puede estar atrasada a propósito.
+function fmtFechaHora(ms) {
+  if (!ms) return "";
+  return new Date(ms).toLocaleString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 // Punto para miles, coma para decimales (es-PY) con cantidad fija de decimales — reemplaza
 // Number.prototype.toFixed en todo el código, que siempre usa punto decimal sin separador de
 // miles (formato de EE.UU.) sin importar el idioma del navegador.
@@ -4497,7 +4504,7 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbie
           <RemitoGrupoCard
             key={g.key}
             titulo={g.remito ? `Remito N° ${g.remito}` : "Sin N° de remito"}
-            linea={[fmtDate(m0.fecha), destino, motivos].filter(Boolean).join(" · ")}
+            linea={[fmtDate(m0.fecha), destino, motivos, m0.createdAt ? `registrado ${fmtFechaHora(m0.createdAt)}` : ""].filter(Boolean).join(" · ")}
             resumen={resumenRemito(g, "unidad", "unidades")}
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
             foto={foto} onVerFoto={onVerFoto}
@@ -4548,7 +4555,7 @@ function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDele
           <RemitoGrupoCard
             key={g.key}
             titulo={g.remito ? `Remito N° ${g.remito}` : `Entrada del ${fmtDate(e0.fecha)}`}
-            linea={[g.remito ? fmtDate(e0.fecha) : "", e0.tipo, e0.origen].filter(Boolean).join(" · ")}
+            linea={[g.remito ? fmtDate(e0.fecha) : "", e0.tipo, e0.origen, e0.createdAt ? `registrado ${fmtFechaHora(e0.createdAt)}` : ""].filter(Boolean).join(" · ")}
             resumen={resumenRemito(g, "equipo", "equipos")}
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
           >
@@ -10338,6 +10345,9 @@ function ConteoRowDeposito({ item, onGuardar }) {
         {item.categoria === "Repuestos" && item.descripcion && (
           <span className="text-xs ml-2" style={{ color: MUTED }}>{item.descripcion}</span>
         )}
+        {item.contado != null && item.contadoEn && (
+          <span className="block text-[11px]" style={{ color: MUTED }}>Último conteo: {fmtFechaHora(item.contadoEn)}</span>
+        )}
       </div>
       <input
         type="number" min="0" inputMode="numeric" value={valor}
@@ -10561,7 +10571,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
         const c = contados.get(p.nombre);
         return {
           id: p.id, codigo: p.nombre, descripcion: p.descripcion || "", categoria: p.categoriaPrincipal,
-          sistema, contado: c ? c.cantidadContada : null, contadoPor: c ? c.creadoPorEmail : null,
+          sistema, contado: c ? c.cantidadContada : null, contadoPor: c ? c.creadoPorEmail : null, contadoEn: c ? c.createdAt : null,
         };
       })
       .sort((a, b) => a.categoria.localeCompare(b.categoria) || a.codigo.localeCompare(b.codigo));
@@ -10656,6 +10666,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
               <th className="px-3.5 py-2 font-medium text-right">Sistema</th>
               <th className="px-3.5 py-2 font-medium text-right">Diferencia</th>
               <th className="px-3.5 py-2 font-medium">Contado por</th>
+              <th className="px-3.5 py-2 font-medium">Contado el</th>
               <th></th>
             </tr>
           </thead>
@@ -10677,6 +10688,7 @@ function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQu
                     )}
                   </td>
                   <td className="px-3.5 py-2 text-xs" style={{ color: MUTED }}>{i.contadoPor}</td>
+                  <td className="px-3.5 py-2 text-xs" style={{ color: MUTED }}>{fmtFechaHora(i.contadoEn)}</td>
                   <td className="px-3.5 py-2 text-right">
                     {i.contado != null && (
                       <button onClick={() => onBorrar(i.codigo)} title="Borrar este conteo">

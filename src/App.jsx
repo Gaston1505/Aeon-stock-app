@@ -4601,12 +4601,16 @@ function EntradasPorRemito({ entradas, productos, equipos, forzarAbierto, onDele
 }
 
 // Arma el Pedido de Facturación de un remito: fecha, empresa que compró, RUC, obra y una línea por
-// código comercial con el precio de la cotización de la que salió (con el descuento ya aplicado).
+// código comercial con el precio de la cotización de la que salió (con el descuento ya aplicado),
+// más una línea aparte por la instalación/servicios de esa cotización si tenía — la instalación no
+// deja movimiento de stock (no es mercadería), así que sin esto se perdía de la factura.
 // Todo queda editable en el formulario — esto es solo el punto de partida.
 function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, grupos }) {
   const m0 = g.items[0] || {};
   const porCodigo = new Map();
   const cotizacionesUsadas = new Map();
+  const lineasServicio = [];
+  const cotizacionesConServicioAgregado = new Set();
   for (const m of g.items) {
     const prod = productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
     const codigo = prod?.nombre || m.modelo || m.codigo || "";
@@ -4620,6 +4624,28 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
         const factor = d.subtotal > 0 ? (d.subtotal - d.descuentoMonto) / d.subtotal : 1;
         precio = Math.round((Number(lin.precioUnit) || 0) * factor * 100) / 100;
         cotizacionesUsadas.set(cot.id, `${cot.nombre || cot.categoria || "Cotización"} (${fmtDate(cot.fecha)}${d.descuentoMonto > 0 ? `, con ${fmtN(d.descuentoPct || (d.descuentoMonto / d.subtotal) * 100)}% de descuento` : ""})`);
+      }
+      // La instalación/servicios se suma una sola vez por cotización (no por cada movimiento que
+      // referencia esa cotización), con el mismo desglose que ya usa Rentabilidad: si se cargaron
+      // servicios con el sugeridor se agrega uno por servicio, si no una sola línea con el monto manual.
+      if (cot.incluirInstalacion && !cotizacionesConServicioAgregado.has(cot.id)) {
+        cotizacionesConServicioAgregado.add(cot.id);
+        const servicios = cot.serviciosAdicionales || [];
+        if (servicios.length > 0) {
+          for (const s of servicios) {
+            lineasServicio.push({
+              cantidad: 1, marca: "AEON", codigo: "",
+              producto: `${s.tipo || "Servicio"}${s.descripcion ? `: ${s.descripcion}` : ""}`,
+              familia: "Servicios", precioUnit: Math.round((Number(s.monto) || 0) * 100) / 100,
+            });
+          }
+        } else if (Number(cot.instalacionMonto) > 0) {
+          lineasServicio.push({
+            cantidad: 1, marca: "AEON", codigo: "",
+            producto: "Instalación / Servicios", familia: "Servicios",
+            precioUnit: Math.round(Number(cot.instalacionMonto) * 100) / 100,
+          });
+        }
       }
     }
     if (precio == null && Number(m.monto) > 0) precio = Math.round((Number(m.monto) / cantidad) * 100) / 100;
@@ -4643,8 +4669,10 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
     condicion: previo?.condicion || "Crédito", termino: "",
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
     obra: (m0.obra || "").trim(),
-    lineas: Array.from(porCodigo.values()),
-    origenPrecios: cotizacionesUsadas.size ? `Precios tomados de: ${[...cotizacionesUsadas.values()].join("; ")}.` : "Sin cotización vinculada: completá los precios.",
+    lineas: [...Array.from(porCodigo.values()), ...lineasServicio],
+    origenPrecios: cotizacionesUsadas.size
+      ? `Precios tomados de: ${[...cotizacionesUsadas.values()].join("; ")}.${lineasServicio.length > 0 ? " Incluye la instalación/servicios de esa cotización." : ""}`
+      : "Sin cotización vinculada: completá los precios.",
     estado: "Borrador",
   };
 }

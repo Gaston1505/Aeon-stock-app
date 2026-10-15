@@ -336,10 +336,6 @@ export function asuntoMailPedido(p) {
 
 export function textoMailPedido(p, { corto = false } = {}) {
   const cc = centroCostoPorCodigo(p.centroCostoCodigo);
-  const lineas = (p.lineas || []).map((l) => {
-    const pu = l.precioUnit === "" || l.precioUnit == null ? "s/precio" : `U$S ${fmtNum(l.precioUnit)}`;
-    return `- ${l.cantidad} x ${l.codigo || "(sin código)"} — ${l.producto || ""} — ${pu} c/u = U$S ${fmtNum(totalLineaPedido(l))}`;
-  });
   const cab = [
     "Hola, te paso el pedido de facturación:",
     "",
@@ -349,12 +345,26 @@ export function textoMailPedido(p, { corto = false } = {}) {
     `Obra: ${p.obra || ""}`,
     `Centro de costo: ${p.centroCostoCodigo || ""}${p.centroCostoNombre || cc ? " — " + (p.centroCostoNombre || cc.nombre) : ""}`,
     `Condición: ${p.condicion || ""}${p.termino ? " — Término: " + p.termino : ""}`,
-    "",
-    "Detalle:",
   ].filter((x) => x !== null);
+  // Versión corta (mailto / Outlook web): acá el PDF y el Excel no se pueden adjuntar solos desde
+  // un link, así que el usuario los adjunta a mano después de que se descargan — repetir el
+  // detalle línea por línea en el cuerpo del mail es redundante (ya está, mejor presentado, en el
+  // PDF) y hace que lo que se vea al abrir el mail sea un bloque de texto en vez del PDF — acá va
+  // solo el total y un aviso de que el detalle está en el adjunto.
+  if (corto) {
+    return [
+      ...cab, "",
+      `Total a facturar: U$S ${fmtNum(totalPedido(p))}`, "",
+      "El detalle completo está en el PDF (se descargó junto con el Excel — adjuntalos acá antes de enviar).",
+      "", "Saludos,", "Gastón Gibernau", "Quantum Investments S.A.",
+    ].join("\n");
+  }
+  const lineas = (p.lineas || []).map((l) => {
+    const pu = l.precioUnit === "" || l.precioUnit == null ? "s/precio" : `U$S ${fmtNum(l.precioUnit)}`;
+    return `- ${l.cantidad} x ${l.codigo || "(sin código)"} — ${l.producto || ""} — ${pu} c/u = U$S ${fmtNum(totalLineaPedido(l))}`;
+  });
   const pie = ["", `Total a facturar: U$S ${fmtNum(totalPedido(p))}`, "", "Adjunto el pedido en PDF y Excel.", "", "Saludos,", "Gastón Gibernau", "Quantum Investments S.A."];
-  const cuerpoLineas = corto && lineas.length > 6 ? [...lineas.slice(0, 6), `- ... y ${lineas.length - 6} línea(s) más (ver adjunto)`] : lineas;
-  return [...cab, ...cuerpoLineas, ...pie].join("\n");
+  return [...cab, "", "Detalle:", ...lineas, ...pie].join("\n");
 }
 
 // El destinatario puede ser un mail, una lista separada por comas/punto y coma, o un array.
@@ -382,7 +392,7 @@ export async function enviarPedidoPorMail(p, destinatario) {
   }
   descargar(pdfBytes, archivos[0].name, "application/pdf");
   descargar(xlsxBuf, archivos[1].name, archivos[1].type);
-  const cuerpo = textoMailPedido(p, { corto: true }) + "\n\n(Adjuntar los archivos descargados: PDF y Excel.)";
+  const cuerpo = textoMailPedido(p, { corto: true });
   window.location.href = `mailto:${listaDestinatarios(destinatario).map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
   return "mailto";
 }
@@ -393,7 +403,7 @@ export async function abrirPedidoEnOutlookWeb(p, destinatario) {
   const [pdfBytes, xlsxBuf] = await Promise.all([generatePedidoFacturacionPdf(p), generatePedidoFacturacionExcel(p)]);
   descargar(pdfBytes, nombreArchivoPedidoPdf(p), "application/pdf");
   descargar(xlsxBuf, nombreArchivoPedidoExcel(p), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  const cuerpo = textoMailPedido(p, { corto: true }) + "\n\n(Adjuntar los archivos descargados: PDF y Excel.)";
+  const cuerpo = textoMailPedido(p, { corto: true });
   const url = `https://outlook.office.com/mail/deeplink/compose?to=${listaDestinatarios(destinatario).map(encodeURIComponent).join(",")}&subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
   window.open(url, "_blank", "noopener");
 }

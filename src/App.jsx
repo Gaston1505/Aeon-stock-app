@@ -2404,8 +2404,12 @@ export default function App() {
   const updateMovimiento = (id, patch) => updateItem(COLLECTIONS.movimientos, id, patch);
   // Foto de remito cargada en cualquier momento después de la salida, no solo al cargarla — se
   // guarda en la primera línea del grupo, que es de donde la lee RemitoGrupoCard para mostrarla.
+  // Hay que comprimirla igual que en el resto de los lugares donde se sube foto de remito: una
+  // foto de celular sin comprimir pesa varios MB, supera el límite de 1MB por documento de
+  // Firestore, y el guardado falla en silencio — la salida queda bien pero la foto nunca se
+  // guarda, y desaparece al actualizar la página.
   const subirFotoRemito = async (grupo, file) => {
-    const dataUrl = await readFileAsDataUrl(file);
+    const dataUrl = await compressImage(file);
     updateMovimiento(grupo.items[0].id, { fotoRemito: dataUrl });
   };
 

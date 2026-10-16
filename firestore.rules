@@ -90,5 +90,15 @@ service cloud.firestore {
     match /preciosMayorista/{docId} { allow read, write: if esAdmin(); }
     match /configuracion/{docId} { allow read, write: if esAdmin(); }
     match /ordenesCompra/{docId} { allow read, write: if esAdmin(); }
+
+    // El PDF de la ficha técnica de cada producto vive acá (no en productos/{docId}) para que
+    // el catálogo entero no se descargue cargado de PDFs cada vez que se abre la app — se pide
+    // un documento puntual solo cuando hace falta ver/compartir/incluir esa ficha. Mismos
+    // permisos que productos: depósito puede leerla (para mostrarla al elegir un producto), solo
+    // admin puede subirla o borrarla.
+    match /fichasTecnicas/{docId} {
+      allow read: if esAdmin() || esDeposito();
+      allow write: if esAdmin();
+    }
   }
 }

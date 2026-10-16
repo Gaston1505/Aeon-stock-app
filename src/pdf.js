@@ -114,7 +114,7 @@ function wrapText(font, text, size, maxWidth) {
   return lines;
 }
 
-function dataUrlToBytes(dataUrl) {
+export function dataUrlToBytes(dataUrl) {
   const base64 = dataUrl.split(",")[1] || "";
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);

@@ -28,7 +28,7 @@ import {
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
-  COMPANY, fmtFecha,
+  COMPANY, fmtFecha, dataUrlToBytes,
 } from "./pdf";
 import { prepararPdfParaFirestore } from "./pdfCompress";
 
@@ -302,6 +302,38 @@ async function compartirArchivo(bytes, filename, texto) {
     console.error("Error al compartir archivo", e);
   }
   return false;
+}
+
+// Remito y factura se guardan como data URL (foto o PDF, lo que haya subido el usuario) — para
+// compartirlos hay que decodificarlos a bytes y armar un nombre de archivo con la extensión que
+// corresponda, y si el dispositivo no tiene panel de compartir nativo, descargarlos directo (mismo
+// resultado que ya usa "Compartir fichas").
+function mimeDeDataUrl(dataUrl) {
+  const m = /^data:([^;]+);/.exec(dataUrl || "");
+  return m ? m[1] : "application/octet-stream";
+}
+function extensionDeMime(mime) {
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  return "bin";
+}
+async function compartirAdjunto(dataUrl, nombreBase, texto) {
+  if (!dataUrl) return;
+  const bytes = dataUrlToBytes(dataUrl);
+  const filename = `${nombreBase}.${extensionDeMime(mimeDeDataUrl(dataUrl))}`;
+  const ok = await compartirArchivo(bytes, filename, texto || nombreBase);
+  if (!ok) {
+    const blob = new Blob([bytes], { type: mimeDeDataUrl(dataUrl) });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
 }
 
 // Desglose completo del total: cuánto es de equipos puros, cuánto se le restó de descuento y
@@ -1708,9 +1740,18 @@ function PhotoViewer({ src, onClose }) {
       style={{ backgroundColor: "rgba(15,23,32,0.75)" }}
       onClick={onClose}
     >
-      <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.15)" }}>
-        <X size={20} color="#FFFFFF" />
-      </button>
+      <div className="absolute top-4 right-4 flex items-center gap-2">
+        <button
+          onClick={(e) => { e.stopPropagation(); compartirAdjunto(src, "Remito", "Remito"); }}
+          className="p-2 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.15)" }}
+          title="Compartir"
+        >
+          <Share2 size={20} color="#FFFFFF" />
+        </button>
+        <button onClick={onClose} className="p-2 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.15)" }}>
+          <X size={20} color="#FFFFFF" />
+        </button>
+      </div>
       <img
         src={src}
         alt="Foto del remito"
@@ -4530,6 +4571,11 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
           {factura && (
             <span role="button" title="Ver factura" onClick={verFactura}>
               <FileText size={16} style={{ color: ACCENT }} />
+            </span>
+          )}
+          {factura && (
+            <span role="button" title="Compartir factura" onClick={(e) => { e.stopPropagation(); compartirAdjunto(factura, "Factura", "Factura"); }}>
+              <Share2 size={16} style={{ color: ACCENT }} />
             </span>
           )}
           {onSubirFactura && (

@@ -4532,18 +4532,12 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
     if (file && onSubirFactura) onSubirFactura(file);
   };
   // Un <a> real anidado adentro del <button> de arriba (como estaba) queda atrapado por ese botón
-  // en varios navegadores y nunca llega a abrir — el click programático sobre un <a> armado al
-  // vuelo (mismo truco que ya usa pdf.js para descargar) lo evita, sin dejar de ser un click
-  // directo del usuario (necesario para que el navegador no bloquee la navegación a una URL data:).
+  // en varios navegadores y nunca llega a abrir, y además navegar una pestaña nueva directo a una
+  // URL data: queda bloqueado por Chrome/Edge ("not allowed to navigate top frame to data URL") —
+  // abrirAdjunto resuelve ambas cosas (arma un blob: y lo abre con click programático).
   const verFactura = (e) => {
     e.stopPropagation();
-    const a = document.createElement("a");
-    a.href = factura;
-    a.target = "_blank";
-    a.rel = "noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    abrirAdjunto({ data: factura, nombre: "Factura" });
   };
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -6286,13 +6280,14 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                     <ShieldCheck size={13} /> {descargandoCompleto ? "Generando..." : "Certificado completo"}
                   </button>
                   {v.contratoData ? (
-                    <a
-                      href={v.contratoData} target="_blank" rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => abrirAdjunto({ data: v.contratoData, nombre: "Contrato" })}
                       className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
                       style={{ borderColor: BORDER, color: ACCENT }}
                     >
                       <FileSignature size={13} /> Ver contrato
-                    </a>
+                    </button>
                   ) : (
                     <label
                       className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1 cursor-pointer"
@@ -9167,9 +9162,9 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizC
       <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
         {p.fichaTecnicaData ? (
           <div className="flex items-center gap-1.5">
-            <a href={p.fichaTecnicaData} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
+            <button type="button" onClick={() => abrirAdjunto({ data: p.fichaTecnicaData, nombre: "Ficha tecnica" })} className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
               <FileText size={13} /> Ficha técnica
-            </a>
+            </button>
             <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">
               <X size={12} style={{ color: MUTED }} />
             </button>

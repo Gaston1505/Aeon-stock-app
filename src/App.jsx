@@ -10,7 +10,7 @@ import {
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, onSnapshot, query, orderBy, runTransaction,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, onSnapshot, query, orderBy, runTransaction,
 } from "firebase/firestore";
 import { downloadEtiquetasPdf, textoSerial, parsearSerial, claveCodigo, SERIAL_BASE_APP } from "./etiquetas";
 import { anchosCode128 } from "./code128";
@@ -181,6 +181,7 @@ const COLLECTIONS = {
   preciosMayorista: "preciosMayorista",
   ordenesCompra: "ordenesCompra",
   configuracion: "configuracion",
+  fichasTecnicas: "fichasTecnicas",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -1384,10 +1385,38 @@ async function deleteItem(name, id) {
     .catch((e) => console.error("Firestore delete error", name, id, e));
 }
 
-// Ficha técnica PDFs are stored as base64 directly on the producto document,
-// so they have to stay well under Firestore's 1MB document limit (base64
-// adds ~33% overhead on top of the raw file size).
+// Ficha técnica PDFs se guardan como base64, en un documento aparte de "productos"
+// (colección fichasTecnicas, mismo id que el producto): si fueran parte del documento
+// del producto, se descargarían enteras en cada apertura de la app para los 200+
+// productos del catálogo, aunque nadie esté mirando ninguna ficha — con 200 productos
+// esto llegó a pesar >30MB en cada carga. Al vivir aparte, solo se piden (getDoc) cuando
+// hace falta ver/compartir/incluir una ficha puntual. Igual deben quedar bien debajo del
+// límite de 1MB por documento de Firestore (el base64 agrega ~33% sobre el tamaño real).
 const MAX_FICHA_BYTES = 650 * 1024;
+const fichaTecnicaCache = new Map();
+async function obtenerFichaTecnica(productoId) {
+  if (!productoId) return "";
+  if (fichaTecnicaCache.has(productoId)) return fichaTecnicaCache.get(productoId);
+  try {
+    const snap = await getDoc(doc(db, COLLECTIONS.fichasTecnicas, productoId));
+    const data = snap.exists() ? (snap.data().data || "") : "";
+    fichaTecnicaCache.set(productoId, data);
+    return data;
+  } catch (e) {
+    console.error("Firestore get error (fichaTecnica)", productoId, e);
+    return "";
+  }
+}
+function guardarFichaTecnica(productoId, dataUrl) {
+  fichaTecnicaCache.set(productoId, dataUrl);
+  return setDoc(doc(db, COLLECTIONS.fichasTecnicas, productoId), { data: dataUrl })
+    .catch((e) => console.error("Firestore set error (fichaTecnica)", productoId, e));
+}
+function borrarFichaTecnica(productoId) {
+  fichaTecnicaCache.delete(productoId);
+  return deleteDoc(doc(db, COLLECTIONS.fichasTecnicas, productoId))
+    .catch((e) => console.error("Firestore delete error (fichaTecnica)", productoId, e));
+}
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1456,7 +1485,7 @@ function parseCatalogoExcel(arrayBuffer) {
       contenedorTipo: String(item.contenedorTipo || "").trim(),
       contenedorCantidad: Number(item.contenedorCantidad) || 0,
       stockDisponible: item.stockDisponible === "" || item.stockDisponible == null ? null : Number(item.stockDisponible) || 0,
-      foto: "", fichaTecnicaData: "", fichaTecnicaNombre: "",
+      foto: "", fichaTecnicaNombre: "",
     });
   });
   return { productos, errores };
@@ -2658,8 +2687,10 @@ export default function App() {
   // Aplica de una vez los precios de lista que salen de las métricas: [{ id, precioLista }].
   const aplicarPreciosSegunMetricas = (cambios) => Promise.all(cambios.map((c) => updateItem(COLLECTIONS.productos, c.id, { precioLista: c.precioLista })));
   const deleteProducto = (p) => deleteItem(COLLECTIONS.productos, p.id);
-  const quitarFichaTecnica = (producto) =>
-    updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaData: "", fichaTecnicaNombre: "" });
+  const quitarFichaTecnica = (producto) => {
+    borrarFichaTecnica(producto.id);
+    return updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaNombre: "" });
+  };
 
   // Una sola cotización "principal" por obra y rubro: al marcar una, la que lo era pasa a "suma"
   // (sigue contando para el total de la obra, pero deja de ser la referencia) — nunca se pierde
@@ -2833,17 +2864,20 @@ export default function App() {
   // descargar/compartir, en vez de llevarla copiada en la propia línea de la cotización — esa
   // copia duplicaba el mismo PDF en cada cotización que usara ese producto, y era la principal
   // razón por la que la colección de cotizaciones (que se carga entera al abrir la app) se iba
-  // haciendo cada vez más pesada.
-  const cotizacionConFichas = (cotizacion) => ({
-    ...cotizacion,
-    lineas: (cotizacion.lineas || []).map((l) => ({
-      ...l,
-      fichaTecnicaData: l.fichaTecnicaData || productos.find((p) => p.nombre === l.codigo)?.fichaTecnicaData || "",
-    })),
-  });
+  // haciendo cada vez más pesada. La ficha en sí vive en su propia colección (fichasTecnicas) y
+  // se pide recién acá (obtenerFichaTecnica), no al cargar el catálogo.
+  const cotizacionConFichas = async (cotizacion) => {
+    const lineas = await Promise.all((cotizacion.lineas || []).map(async (l) => {
+      if (l.fichaTecnicaData) return l; // compat con líneas viejas que ya la tenían embebida
+      const prod = productos.find((p) => p.nombre === l.codigo);
+      const data = prod?.fichaTecnicaNombre ? await obtenerFichaTecnica(prod.id) : "";
+      return { ...l, fichaTecnicaData: data };
+    }));
+    return { ...cotizacion, lineas };
+  };
 
   const handleDescargarFichas = async (cotizacionOriginal) => {
-    const cotizacion = cotizacionConFichas(cotizacionOriginal);
+    const cotizacion = await cotizacionConFichas(cotizacionOriginal);
     setDescargandoId(cotizacion.id + ":fichas");
     setPdfError("");
     try {
@@ -2871,7 +2905,7 @@ export default function App() {
   };
 
   const handleCompartirFichas = async (cotizacionOriginal) => {
-    const cotizacion = cotizacionConFichas(cotizacionOriginal);
+    const cotizacion = await cotizacionConFichas(cotizacionOriginal);
     setDescargandoId(cotizacion.id + ":compartir-fichas");
     setPdfError("");
     try {
@@ -2896,7 +2930,10 @@ export default function App() {
     setDescargandoId("catalogo:compartir-fichas");
     setPdfError("");
     try {
-      const bytes = await generateFichasTecnicasPdfDeProductos(productosSeleccionados);
+      const productosConFicha = await Promise.all(productosSeleccionados.map(async (p) => ({
+        ...p, fichaTecnicaData: p.fichaTecnicaNombre ? await obtenerFichaTecnica(p.id) : "",
+      })));
+      const bytes = await generateFichasTecnicasPdfDeProductos(productosConFicha);
       if (!bytes) {
         setPdfError("Ninguno de los productos seleccionados tiene ficha técnica cargada.");
         setDescargandoId(null);
@@ -2904,7 +2941,7 @@ export default function App() {
       }
       const nombres = productosSeleccionados.map((p) => nombreProducto(p) || p.nombre).join(", ");
       const ok = await compartirArchivo(bytes, nombreArchivoFichasTecnicasProductos(), `Fichas técnicas — ${nombres}`);
-      if (!ok) await downloadFichasTecnicasPdfDeProductos(productosSeleccionados);
+      if (!ok) await downloadFichasTecnicasPdfDeProductos(productosConFicha);
     } catch (e) {
       console.error("Error compartiendo fichas técnicas del catálogo", e);
       setPdfError("No se pudo compartir el PDF de fichas técnicas. Probá de nuevo.");
@@ -4205,12 +4242,14 @@ export default function App() {
           producto={productoEditando}
           defaults={nuevoProductoDefaults}
           matrizCostos={matrizCostosEfectiva}
-          onSave={(d) => {
-            if (productoEditando) updateProducto(productoEditando.id, d);
-            else addProducto(d);
+          onSave={async (d) => {
+            let id = productoEditando?.id;
+            if (productoEditando) await updateProducto(productoEditando.id, d);
+            else id = (await addProducto(d))?.id;
             setDrawer(null);
             setProductoEditando(null);
             setNuevoProductoDefaults(null);
+            return id;
           }}
         />
       </Drawer>
@@ -8906,15 +8945,17 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
     setGuardando(true);
     setError("");
     try {
-      let ficha = {};
+      // La ficha técnica (el PDF en sí) se guarda aparte, en la colección fichasTecnicas, no en
+      // el documento del producto — así el catálogo entero no se descarga cargado de PDFs cada
+      // vez que se abre la app. Acá solo viaja el nombre (liviano) junto con el resto del producto.
+      let fichaDataUrl = null;
+      let fichaTecnicaNombre = producto?.fichaTecnicaNombre || "";
       if (fichaFile) {
         const { dataUrl } = await prepararPdfParaFirestore(fichaFile);
-        ficha = { fichaTecnicaData: dataUrl, fichaTecnicaNombre: fichaFile.name };
-      } else if (producto) {
-        // conservar la ficha técnica existente si no se subió una nueva
-        ficha = { fichaTecnicaData: producto.fichaTecnicaData || "", fichaTecnicaNombre: producto.fichaTecnicaNombre || "" };
+        fichaDataUrl = dataUrl;
+        fichaTecnicaNombre = fichaFile.name;
       }
-      onSave({
+      const id = await onSave({
         nombre, categoria, descripcion, especLabel, especValor,
         categoriaPrincipal, subcategoria, subcategoria2, subcategoria3,
         ordenNumerico: ordenNumerico === "" ? null : Number(ordenNumerico) || 0,
@@ -8925,8 +8966,9 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
-        foto, noDisponible, ...ficha,
+        foto, noDisponible, fichaTecnicaNombre,
       });
+      if (fichaDataUrl && id) await guardarFichaTecnica(id, fichaDataUrl);
     } catch (err) {
       setError("No se pudo leer la ficha técnica. Probá de nuevo.");
       setGuardando(false);
@@ -9170,9 +9212,9 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizC
       )}
 
       <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
-        {p.fichaTecnicaData ? (
+        {p.fichaTecnicaNombre ? (
           <div className="flex items-center gap-1.5">
-            <button type="button" onClick={() => abrirAdjunto({ data: p.fichaTecnicaData, nombre: "Ficha tecnica" })} className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
+            <button type="button" onClick={async () => abrirAdjunto({ data: await obtenerFichaTecnica(p.id), nombre: "Ficha tecnica" })} className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
               <FileText size={13} /> Ficha técnica
             </button>
             <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">
@@ -9183,9 +9225,9 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizC
           <span className="text-xs" style={{ color: MUTED }}>Sin ficha técnica</span>
         )}
         {seleccionable && (
-          <label className="flex items-center gap-1.5 text-xs" style={{ color: p.fichaTecnicaData ? INK : MUTED, opacity: p.fichaTecnicaData ? 1 : 0.5 }}>
+          <label className="flex items-center gap-1.5 text-xs" style={{ color: p.fichaTecnicaNombre ? INK : MUTED, opacity: p.fichaTecnicaNombre ? 1 : 0.5 }}>
             <input
-              type="checkbox" checked={!!seleccionado} disabled={!p.fichaTecnicaData}
+              type="checkbox" checked={!!seleccionado} disabled={!p.fichaTecnicaNombre}
               onChange={() => onToggleSeleccion(p)}
             />
             Compartir
@@ -12141,7 +12183,7 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
   // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
   // (evita duplicar el mismo PDF en cada cotización que use ese producto) — achica bastante el
   // peso de la colección de cotizaciones, que antes crecía con cada ficha de cada línea agregada.
-  const tieneFichas = (c.lineas || []).some((l) => (productos || []).find((p) => p.nombre === l.codigo)?.fichaTecnicaData);
+  const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData || (productos || []).find((p) => p.nombre === l.codigo)?.fichaTecnicaNombre);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
   const estadoSalida = estadoSalidaCotizacion(c);
   const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;

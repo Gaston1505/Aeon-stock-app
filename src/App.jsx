@@ -1128,13 +1128,25 @@ function agruparCotizaciones(cotizaciones) {
       // categoría (ver el caso de "cotizaciones separadas, misma obra" en la nota de arriba) y
       // hacía falta algo único para usar de key en el render — la categoría sola colisionaba.
       for (const [hiloKey, versiones] of porHilo) hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, rubro: rubroDeCotizacion(versiones[0]), versiones, activa: versiones[0] });
-      // Mismo rubro juntos (para que se vea cuáles compiten entre sí), y adentro lo más nuevo primero.
-      hilos.sort((a, b) => (RUBROS_COTIZACION.indexOf(a.rubro) - RUBROS_COTIZACION.indexOf(b.rubro)) || ((b.activa.createdAt || 0) - (a.activa.createdAt || 0)));
+      // Por fecha (más nueva primero) antes de clasificar — clasificarHilosDeRubro, cuando nadie
+      // marcó una principal a mano, usa "la primera que no sea historial" como fallback, y ese
+      // fallback tiene que caer en la más reciente de cada rubro, no en cualquier orden.
+      hilos.sort((a, b) => (b.activa.createdAt || 0) - (a.activa.createdAt || 0));
       const rubros = [...new Set(hilos.map((h) => h.rubro))];
       const clasificaciones = rubros.map((r) => clasificarHilosDeRubro(hilos.filter((h) => h.rubro === r)));
       const principales = clasificaciones.map((cl) => cl.principal).filter(Boolean);
       const sumandose = clasificaciones.flatMap((cl) => cl.suma);
       const historial = clasificaciones.flatMap((cl) => cl.historial);
+      // Orden final para mostrar en el esquema por obra: la(s) principal(es) siempre arriba —
+      // aunque no sea la más nueva — y el resto por fecha, más reciente primero. Antes se
+      // agrupaba por rubro, así que una obra con varias categorías podía enterrar la principal de
+      // Aires bajo cotizaciones más nuevas de Cocina; ahora nada tapa a la principal.
+      const esPrincipal = new Set(principales);
+      hilos.sort((a, b) => {
+        const pa = esPrincipal.has(a) ? 1 : 0, pb = esPrincipal.has(b) ? 1 : 0;
+        if (pa !== pb) return pb - pa;
+        return (b.activa.createdAt || 0) - (a.activa.createdAt || 0);
+      });
       obras.push({ obra, hilos, principales, sumandose, historial });
     }
     obras.sort((a, b) => {

@@ -2788,7 +2788,21 @@ export default function App() {
     XLSX.writeFile(wb, `Armado_combinaciones_${safe(armado.cliente) || "cliente"}_${safe(armado.obra) || "obra"}_${safe(armado.categoria) || armado.fecha || ""}.xlsx`);
   };
 
-  const handleDescargarFichas = async (cotizacion) => {
+  // La ficha técnica de cada línea se busca en el catálogo (por código) en el momento de
+  // descargar/compartir, en vez de llevarla copiada en la propia línea de la cotización — esa
+  // copia duplicaba el mismo PDF en cada cotización que usara ese producto, y era la principal
+  // razón por la que la colección de cotizaciones (que se carga entera al abrir la app) se iba
+  // haciendo cada vez más pesada.
+  const cotizacionConFichas = (cotizacion) => ({
+    ...cotizacion,
+    lineas: (cotizacion.lineas || []).map((l) => ({
+      ...l,
+      fichaTecnicaData: l.fichaTecnicaData || productos.find((p) => p.nombre === l.codigo)?.fichaTecnicaData || "",
+    })),
+  });
+
+  const handleDescargarFichas = async (cotizacionOriginal) => {
+    const cotizacion = cotizacionConFichas(cotizacionOriginal);
     setDescargandoId(cotizacion.id + ":fichas");
     setPdfError("");
     try {
@@ -2815,7 +2829,8 @@ export default function App() {
     setDescargandoId(null);
   };
 
-  const handleCompartirFichas = async (cotizacion) => {
+  const handleCompartirFichas = async (cotizacionOriginal) => {
+    const cotizacion = cotizacionConFichas(cotizacionOriginal);
     setDescargandoId(cotizacion.id + ":compartir-fichas");
     setPdfError("");
     try {
@@ -10362,7 +10377,7 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
     for (const btu of combo.valores) agrupado.set(btu, (agrupado.get(btu) || 0) + 1);
     const lineasNuevas = [{
       codigo: exterior.nombre, descripcion: exterior.descripcion, foto: exterior.foto,
-      especLabel: exterior.especLabel, especValor: exterior.especValor, fichaTecnicaData: exterior.fichaTecnicaData || "",
+      especLabel: exterior.especLabel, especValor: exterior.especValor,
       cantidad: 1, precioUnit: Number(exterior.precioLista) || 0,
     }];
     for (const [btu, cant] of [...agrupado.entries()].sort((a, b) => b[0] - a[0])) {
@@ -10370,7 +10385,7 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
       if (!interior) continue;
       lineasNuevas.push({
         codigo: interior.nombre, descripcion: interior.descripcion, foto: interior.foto,
-        especLabel: interior.especLabel, especValor: interior.especValor, fichaTecnicaData: interior.fichaTecnicaData || "",
+        especLabel: interior.especLabel, especValor: interior.especValor,
         cantidad: cant, precioUnit: Number(interior.precioLista) || 0,
       });
     }
@@ -11113,7 +11128,6 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
     setLineas([...lineas, {
       codigo: productoSel.nombre, descripcion: productoSel.descripcion, foto: productoSel.foto,
       especLabel: productoSel.especLabel, especValor: productoSel.especValor,
-      fichaTecnicaData: productoSel.fichaTecnicaData || "",
       cantidad: Number(cantidadNueva) || 1, precioUnit: Number(precioNuevo) || 0,
     }]);
     setProductoId("");
@@ -11498,7 +11512,6 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
     setLineas([...lineas, {
       codigo: productoSel.nombre, descripcion: productoSel.descripcion, foto: productoSel.foto,
       especLabel: productoSel.especLabel, especValor: productoSel.especValor,
-      fichaTecnicaData: productoSel.fichaTecnicaData || "",
       cantidad: Number(cantidadNueva) || 1, precioUnit: Number(precioNuevo) || 0,
     }]);
     setProductoId("");
@@ -12103,7 +12116,10 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
 function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
-  const tieneFichas = (c.lineas || []).some((l) => l.fichaTecnicaData);
+  // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
+  // (evita duplicar el mismo PDF en cada cotización que use ese producto) — achica bastante el
+  // peso de la colección de cotizaciones, que antes crecía con cada ficha de cada línea agregada.
+  const tieneFichas = (c.lineas || []).some((l) => (productos || []).find((p) => p.nombre === l.codigo)?.fichaTecnicaData);
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
   const estadoSalida = estadoSalidaCotizacion(c);
   const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;

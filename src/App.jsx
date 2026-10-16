@@ -2478,6 +2478,23 @@ export default function App() {
   const addVenta = (data) => addItem(COLLECTIONS.ventas, data);
   const updateVentaEstado = (id, field, value) => updateItem(COLLECTIONS.ventas, id, { [field]: value });
   const deleteVenta = (id) => deleteItem(COLLECTIONS.ventas, id);
+  // Mismo adjunto (PDF o foto, comprimido según corresponda) que usa la ficha de venta en
+  // Garantías, pero reutilizable desde cualquier otra vista que también pueda querer cargarlo (ej.
+  // Salidas, para adjuntar la factura al remito sin tener que ir a buscar la ficha de venta) — un
+  // solo lugar donde se guarda (el doc de ventas), editable desde más de una pantalla.
+  const actualizarAdjuntoVenta = async (ventaId, file, campoData, campoNombre) => {
+    if (!file) return { comprimido: false };
+    if (file.type.startsWith("image/")) {
+      const dataUrl = await compressImage(file);
+      updateVentaEstado(ventaId, campoData, dataUrl);
+      updateVentaEstado(ventaId, campoNombre, file.name);
+      return { comprimido: false };
+    }
+    const { dataUrl, comprimido } = await prepararPdfParaFirestore(file);
+    updateVentaEstado(ventaId, campoData, dataUrl);
+    updateVentaEstado(ventaId, campoNombre, file.name);
+    return { comprimido };
+  };
 
   // Ficha de Venta y garantía a partir de una cotización Ganada: una ficha por obra, con
   // todos los modelos/cantidades de la cotización — el service (12/24 meses) se cuenta desde
@@ -3866,9 +3883,10 @@ export default function App() {
               onAprobar={aprobarSolicitud} onRechazar={(id) => rechazarSolicitud(id)}
             />
             <SalidasPorRemito
-              movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion}
+              movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion} ventas={ventas}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
               onSubirFoto={subirFotoRemito}
+              onAdjuntarFactura={(ventaId, file) => actualizarAdjuntoVenta(ventaId, file, "facturaData", "facturaNombre")}
               onPedido={esAdmin ? ((g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }) : undefined}
             />
           </Section>
@@ -4428,12 +4446,18 @@ function CodigoComercialCell({ registro, equipos, productos }) {
   );
 }
 
-function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, onSubirFoto, acciones, children }) {
+function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, onSubirFoto, factura, onSubirFactura, acciones, children }) {
   const inputRef = useRef(null);
+  const inputFacturaRef = useRef(null);
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // permite volver a elegir el mismo archivo si hace falta reemplazar
     if (file && onSubirFoto) onSubirFoto(file);
+  };
+  const handleFactura = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file && onSubirFactura) onSubirFactura(file);
   };
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -4458,12 +4482,29 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
               <Upload size={16} style={{ color: foto ? MUTED : ACCENT }} />
             </span>
           )}
+          {factura && (
+            // <a> real (no PhotoViewer): la factura puede ser una foto o un PDF, y un <a href>
+            // con click directo del usuario abre los dos bien en una pestaña nueva — un
+            // window.open()/PhotoViewer con una data: URL de PDF no sirve para el caso PDF.
+            <a href={factura} target="_blank" rel="noreferrer" title="Ver factura" onClick={(e) => e.stopPropagation()}>
+              <FileText size={16} style={{ color: ACCENT }} />
+            </a>
+          )}
+          {onSubirFactura && (
+            <span
+              role="button" title={factura ? "Cambiar factura" : "Adjuntar factura"}
+              onClick={(e) => { e.stopPropagation(); inputFacturaRef.current?.click(); }}
+            >
+              <FileSignature size={16} style={{ color: factura ? MUTED : ACCENT }} />
+            </span>
+          )}
           <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
         </div>
       </button>
       {/* Fuera del <button> de arriba a propósito: un <input type="file"> real no puede ir anidado
           dentro de otro control interactivo sin volverse quisquilloso en algunos navegadores. */}
       {onSubirFoto && <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />}
+      {onSubirFactura && <input ref={inputFacturaRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleFactura} />}
       {abierto && <div className="px-4 pb-4">{children}</div>}
     </div>
   );
@@ -4492,8 +4533,9 @@ function resumenRemito(g, unidadSingular, unidadPlural) {
   return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${g.unidades !== 1 ? unidadPlural : unidadSingular}${rubros ? " · " + rubros : ""}`;
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onPedido }) {
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onAdjuntarFactura, onPedido }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
+  const [avisoFactura, setAvisoFactura] = useState("");
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const productoDe = (m) => productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
   const grupos = useMemo(
@@ -4508,12 +4550,16 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbie
   if (grupos.length === 0) return <EmptyState icon={Package} title="Todavía no hay registros" subtitle="Usá el botón de arriba para cargar el primero." />;
   return (
     <div className="space-y-3">
+      {avisoFactura && <p className="text-xs mb-1" style={{ color: "#B45309" }}>{avisoFactura}</p>}
       {grupos.map((g) => {
         const m0 = g.items[0];
         const motivos = [...new Set(g.items.map((m) => m.motivo).filter(Boolean))].join(", ");
         const destino = [m0.cliente || m0.empresaCliente, m0.obra].filter(Boolean).join(" — ");
         const foto = g.items.find((m) => m.fotoRemito)?.fotoRemito;
         const pedido = (pedidos || []).find((p) => p.remitoKey === g.key);
+        // La factura vive en la ficha de venta (Garantías), no acá — se busca por cotizacionId
+        // para poder verla/cargarla desde Salidas también, sin duplicar el archivo guardado.
+        const venta = m0.cotizacionId ? (ventas || []).find((v) => v.cotizacionId === m0.cotizacionId) : null;
         const accionPedido = onPedido && (
           <span
             role="button" title="Pedido de facturación para Administración"
@@ -4533,6 +4579,11 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, forzarAbie
             abierto={forzarAbierto || abiertos.has(g.key)} onToggle={() => toggle(g.key)}
             foto={foto} onVerFoto={onVerFoto}
             onSubirFoto={onSubirFoto && ((file) => onSubirFoto(g, file))}
+            factura={venta?.facturaData}
+            onSubirFactura={venta && onAdjuntarFactura && (async (file) => {
+              const { comprimido } = await onAdjuntarFactura(venta.id, file);
+              setAvisoFactura(comprimido ? "La factura pesaba más de 650 KB — se comprimió para poder guardarla." : "");
+            })}
             acciones={accionPedido}
           >
             <Table

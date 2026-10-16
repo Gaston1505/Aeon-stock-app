@@ -4554,6 +4554,11 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
               <Camera size={16} style={{ color: ACCENT }} />
             </span>
           )}
+          {foto && (
+            <span role="button" title="Compartir remito" onClick={(e) => { e.stopPropagation(); compartirAdjunto(foto, "Remito", "Remito"); }}>
+              <Share2 size={16} style={{ color: ACCENT }} />
+            </span>
+          )}
           {onSubirFoto && (
             <span
               role="button" title={foto ? "Cambiar foto del remito" : "Subir foto del remito"}
@@ -6252,6 +6257,11 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                           {m.fotoRemito && (
                             <button onClick={() => onVerFoto(m.fotoRemito)} title="Ver foto del remito" style={{ color: ACCENT }}>
                               <Camera size={12} />
+                            </button>
+                          )}
+                          {m.fotoRemito && (
+                            <button onClick={() => compartirAdjunto(m.fotoRemito, "Remito", "Remito")} title="Compartir remito" style={{ color: ACCENT }}>
+                              <Share2 size={12} />
                             </button>
                           )}
                         </li>
@@ -10388,7 +10398,7 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
     const agrupado = new Map();
     for (const btu of combo.valores) agrupado.set(btu, (agrupado.get(btu) || 0) + 1);
     const lineasNuevas = [{
-      codigo: exterior.nombre, descripcion: exterior.descripcion, foto: exterior.foto,
+      codigo: exterior.nombre, descripcion: exterior.descripcion,
       especLabel: exterior.especLabel, especValor: exterior.especValor,
       cantidad: 1, precioUnit: Number(exterior.precioLista) || 0,
     }];
@@ -10396,7 +10406,7 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
       const interior = interiorMultiSplitPorBtu(productos, btu);
       if (!interior) continue;
       lineasNuevas.push({
-        codigo: interior.nombre, descripcion: interior.descripcion, foto: interior.foto,
+        codigo: interior.nombre, descripcion: interior.descripcion,
         especLabel: interior.especLabel, especValor: interior.especValor,
         cantidad: cant, precioUnit: Number(interior.precioLista) || 0,
       });
@@ -11138,7 +11148,7 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
       return;
     }
     setLineas([...lineas, {
-      codigo: productoSel.nombre, descripcion: productoSel.descripcion, foto: productoSel.foto,
+      codigo: productoSel.nombre, descripcion: productoSel.descripcion,
       especLabel: productoSel.especLabel, especValor: productoSel.especValor,
       cantidad: Number(cantidadNueva) || 1, precioUnit: Number(precioNuevo) || 0,
     }]);
@@ -11332,8 +11342,8 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
                   <ChevronDown size={13} style={{ color: MUTED }} />
                 </button>
               </div>
-              {l.foto ? (
-                <img src={l.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+              {(productos.find((p) => p.nombre === l.codigo)?.foto || l.foto) ? (
+                <img src={productos.find((p) => p.nombre === l.codigo)?.foto || l.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
               ) : (
                 <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
                   <Tag size={13} style={{ color: MUTED }} />
@@ -11522,7 +11532,7 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
       return;
     }
     setLineas([...lineas, {
-      codigo: productoSel.nombre, descripcion: productoSel.descripcion, foto: productoSel.foto,
+      codigo: productoSel.nombre, descripcion: productoSel.descripcion,
       especLabel: productoSel.especLabel, especValor: productoSel.especValor,
       cantidad: Number(cantidadNueva) || 1, precioUnit: Number(precioNuevo) || 0,
     }]);
@@ -11658,8 +11668,8 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
                       <ChevronDown size={13} style={{ color: MUTED }} />
                     </button>
                   </div>
-                  {f.foto ? (
-                    <img src={f.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+                  {(productos.find((p) => p.nombre === f.codigo)?.foto || f.foto) ? (
+                    <img src={productos.find((p) => p.nombre === f.codigo)?.foto || f.foto} alt="" className="rounded border shrink-0" style={{ width: 28, height: 28, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
                   ) : (
                     <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
                       <Tag size={13} style={{ color: MUTED }} />
@@ -11767,7 +11777,7 @@ function CotizacionDetalle({ c, productos }) {
                 <tr key={i} style={{ borderTop: `0.5px solid ${BORDER}`, color: INK }}>
                   <td className="py-1.5 pr-2">
                     <div className="flex items-center gap-2">
-                      {l.foto && <img src={l.foto} alt="" className="rounded border shrink-0" style={{ width: 34, height: 34, objectFit: "cover", borderColor: BORDER }} />}
+                      {(prod?.foto || l.foto) && <img src={prod?.foto || l.foto} alt="" className="rounded border shrink-0" style={{ width: 34, height: 34, objectFit: "cover", borderColor: BORDER }} />}
                       <div className="min-w-0">
                         <CodeTag>{l.codigo}</CodeTag>
                         {nombre && <span className="block text-[11px]" style={{ color: MUTED }}>{nombre}</span>}

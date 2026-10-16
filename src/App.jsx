@@ -1674,7 +1674,7 @@ function GenerarFichaVentaPrompt({ cotizacion, onGenerar, onDismiss }) {
         onClick={(e) => e.stopPropagation()}
       >
         <p className="text-sm font-medium" style={{ color: INK }}>
-          Retiro registrado para {cotizacion.cliente} — {cotizacion.obra}
+          Entrega registrada para {cotizacion.cliente} — {cotizacion.obra}
         </p>
         <p className="text-sm mt-1.5" style={{ color: MUTED }}>
           Todavía no tiene una ficha de Venta y garantía. ¿Querés generarla ahora?
@@ -4131,7 +4131,7 @@ export default function App() {
         title="Generar ficha de venta y garantía desde cotización"
       >
         <VentaDesdeCotizacionForm
-          cotizaciones={cotizaciones} ventas={ventas} cotizacionInicial={cotizacionParaVenta}
+          cotizaciones={cotizaciones} ventas={ventas} movimientos={movimientos} cotizacionInicial={cotizacionParaVenta}
           onGenerar={(cotizacion, datos) => { generarVentaDesdeCotizacion(cotizacion, datos); setDrawer(null); setCotizacionParaVenta(null); }}
         />
       </Drawer>
@@ -4281,7 +4281,11 @@ export default function App() {
           equipos={equipos}
           comprometidas={comprometidas}
           grupos={gruposEmpresas}
-          onGenerar={(cotizacion, lineas, remitoData) => { generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData); setDrawer(null); }}
+          onGenerar={(cotizacion, lineas, remitoData) => {
+            generarSalidaDesdeCotizacion(cotizacion, lineas, remitoData);
+            setDrawer(null);
+            if (!ventas.some((v) => v.cotizacionId === cotizacion.id)) setPromptFichaVenta(cotizacion);
+          }}
         />
       </Drawer>
       <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); }} title="Pedido de facturación">
@@ -8262,18 +8266,29 @@ function VentaForm({ productos, onSave }) {
   );
 }
 
-function VentaDesdeCotizacionForm({ cotizaciones, ventas, cotizacionInicial, onGenerar }) {
+function VentaDesdeCotizacionForm({ cotizaciones, ventas, movimientos, cotizacionInicial, onGenerar }) {
   const [cotizacionId, setCotizacionId] = useState(cotizacionInicial?.id || "");
   const [fechaVenta, setFechaVenta] = useState(todayISO());
   const [error, setError] = useState("");
 
-  const ganadas = useMemo(() => cotizaciones.filter((c) => c.estado === "Ganada"), [cotizaciones]);
+  // Solo cotizaciones Ganadas, con algo ya entregado (si no, todavía no corresponde la garantía)
+  // y que todavía no tengan su ficha generada — así la misma cotización no puede elegirse dos
+  // veces y terminar con dos fichas de venta/garantía duplicadas para lo mismo.
+  const tieneEntrega = (c) => movimientos.some((m) => m.cotizacionId === c.id);
+  const tieneFicha = (c) => ventas.some((v) => v.cotizacionId === c.id);
+  const ganadas = useMemo(
+    () => cotizaciones.filter((c) => c.estado === "Ganada" && tieneEntrega(c) && !tieneFicha(c)),
+    [cotizaciones, movimientos, ventas]
+  );
   const cotizacion = cotizaciones.find((c) => c.id === cotizacionId);
-  const yaTieneFicha = cotizacionId && ventas.some((v) => v.cotizacionId === cotizacionId);
 
   const submit = () => {
     if (!cotizacion) {
       setError("Elegí una cotización.");
+      return;
+    }
+    if (tieneFicha(cotizacion)) {
+      setError("Esta cotización ya tiene una ficha de venta y garantía generada.");
       return;
     }
     onGenerar(cotizacion, { fechaVenta });
@@ -8300,13 +8315,9 @@ function VentaDesdeCotizacionForm({ cotizaciones, ventas, cotizacionInicial, onG
         </div>
       )}
 
-      {yaTieneFicha && (
-        <p className="text-xs mb-3" style={{ color: "#B45309" }}>
-          Ya existe una ficha de venta y garantía para esta cotización — se generará una adicional.
-        </p>
-      )}
       <p className="text-xs mb-3" style={{ color: MUTED }}>
         Se crea una ficha con todos los modelos y cantidades de la cotización. Los vencimientos de service (12 y 24 meses) se calculan desde la fecha de venta.
+        Solo aparecen acá las cotizaciones Ganadas con algo ya entregado y que todavía no tienen su ficha — una vez generada, dejan de aparecer en esta lista.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Generar ficha de venta y garantía</PrimaryButton>

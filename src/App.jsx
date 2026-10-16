@@ -9214,7 +9214,7 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizC
       <div className="mt-2.5 pt-2.5 border-t flex items-center justify-between" style={{ borderColor: BORDER }}>
         {p.fichaTecnicaNombre ? (
           <div className="flex items-center gap-1.5">
-            <button type="button" onClick={async () => abrirAdjunto({ data: await obtenerFichaTecnica(p.id), nombre: "Ficha tecnica" })} className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
+            <button type="button" onClick={async () => { const win = window.open("", "_blank"); abrirAdjunto({ data: await obtenerFichaTecnica(p.id), nombre: "Ficha tecnica" }, win); }} className="text-xs flex items-center gap-1" style={{ color: ACCENT }}>
               <FileText size={13} /> Ficha técnica
             </button>
             <button onClick={() => onQuitarFicha(p)} title="Quitar ficha técnica">
@@ -13437,11 +13437,17 @@ async function leerAdjunto(file) {
   }
   throw new Error("Solo se admiten fotos o PDF.");
 }
-async function abrirAdjunto(adj) {
-  if (!adj?.data) return;
+// ventanaPrevia: cuando el dato a mostrar hay que pedirlo antes (ej. obtenerFichaTecnica), abrir
+// la pestaña recién después de ese await ya no cuenta como click directo del usuario para el
+// navegador, que la bloquea como popup — por eso quien llama abre la pestaña en blanco ANTES de
+// pedir el dato (todavía dentro del gesto del click) y la pasa acá para solo redirigirla.
+async function abrirAdjunto(adj, ventanaPrevia) {
+  if (!adj?.data) { ventanaPrevia?.close(); return; }
   const blob = await (await fetch(adj.data)).blob();
   const url = URL.createObjectURL(blob);
-  if (!window.open(url, "_blank")) {
+  if (ventanaPrevia && !ventanaPrevia.closed) {
+    ventanaPrevia.location.href = url;
+  } else if (!window.open(url, "_blank")) {
     const a = document.createElement("a");
     a.href = url; a.download = adj.nombre || "archivo"; a.click();
   }

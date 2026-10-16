@@ -6101,13 +6101,17 @@ const COMPROMETIDA_BADGE = {
 };
 
 function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, descargandoId, pdfError }) {
-  // Firestore guarda todo el documento en un límite de 1 MB — un contrato o factura escaneada
-  // puede pesar más que eso fácil. prepararPdfParaFirestore lo comprime solo cuando hace falta
-  // (misma lógica ya probada en la herramienta de fichas técnicas), así no falla en silencio.
+  // Garantías es solo lo que hace a la garantía en sí: datos de la venta, contrato firmado y
+  // seguimiento de service — remito y factura viven en Salidas (ver RemitoGrupoCard), que es de
+  // donde salen de verdad (el pedido de facturación nace ahí, y la factura es la respuesta a ese
+  // pedido) y no acá, donde solo inflarían esta ficha sin necesidad.
+  // Firestore guarda todo el documento en un límite de 1 MB — un contrato escaneado puede pesar
+  // más que eso fácil. prepararPdfParaFirestore lo comprime solo cuando hace falta (misma lógica
+  // ya probada en la herramienta de fichas técnicas), así no falla en silencio.
   const [avisoAdjunto, setAvisoAdjunto] = useState(null);
-  // Adjunto genérico para la ficha de venta: puede venir como PDF (contrato, factura digital) o
-  // como foto (factura o remito fotografiados en papel) — cada tipo de archivo se comprime con la
-  // herramienta que le corresponde, para no superar el límite de 1MB por documento de Firestore.
+  // Adjunto genérico para la ficha de venta (hoy, solo el contrato): puede venir como PDF o como
+  // foto del papel firmado — cada tipo de archivo se comprime con la herramienta que le
+  // corresponde, para no superar el límite de 1MB por documento de Firestore.
   const handleAdjuntoVenta = async (venta, file, campoData, campoNombre, etiqueta) => {
     if (!file) return;
     setAvisoAdjunto(null);
@@ -6123,14 +6127,6 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
     }
   };
   const handleContrato = (venta, file) => handleAdjuntoVenta(venta, file, "contratoData", "contratoNombre", "El contrato");
-  // La factura la manda Administración por mail (o por foto) una vez facturada la venta — se
-  // adjunta acá para tener la ficha completa y poder descargársela al cliente sin tener que ir a
-  // buscar el mail.
-  const handleFactura = (venta, file) => handleAdjuntoVenta(venta, file, "facturaData", "facturaNombre", "La factura");
-  // El remito de salida (normalmente una foto del papel firmado) queda disponible acá mismo, sin
-  // depender de que haya una salida vinculada por cotizacionId con su propia foto — así, ante un
-  // reclamo futuro, la ficha de la venta tiene de entrada tanto lo que salió como lo que se facturó.
-  const handleRemitoVenta = (venta, file) => handleAdjuntoVenta(venta, file, "remitoVentaData", "remitoVentaNombre", "El remito");
 
   return (
     <div>
@@ -6247,42 +6243,6 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                     >
                       <FileSignature size={13} /> Adjuntar contrato firmado
                       <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleContrato(v, e.target.files?.[0])} />
-                    </label>
-                  )}
-                  {v.facturaData ? (
-                    <a
-                      href={v.facturaData} download={v.facturaNombre || `Factura_${v.cliente || "cliente"}.pdf`}
-                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-                      style={{ borderColor: BORDER, color: ACCENT }}
-                    >
-                      <FileText size={13} /> Descargar factura
-                    </a>
-                  ) : (
-                    <label
-                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1 cursor-pointer"
-                      style={{ borderColor: BORDER, color: MUTED }}
-                      title="Lo que manda Administración una vez facturada la venta — PDF o foto"
-                    >
-                      <FileText size={13} /> Adjuntar factura
-                      <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => handleFactura(v, e.target.files?.[0])} />
-                    </label>
-                  )}
-                  {v.remitoVentaData ? (
-                    <a
-                      href={v.remitoVentaData} target="_blank" rel="noreferrer"
-                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
-                      style={{ borderColor: BORDER, color: ACCENT }}
-                    >
-                      <FileText size={13} /> Ver remito de salida
-                    </a>
-                  ) : (
-                    <label
-                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1 cursor-pointer"
-                      style={{ borderColor: BORDER, color: MUTED }}
-                      title="Foto o PDF del remito de lo que salió de depósito para esta venta"
-                    >
-                      <FileText size={13} /> Adjuntar remito de salida
-                      <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => handleRemitoVenta(v, e.target.files?.[0])} />
                     </label>
                   )}
                 </div>

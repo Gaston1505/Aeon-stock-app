@@ -12342,6 +12342,19 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
   const nHilos = grupo.hilos.length;
+  // grupo.hilos ya viene ordenado (principal arriba, después por fecha) — acá solo se separa en
+  // secciones por rubro para que se vea de un vistazo qué cotizaciones son de Aires, Cocina, etc.,
+  // sin tocar ese orden adentro de cada sección. Con un solo rubro no hace falta el encabezado.
+  const seccionesPorRubro = useMemo(() => {
+    const porRubro = new Map();
+    for (const h of grupo.hilos) {
+      if (!porRubro.has(h.rubro)) porRubro.set(h.rubro, []);
+      porRubro.get(h.rubro).push(h);
+    }
+    const idxRubro = (r) => { const i = RUBROS_COTIZACION.indexOf(r); return i === -1 ? RUBROS_COTIZACION.length : i; };
+    return [...porRubro.entries()].sort(([a], [b]) => idxRubro(a) - idxRubro(b));
+  }, [grupo.hilos]);
+  const hayVariosRubros = seccionesPorRubro.length > 1;
   return (
     <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
       <button onClick={() => setExpandido(!expandido)} className="w-full flex items-center justify-between gap-2 p-3 text-left">
@@ -12355,18 +12368,27 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
         </div>
       </button>
       {abierto && (
-        <div className="px-3 pb-3 space-y-3">
-          {grupo.hilos.map((h) => (
-            <HiloCategoriaGrupo
-              key={h.hiloId}
-              hilo={h}
-              cuentaObra={grupo.principales.includes(h) ? "principal" : grupo.sumandose.includes(h) ? "suma" : "historial"}
-              hayVarios={grupo.hilos.filter((x) => x.rubro === h.rubro).length > 1} productos={productos} matrizCostos={matrizCostos}
-              onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-              onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
-              descargandoId={descargandoId}
-            />
+        <div className="px-3 pb-3 space-y-4">
+          {seccionesPorRubro.map(([rubro, hilosDelRubro]) => (
+            <div key={rubro}>
+              {hayVariosRubros && (
+                <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: MUTED }}>{rubro}</p>
+              )}
+              <div className="space-y-3">
+                {hilosDelRubro.map((h) => (
+                  <HiloCategoriaGrupo
+                    key={h.hiloId}
+                    hilo={h}
+                    cuentaObra={grupo.principales.includes(h) ? "principal" : grupo.sumandose.includes(h) ? "suma" : "historial"}
+                    hayVarios={hilosDelRubro.length > 1} productos={productos} matrizCostos={matrizCostos}
+                    onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
+                    onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+                    onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+                    descargandoId={descargandoId}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

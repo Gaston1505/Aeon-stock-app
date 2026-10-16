@@ -4490,6 +4490,20 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
     e.target.value = "";
     if (file && onSubirFactura) onSubirFactura(file);
   };
+  // Un <a> real anidado adentro del <button> de arriba (como estaba) queda atrapado por ese botón
+  // en varios navegadores y nunca llega a abrir — el click programático sobre un <a> armado al
+  // vuelo (mismo truco que ya usa pdf.js para descargar) lo evita, sin dejar de ser un click
+  // directo del usuario (necesario para que el navegador no bloquee la navegación a una URL data:).
+  const verFactura = (e) => {
+    e.stopPropagation();
+    const a = document.createElement("a");
+    a.href = factura;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 p-4 text-left">
@@ -4514,12 +4528,9 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
             </span>
           )}
           {factura && (
-            // <a> real (no PhotoViewer): la factura puede ser una foto o un PDF, y un <a href>
-            // con click directo del usuario abre los dos bien en una pestaña nueva — un
-            // window.open()/PhotoViewer con una data: URL de PDF no sirve para el caso PDF.
-            <a href={factura} target="_blank" rel="noreferrer" title="Ver factura" onClick={(e) => e.stopPropagation()}>
+            <span role="button" title="Ver factura" onClick={verFactura}>
               <FileText size={16} style={{ color: ACCENT }} />
-            </a>
+            </span>
           )}
           {onSubirFactura && (
             <span

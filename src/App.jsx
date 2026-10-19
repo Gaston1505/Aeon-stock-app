@@ -4580,13 +4580,13 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
   };
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-      <button onClick={onToggle} className="w-full flex items-center justify-between gap-3 p-4 text-left">
+      <button onClick={onToggle} className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 p-4 text-left">
         <div className="min-w-0">
           <p className="text-base font-bold" style={{ color: INK }}>{titulo}</p>
           {linea && <p className="text-sm" style={{ color: MUTED }}>{linea}</p>}
           <p className="text-xs mt-1" style={{ color: MUTED }}>{resumen}</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:shrink-0">
           {acciones}
           {foto && (
             <span role="button" title="Ver foto del remito" onClick={(e) => { e.stopPropagation(); onVerFoto(foto); }}>

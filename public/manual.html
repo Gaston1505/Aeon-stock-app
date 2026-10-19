@@ -98,7 +98,7 @@
     <a href="#dep-playa">↳ Zona de playa</a>
     <a href="#dep-entradas">↳ Entradas</a>
     <a href="#dep-salidas">↳ Salidas</a>
-    <a href="#dep-conteo">↳ Conteo de stock</a>
+    <a href="#dep-conteo">↳ Auditoría de stock</a>
     <a href="#dep-equipos">↳ Maestro de equipos</a>
     <a href="#dep-recuperables">↳ Banco de recuperables</a>
 
@@ -182,13 +182,14 @@
     </section>
 
     <section class="card" id="dep-conteo">
-      <h3>Conteo de stock</h3>
-      <p class="desc">Contar lo que hay físicamente en el depósito y cargarlo código por código, para detectar diferencias contra lo que dice el sistema.</p>
+      <h3>Auditoría de stock</h3>
+      <p class="desc">Cada mes se audita el stock por partida doble: vos contás a ciegas (sin ver lo que dice el sistema) y el administrador hace lo mismo por su cuenta, por separado. Recién cuando los dos terminaron se cruzan las 3 cifras — así se puede distinguir un problema real de stock de un simple error de conteo.</p>
       <ol class="steps">
-        <li><span class="num">1</span><span>Buscá el código con el árbol de categorías (igual que en el Catálogo) o con la lupa.</span></li>
-        <li><span class="num">2</span><span>Escribí la <b>cantidad contada</b> en el casillero de ese código — se guarda solo al salir del campo.</span></li>
+        <li><span class="num">1</span><span>Esperá a que el administrador <b>abra la auditoría</b> del mes (normalmente en la primera semana) — si todavía no hay ninguna abierta, la pantalla te avisa y no deja cargar nada.</span></li>
+        <li><span class="num">2</span><span>Buscá el código con el árbol de categorías (igual que en el Catálogo) o con la lupa.</span></li>
+        <li><span class="num">3</span><span>Escribí la <b>cantidad contada</b> en el casillero de ese código — se guarda sola al salir del campo.</span></li>
       </ol>
-      <div class="tip"><b>Tip.</b> No hace falta terminar todo de una — la barra de arriba muestra el progreso, y se puede seguir después donde quedó.</div>
+      <div class="tip"><b>Tip.</b> No hace falta terminar todo de una — la barra de arriba muestra el progreso, y podés seguir después donde quedaste. No se te muestra lo que dice el sistema a propósito: contá lo que ves de verdad, no lo que "debería" dar.</div>
     </section>
 
     <section class="card" id="dep-equipos">
@@ -223,13 +224,42 @@
 
       <section class="card"><h3>Zona de playa</h3><p class="desc">Ver guía de depósito arriba — funciona igual para admin, con acceso además a exportar el listado.</p></section>
 
-      <section class="card"><h3>Conteo de stock</h3><p class="desc">Ver guía de depósito arriba. Admin ve además, en vivo, la diferencia contado vs. sistema por código, ordenada con las diferencias primero.</p></section>
+      <section class="card" style="grid-column:1/-1"><h3>Auditoría de stock</h3>
+        <p class="desc">Evolucionó al "Conteo de stock" de antes (un solo número que se pisaba, sin historial) a una auditoría mensual con historial permanente. Ciclo completo:</p>
+        <ol class="steps">
+          <li><span class="num">1</span><span><b>Abrir auditoría del mes</b> — la app saca una foto de lo que el sistema dice que hay de cada código en ese momento ("Sistema"). Lo ideal es abrirla en la primera semana del mes; si no la abriste, Resumen te lo recuerda con un banner.</span></li>
+          <li><span class="num">2</span><span><b>Conteo doble ciego</b> — depósito cuenta en su pantalla de siempre, y vos tenés tu propio conteo ("Mi conteo"), también ciego: no ves el número del sistema mientras contás, para que sea un conteo real y no una copia.</span></li>
+          <li><span class="num">3</span><span><b>Revisión</b> — cruza las 3 cifras (Sistema / Depósito / Vos) y muestra, para cada diferencia, cuántas entradas y salidas quedaron registradas en el sistema desde la auditoría anterior, como pista para explicarla.</span></li>
+          <li><span class="num">4</span><span><b>Decisión por cada diferencia confirmada</b>, con comentario obligatorio: Ajustar stock del sistema, Recontar, Error de carga en el sistema, Pérdida o rotura confirmada, Mercadería en tránsito/pendiente de registrar, Diferencia aceptada sin acción, u Otro.</span></li>
+          <li><span class="num">5</span><span><b>Cerrar</b> — queda congelada para siempre, como evidencia de ese mes. Historial guarda todos los meses, cada uno descargable en PDF o Excel (separado en Catálogo general y Repuestos) en cualquier momento.</span></li>
+        </ol>
+        <div class="tip"><b>Por qué el conteo doble.</b> Si vos y depósito coinciden entre ustedes pero difieren del sistema, es señal fuerte de un problema real de stock. Si no coinciden entre ustedes, probablemente alguno se equivocó contando — conviene recontar antes de sacar conclusiones, en vez de confiar en una sola cifra a ciegas.</div>
+        <div class="tip gray"><b>Ojo con "Ajustar stock del sistema".</b> Es la única decisión que efectivamente toca el stock (crea/descuenta un lote en Maestro de equipos, o corrige el stock del repuesto). Todas las demás decisiones quedan solo documentadas — el stock no se toca hasta que elegís esa puntual.</div>
+      </section>
 
       <section class="card"><h3>Maestro de equipos</h3><p class="desc">Ver guía de depósito arriba. Es la fuente real de las cantidades que se ven resumidas en Depósito — el modelo y el estado también se pueden editar directo desde la tabla.</p></section>
 
       <section class="card"><h3>Banco de recuperables</h3><p class="desc">Ver guía de depósito arriba. Es el destino de "Derivar a → Banco de recuperables" desde Zona de playa.</p></section>
 
       <section class="card"><h3>Muestras</h3><p class="desc">Piezas de exhibición — separadas entre "en depósito" y "prestadas a un cliente" (fuera de depósito), y entre con marca / sin marca de fábrica. El total de acá es el mismo que se reporta al seguro.</p></section>
+
+      <section class="card"><h3>Orden de Compra</h3>
+        <p class="desc">Combina productos del catálogo por volumen (m3) para planificar una <b>compra a origen</b> — la compra que hace la empresa a fábrica (China), no una venta. Trae un aviso de "Pendiente de reponer" (suma de cotizaciones pendientes + ventas comprometidas por producto) como ayuda para decidir qué pedir.</p>
+        <div class="fields">
+          <div class="field"><div class="k">m3 por unidad</div><div class="v">Sale de "Cantidad por contenedor" del producto, cargada en la Matriz de costos — si falta, avisa que no se puede calcular.</div></div>
+          <div class="field"><div class="k">Contenedores sugeridos</div><div class="v">Combinación automática (ej. "1× 40HQ + 1× 20GP") a partir del m3 total — a revisar, no es definitivo.</div></div>
+          <div class="field"><div class="k">Estado</div><div class="v">Borrador → Enviada → Recibida.</div></div>
+        </div>
+      </section>
+
+      <section class="card"><h3>Etiquetas de cajas</h3>
+        <p class="desc">Genera las etiquetas (código de barras) para pegar en las cajas — mismo formato que la de fábrica: 70×20mm, código Code 128 con el código del producto + un serial de 6 dígitos que la app numera sola por producto, para que nunca se repita un número.</p>
+        <div class="fields">
+          <div class="field"><div class="k">Cargar desde tránsito</div><div class="v">Trae de una sola vez todo lo que viene en camino, por producto.</div></div>
+          <div class="field"><div class="k">Hoja de prueba</div><div class="v">4 etiquetas por producto para probar impresión/lectura, sin gastar seriales reales.</div></div>
+          <div class="field"><div class="k">Generar PDF</div><div class="v">Recién ahí se reservan los seriales de verdad — 28 etiquetas por hoja A4.</div></div>
+        </div>
+      </section>
 
       <section class="card" style="grid-column:1/-1"><h3>Catálogo de productos</h3>
         <p class="desc">Dos carpetas separadas: <b>Productos</b> (Aire Acondicionado, Cocina, Termocalefones) y <b>Repuestos</b>. Cada producto trae precio de lista, ficha técnica, stock actual (verde/rojo, al lado del precio — para productos es la suma de Maestro de equipos, para repuestos es su propio campo de stock), y un panel de solo lectura con el desglose completo del <b>Costo Real</b> (ver Matriz de costos abajo).</p>
@@ -251,6 +281,12 @@
 
     <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="ventas">Ventas</h4>
     <div class="grid2">
+      <section class="card" style="grid-column:1/-1"><h3>Armado de combinaciones</h3>
+        <p class="desc">El detalle línea por línea, en el mismo orden del pedido del cliente, de qué equipo AEON corresponde a cada línea y en qué combinación (para Multi Split con varias interiores por una sola exterior). Es un documento de planificación para comparar contra el pedido antes de cotizar — <b>no tiene precios</b>, queda guardado aparte.</p>
+        <div class="tip"><b>Unidad exterior compartida.</b> Cuando varias líneas comparten una misma unidad exterior (Multi Split), esa exterior se carga como su propia línea aparte (resaltada en celeste) — no como una nota dentro de las interiores.</div>
+        <div class="tip gray"><b>Combinación a validar.</b> Una fila resaltada en amarillo tiene aprobación de fábrica de origen pero todavía recomienda validarla para Sudamérica antes de confirmarla con el cliente.</div>
+      </section>
+
       <section class="card"><h3>Ventas comprometidas</h3><p class="desc">Mercadería ya vendida pero que sigue físicamente en depósito — reserva el stock para que nadie más lo use, y se puede retirar en varias tandas (parcialmente) hasta completarse.</p></section>
 
       <section class="card"><h3>Ventas y garantías</h3><p class="desc">La ficha de una obra ya vendida: contrato, remitos vinculados y certificado de garantía, con seguimiento de service a los 12 y 24 meses.</p></section>
@@ -281,6 +317,26 @@
       <section class="card"><h3>Reporte para Seguro</h3><p class="desc">Todo lo físico en Paraguay (equipos, repuestos y Zona de playa) valorizado a <b>costo puesto en PY</b> — no a precio de venta, porque el seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla.</p></section>
 
       <section class="card" style="grid-column:1/-1"><h3>Reporte Financiero</h3><p class="desc">El balance financiero completo: lo físico en Paraguay (a precio de lista), lo que viene en tránsito con sus costos compartidos (flete, despacho, seguro), el estado de las cotizaciones en juego, y la plata por cobrar de ventas comprometidas.</p></section>
+
+      <section class="card"><h3>Precios de mercado</h3>
+        <p class="desc">Precios de la competencia en el mercado minorista (relevados a mano, por planilla, o por la investigación mensual) comparados contra el precio de lista de AEON, producto por producto. Agrupado por categoría/subcategoría, igual que el Catálogo.</p>
+        <div class="tip gray"><b>Al vincular un producto propio</b> aparece un cartel verde/rojo con el % de diferencia — si AEON está más barato o más caro que esa referencia.</div>
+      </section>
+
+      <section class="card"><h3>Precios al por mayor</h3>
+        <p class="desc">A diferencia de Precios de mercado (relevamiento del mercado minorista), esto registra cotizaciones mayoristas <b>reales</b> que la competencia le dio a un cliente por una obra puntual — con las condiciones completas del trato: forma de pago, garantía, validez de la oferta, y foto del presupuesto.</p>
+      </section>
+
+      <section class="card" style="grid-column:1/-1"><h3>Descargas rápidas y exportación</h3>
+        <p class="desc">Al final del menú, debajo de todas las secciones — visibles para cualquier usuario, admin o depósito:</p>
+        <div class="fields">
+          <div class="field"><div class="k">Presentación comercial</div><div class="v">PDF institucional, listo para compartir con un cliente.</div></div>
+          <div class="field"><div class="k">Catálogo</div><div class="v">PDF con el catálogo completo de productos.</div></div>
+          <div class="field"><div class="k">Datos bancarios</div><div class="v">Foto con los datos para que un cliente transfiera.</div></div>
+          <div class="field"><div class="k">Exportar Excel (todo)</div><div class="v">Un solo Excel con varias planillas juntas: Maestro de equipos, Movimientos, Entradas, Ventas y garantías, Ventas comprometidas, Repuestos y Zona de playa.</div></div>
+        </div>
+        <div class="tip gray"><b>Ojo.</b> "Exportar Excel (todo)" no incluye Cotizaciones, Clientes, Catálogo completo, Órdenes de Compra, Armados de combinaciones ni los Precios de mercado/mayorista — esas pantallas tienen su propio botón de Excel/PDF puntual (o, en el caso de Órdenes de Compra y Precios, todavía no tienen exportación propia).</div>
+      </section>
     </div>
 
     <h4 style="margin:30px 0 4px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em" id="roles">Roles y accesos</h4>
@@ -294,7 +350,7 @@
         </div>
         <div class="role-card dep">
           <h4>Depósito</h4>
-          <ul><li>Depósito, Zona de playa, Entradas, Salidas, Conteo de stock, Maestro de equipos y Banco de recuperables</li><li>Puede mover stock, no tocar precios</li><li>Sin acceso a ventas, cotizaciones, clientes ni al Catálogo (no ve precios ni costos)</li></ul>
+          <ul><li>Depósito, Zona de playa, Entradas, Salidas, Auditoría de stock, Maestro de equipos y Banco de recuperables</li><li>Puede mover stock, no tocar precios</li><li>Sin acceso a ventas, cotizaciones, clientes ni al Catálogo (no ve precios ni costos)</li></ul>
         </div>
       </div>
       <div class="tip gray"><b>Trazabilidad.</b> Cada movimiento (entrada, salida, cambio de stock) queda firmado con el usuario que lo hizo y la fecha — así siempre se puede saber quién cargó qué.</div>

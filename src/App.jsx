@@ -10954,13 +10954,12 @@ function RevisionAuditoria({ items, productos, movimientos, entradas, equipos, a
   }, [auditoriasStock, auditoria]);
   const hasta = auditoria.fechaApertura || Date.now();
 
-  const filtrados = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((i) => i.codigo.toLowerCase().includes(q));
-  }, [items, query]);
-
-  const conEstado = useMemo(() => filtrados.map((i) => {
+  // Se calcula sobre TODOS los ítems (no los filtrados por búsqueda) para que los contadores de
+  // arriba y el orden sean siempre los de la auditoría completa — la búsqueda solo recorta qué
+  // filas se muestran, al final. Cada ítem cae en un único balde (sinResolver > resueltas >
+  // sinContarCompleto > ok): antes "tieneDiferencia" y "falta un conteo" no eran excluyentes y
+  // un ítem con una sola punta contada y ya distinta del sistema aparecía duplicado.
+  const conEstado = useMemo(() => items.map((i) => {
     const diffDep = i.contadoDeposito != null ? i.contadoDeposito - i.sistemaAlAbrir : null;
     const diffAdmin = i.contadoAdmin != null ? i.contadoAdmin - i.sistemaAlAbrir : null;
     const diffEntre = i.contadoDeposito != null && i.contadoAdmin != null ? i.contadoDeposito - i.contadoAdmin : null;
@@ -10970,13 +10969,17 @@ function RevisionAuditoria({ items, productos, movimientos, entradas, equipos, a
       tieneDiferencia: hay(diffDep) || hay(diffAdmin) || hay(diffEntre),
       ambosContaron: i.contadoDeposito != null && i.contadoAdmin != null,
     };
-  }), [filtrados]);
+  }), [items]);
 
   const sinResolver = conEstado.filter((i) => i.tieneDiferencia && !i.decision);
   const resueltas = conEstado.filter((i) => i.tieneDiferencia && i.decision);
-  const sinContarCompleto = conEstado.filter((i) => !i.ambosContaron).sort((a, b) => a.codigo.localeCompare(b.codigo));
-  const ok = conEstado.filter((i) => i.ambosContaron && !i.tieneDiferencia).sort((a, b) => a.codigo.localeCompare(b.codigo));
-  const ordenadas = [...sinResolver, ...resueltas, ...sinContarCompleto, ...ok];
+  const sinDiferencia = conEstado.filter((i) => !i.tieneDiferencia);
+  const sinContarCompleto = sinDiferencia.filter((i) => !i.ambosContaron).sort((a, b) => a.codigo.localeCompare(b.codigo));
+  const ok = sinDiferencia.filter((i) => i.ambosContaron).sort((a, b) => a.codigo.localeCompare(b.codigo));
+  const ordenadasCompletas = [...sinResolver, ...resueltas, ...sinContarCompleto, ...ok];
+
+  const q = query.trim().toLowerCase();
+  const ordenadas = q ? ordenadasCompletas.filter((i) => i.codigo.toLowerCase().includes(q)) : ordenadasCompletas;
 
   return (
     <div>

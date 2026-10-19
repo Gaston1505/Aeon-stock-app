@@ -11283,7 +11283,7 @@ function AuditoriaStockView({
         items={items} productos={productos} query={query} onQuery={onQuery} campo="contadoDeposito"
         onGuardar={(codigo, campo, valor) => onGuardarConteo(auditoriaAbierta.id, codigo, campo, valor)}
         titulo={`Auditoría de stock — ${tituloPeriodo(auditoriaAbierta.periodo)}`}
-        subtitulo="Contá lo que hay físicamente para cada código y cargalo acá — se guarda solo al salir del campo."
+        subtitulo="Contá lo que hay físicamente para cada código y cargalo acá — se guarda solo al salir del campo. No te mostramos lo que dice el sistema a propósito: así tu conteo es independiente de verdad, no una copia."
       />
     );
   }
@@ -11298,7 +11298,15 @@ function AuditoriaStockView({
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-bold" style={{ color: INK }}>Auditoría de stock</h2>
+        <div className="flex items-center gap-1">
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Auditoría de stock</h2>
+          <InfoTip>
+            <p><b>Cómo funciona.</b> Al abrir la auditoría del mes, la app guarda una foto de lo que el sistema dice que hay de cada código en ese momento (el "Sistema"). Vos y depósito cuentan cada uno por su cuenta, a ciegas — ni vos ves ese número del sistema, ni depósito ve tu conteo ni vos el suyo.</p>
+            <p>Si los dos coinciden entre ustedes pero difieren del sistema, es señal fuerte de un problema real de stock. Si no coinciden entre ustedes, probablemente alguno se equivocó contando — conviene recontar antes de sacar conclusiones.</p>
+            <p>En <b>Revisión</b> se cruzan las 3 cifras. Cada diferencia confirmada se documenta con una decisión y un comentario — el stock del sistema solo se corrige si elegís puntualmente "Ajustar stock del sistema"; el resto de las decisiones quedan solo como registro.</p>
+            <p>Al <b>cerrar</b>, la auditoría queda congelada para siempre — es tu evidencia de ese mes. Se puede descargar en PDF o Excel en cualquier momento, esté abierta o cerrada, desde Historial.</p>
+          </InfoTip>
+        </div>
         <p className="text-sm mt-0.5" style={{ color: MUTED }}>
           Conteo doble (vos y depósito, cada uno a ciegas) con historial mensual exportable — reemplaza al viejo Conteo de stock.
         </p>

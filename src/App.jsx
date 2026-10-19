@@ -4148,6 +4148,7 @@ export default function App() {
               </>
             }
           >
+            <div className="mb-3"><ValorizacionResumen v={valorizarEquipos(filteredEquipos, productos)} /></div>
             <Table
               columns={[
                 { key: "codigo", label: "Código interno" }, { key: "serie", label: "N° de serie" },
@@ -4263,7 +4264,7 @@ export default function App() {
         )}
 
         {tab === "recuperables" && (
-          <RecuperablesView recuperables={recuperables} query={query} onQuery={setQuery} onUpdateEstado={updateEquipoEstado} onUpdateField={updateEquipoField} />
+          <RecuperablesView recuperables={recuperables} productos={productos} query={query} onQuery={setQuery} onUpdateEstado={updateEquipoEstado} onUpdateField={updateEquipoField} />
         )}
 
         {tab === "muestras" && (
@@ -5253,7 +5254,7 @@ function Section({ title, subtitle, query, onQuery, onNew, newLabel, extraAction
   );
 }
 
-function StatCard({ label, value, icon: Icon, tint, onClick }) {
+function StatCard({ label, value, icon: Icon, tint, onClick, extra }) {
   const Wrapper = onClick ? "button" : "div";
   return (
     <Wrapper
@@ -5264,9 +5265,10 @@ function StatCard({ label, value, icon: Icon, tint, onClick }) {
       <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: tint || ACCENT_LIGHT }}>
         <Icon size={17} style={{ color: ACCENT }} />
       </div>
-      <div>
+      <div className="min-w-0">
         <p className="text-xl font-semibold" style={{ color: INK }}>{value}</p>
         <p className="text-xs" style={{ color: MUTED }}>{label}</p>
+        {extra}
       </div>
     </Wrapper>
   );
@@ -5274,6 +5276,49 @@ function StatCard({ label, value, icon: Icon, tint, onClick }) {
 
 function sumCantidad(list) {
   return list.reduce((acc, e) => acc + (Number(e.cantidad) || 1), 0);
+}
+
+// Valoriza una lista de equipos (campo modelo = código comercial) contra el catálogo: cuánto
+// costaría hoy reponer esa mercadería en origen y puesta en PY, y cuánto vale a precio de venta.
+// Un modelo que ya no está en el catálogo simplemente no suma a ninguno de los 3 (no se puede
+// saber su costo) — no rompe el cálculo del resto.
+function valorizarEquipos(lista, productos) {
+  let origen = 0, py = 0, venta = 0;
+  for (const e of lista) {
+    const p = productos.find((pp) => pp.nombre === e.modelo);
+    if (!p) continue;
+    const cant = Number(e.cantidad) || 1;
+    origen += (Number(p.costoOrigen) || 0) * cant;
+    py += (Number(p.costoPy) || 0) * cant;
+    venta += (Number(p.precioLista) || 0) * cant;
+  }
+  return { origen, py, venta };
+}
+// Repuestos viven directo en productos (categoriaPrincipal="Repuestos"), con su propio
+// stockDisponible como cantidad — no son equipos por lote.
+function valorizarRepuestos(productos) {
+  let origen = 0, py = 0, venta = 0;
+  for (const p of productos) {
+    if (p.categoriaPrincipal !== "Repuestos") continue;
+    const cant = Number(p.stockDisponible) || 0;
+    origen += (Number(p.costoOrigen) || 0) * cant;
+    py += (Number(p.costoPy) || 0) * cant;
+    venta += (Number(p.precioLista) || 0) * cant;
+  }
+  return { origen, py, venta };
+}
+function fmtUsd0(n) {
+  return `U$S ${Math.round(Number(n) || 0).toLocaleString("es-PY")}`;
+}
+// Línea compacta con los 3 montos — se reusa en las tarjetas de Depósito y como resumen arriba
+// de Maestro de equipos / Banco de recuperables / Muestras (recalculado sobre lo que esté
+// filtrado/buscado en cada pantalla, no siempre el total).
+function ValorizacionResumen({ v, compacto = false }) {
+  return (
+    <p className={compacto ? "text-[11px] mt-1" : "text-xs"} style={{ color: MUTED }}>
+      Origen {fmtUsd0(v.origen)} · Puesto en PY {fmtUsd0(v.py)} · Venta {fmtUsd0(v.venta)}
+    </p>
+  );
 }
 
 // Agrupa la mercadería física (equipos + repuestos + playa) por categoría+modelo, sumando
@@ -5801,7 +5846,8 @@ function MuestrasGrupo({ titulo, items }) {
 function DepositoView({ equipos, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate, esAdmin = true }) {
   const vendible = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta");
   const bajas = equipos.filter((e) => e.estado === "Dado de baja");
-  const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
+  const equiposActivos = equipos.filter((e) => e.estado !== "Dado de baja");
+  const totalUnidades = sumCantidad(equiposActivos);
   // El stock de repuestos vive en el Catálogo de productos (categoriaPrincipal="Repuestos"),
   // no en la colección "repuestos" suelta — ese origen quedó en desuso.
   const totalRepuestos = productos
@@ -5810,19 +5856,39 @@ function DepositoView({ equipos, recuperables, playa, muestras, productos, venta
   const totalPlaya = sumCantidad(playa);
   const totalVendido = ventasCerradas.reduce((acc, v) => acc + (Number(v.cantidad) || 0), 0);
 
+  // Valorización en dólares de lo que representa cada tarjeta: cuánto costaría reponerlo en
+  // origen, puesto en PY, y cuánto vale a precio de venta — la misma foto que ya se ve en
+  // unidades, pero en plata. Zona de playa queda sin valorizar a propósito: esos ítems son
+  // "algo llegó, todavía no se sabe bien qué es" (descripción libre, sin modelo de catálogo
+  // vinculado), así que no hay con qué calcularle costo hasta que se clasifique.
+  const valorActivos = valorizarEquipos(equiposActivos, productos);
+  const valorVendible = valorizarEquipos(vendible, productos);
+  const valorRecuperables = valorizarEquipos(recuperables, productos);
+  const valorMuestras = valorizarEquipos(muestras, productos);
+  const valorRepuestos = valorizarRepuestos(productos);
+  const valorBajas = valorizarEquipos(bajas, productos);
+  // Para lo ya vendido, el precio de venta real (lo efectivamente facturado) dice más que
+  // recalcularlo al precio de lista de hoy — origen/PY sí se recalculan a costo actual, porque
+  // eso no quedó registrado en el movimiento de salida.
+  const valorVendido = (() => {
+    const base = valorizarEquipos(ventasCerradas, productos);
+    const ventaReal = ventasCerradas.reduce((acc, v) => acc + (Number(v.monto) || 0), 0);
+    return { ...base, venta: ventaReal };
+  })();
+
   // El total agregado de todas las categorías juntas no le sirve a depósito para el día a día
   // (no es accionable, mezcla aires con termos con cocinas) y confunde — queda solo para admin.
   const cardsActivos = [
-    ...(esAdmin ? [{ label: "Equipos totales activos", value: totalUnidades, icon: Package, tab: "equipos" }] : []),
-    { label: "Zona de playa (sin clasificar)", value: totalPlaya, icon: Inbox, tab: "playa" },
-    { label: "Stock vendible", value: sumCantidad(vendible), icon: ArrowDownToLine, tab: "equipos" },
-    { label: "Banco de recuperables", value: sumCantidad(recuperables), icon: Wrench, tab: "recuperables" },
-    { label: "Muestras", value: sumCantidad(muestras), icon: Star, tab: "muestras" },
-    { label: "Repuestos (unidades)", value: totalRepuestos, icon: Boxes, tab: "catalogo:repuestos" },
+    ...(esAdmin ? [{ label: "Equipos totales activos", value: totalUnidades, icon: Package, tab: "equipos", valor: valorActivos }] : []),
+    { label: "Zona de playa (sin clasificar)", value: totalPlaya, icon: Inbox, tab: "playa", valor: null },
+    { label: "Stock vendible", value: sumCantidad(vendible), icon: ArrowDownToLine, tab: "equipos", valor: valorVendible },
+    { label: "Banco de recuperables", value: sumCantidad(recuperables), icon: Wrench, tab: "recuperables", valor: valorRecuperables },
+    { label: "Muestras", value: sumCantidad(muestras), icon: Star, tab: "muestras", valor: valorMuestras },
+    { label: "Repuestos (unidades)", value: totalRepuestos, icon: Boxes, tab: "catalogo:repuestos", valor: valorRepuestos },
   ];
   const cardsHistorico = [
-    { label: "Vendidos y retirados", value: totalVendido, icon: CheckCircle2, tab: "movimientos" },
-    { label: "Dados de baja", value: sumCantidad(bajas), icon: AlertTriangle, tab: "equipos" },
+    { label: "Vendidos y retirados", value: totalVendido, icon: CheckCircle2, tab: "movimientos", valor: valorVendido },
+    { label: "Dados de baja", value: sumCantidad(bajas), icon: AlertTriangle, tab: "equipos", valor: valorBajas },
   ];
 
   return (
@@ -5833,7 +5899,10 @@ function DepositoView({ equipos, recuperables, playa, muestras, productos, venta
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
         {cardsActivos.map((c) => (
-          <StatCard key={c.label} label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} />
+          <StatCard
+            key={c.label} label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)}
+            extra={c.valor ? <ValorizacionResumen v={c.valor} compacto /> : <p className="text-[11px] mt-1" style={{ color: MUTED }}>Sin costo (no identificado todavía)</p>}
+          />
         ))}
       </div>
 
@@ -5841,7 +5910,10 @@ function DepositoView({ equipos, recuperables, playa, muestras, productos, venta
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
         {cardsHistorico.map((c) => (
           <div key={c.label} style={{ opacity: 0.75 }}>
-            <StatCard label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} tint="#F1F5F9" />
+            <StatCard
+              label={c.label} value={c.value} icon={c.icon} onClick={() => onNavigate(c.tab)} tint="#F1F5F9"
+              extra={c.valor ? <ValorizacionResumen v={c.valor} compacto /> : null}
+            />
           </div>
         ))}
         <div />
@@ -6369,7 +6441,7 @@ function PlayaView({ playa, productosRepuestos, query, onQuery, onNew, onDerivar
   );
 }
 
-function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpdateField }) {
+function RecuperablesView({ recuperables, productos, query, onQuery, onUpdateEstado, onUpdateField }) {
   const filtered = recuperables.filter((e) => {
     const q = query.toLowerCase();
     return !q || [e.codigo, e.modelo].some((v) => (v || "").toLowerCase().includes(q));
@@ -6384,6 +6456,7 @@ function RecuperablesView({ recuperables, query, onQuery, onUpdateEstado, onUpda
         <div>
           <h2 className="text-xl font-bold" style={{ color: INK }}>Banco de recuperables</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>Equipos en reparación, pendientes o reservados como unidad de rescate.</p>
+          <ValorizacionResumen v={valorizarEquipos(filtered, productos)} />
         </div>
         <SearchBox value={query} onChange={onQuery} />
       </div>
@@ -6872,6 +6945,7 @@ function MuestrasView({ muestras, productos, query, onQuery, onUpdateField, onUp
             Equipos usados como pieza de exhibición — en depósito o prestados a un cliente. Incluye tanto muestras con
             marca como muestras sin marca de fábrica (China) — el total de acá es el que se reporta al seguro.
           </p>
+          <ValorizacionResumen v={valorizarEquipos(filtered, productos)} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />

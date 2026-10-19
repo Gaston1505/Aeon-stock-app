@@ -64,6 +64,27 @@ service cloud.firestore {
       allow delete: if esAdmin();
     }
 
+    // Auditoría de stock: evoluciona el conteo de arriba a un historial mensual con conteo doble
+    // (depósito + admin, cada uno a ciegas). auditoriasStock es el documento chico por período
+    // (abrir/cerrar) — solo admin abre y cierra. auditoriaStockItems es el detalle por código —
+    // ambos roles cargan su propio conteo ahí; depósito nunca ve el campo sistemaAlAbrir porque
+    // la pantalla no se lo muestra (mismo criterio de confianza en el cliente que ya usa
+    // conteoStock/productos de arriba).
+    match /auditoriasStock/{docId} {
+      allow read: if esAdmin() || esDeposito();
+      allow create, delete: if esAdmin();
+      // El resumen (contados, diferencias, % exactitud) se recalcula solo con cada conteo nuevo,
+      // también cuando el que acaba de contar es depósito — por eso puede tocar ese campo, pero
+      // nada más (abrir/cerrar/editar la auditoría en sí sigue siendo solo de admin).
+      allow update: if esAdmin() ||
+        (esDeposito() && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["resumen", "modificadoPorEmail", "modificadoEn"]));
+    }
+    match /auditoriaStockItems/{docId} {
+      allow read, create, update: if esAdmin() || esDeposito();
+      allow delete: if esAdmin();
+    }
+
     // Catálogo: depósito necesita leerlo (para elegir producto en una entrada/salida) y
     // ajustar el stock de repuestos, pero no puede crear productos ni tocar precios/fichas.
     match /productos/{docId} {

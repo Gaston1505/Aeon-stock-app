@@ -10,7 +10,7 @@ import {
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, onSnapshot, query, orderBy, runTransaction,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot, query, query as fsQuery, where, orderBy, runTransaction,
 } from "firebase/firestore";
 import { downloadEtiquetasPdf, textoSerial, parsearSerial, claveCodigo, SERIAL_BASE_APP } from "./etiquetas";
 import { anchosCode128 } from "./code128";
@@ -24,7 +24,7 @@ import {
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
-  downloadListaPdf, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
+  downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
@@ -176,12 +176,13 @@ const COLLECTIONS = {
   clientes: "clientes",
   transito: "transito",
   solicitudes: "solicitudes",
-  conteoStock: "conteoStock",
   preciosMercado: "preciosMercado",
   preciosMayorista: "preciosMayorista",
   ordenesCompra: "ordenesCompra",
   configuracion: "configuracion",
   fichasTecnicas: "fichasTecnicas",
+  auditoriasStock: "auditoriasStock",
+  auditoriaStockItems: "auditoriaStockItems",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -222,7 +223,7 @@ function fmtDate(d) {
   return `${day}/${m}/${y}`;
 }
 // Fecha + hora real de cuando se cargó algo (createdAt, timestamp de Date.now() que pone
-// addItem/guardarConteo en todo lo que se guarda) — distinto de "fecha", que es la fecha del
+// addItem en todo lo que se guarda) — distinto de "fecha", que es la fecha del
 // remito/evento tal cual la escribe el usuario y puede estar atrasada a propósito.
 function fmtFechaHora(ms) {
   if (!ms) return "";
@@ -2200,6 +2201,86 @@ function LoginScreen({ onLogin, error }) {
   );
 }
 
+// ---------- Auditoría de stock: helpers de módulo ----------
+// Mismo cálculo de "sistema" que ya usaba el viejo Conteo de stock: suma de equipos (sin
+// vendidos/dados de baja) para el catálogo general, stockDisponible para repuestos.
+function calcularSistemaPorCodigo(productos, equipos) {
+  const stockPorModelo = new Map();
+  for (const e of equipos) {
+    if (e.estado === "Vendido" || e.estado === "Dado de baja") continue;
+    stockPorModelo.set(e.modelo, (stockPorModelo.get(e.modelo) || 0) + (Number(e.cantidad) || 1));
+  }
+  return productos.map((p) => {
+    const esRepuesto = p.categoriaPrincipal === "Repuestos";
+    return {
+      codigo: p.nombre, categoria: p.categoriaPrincipal, esRepuesto,
+      sistema: esRepuesto ? (Number(p.stockDisponible) || 0) : (stockPorModelo.get(p.nombre) || 0),
+    };
+  });
+}
+
+const MESES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function periodoActual() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function tituloPeriodo(periodo) {
+  const [y, m] = (periodo || "").split("-");
+  const idx = Number(m) - 1;
+  return idx >= 0 && idx < 12 ? `${capitalizarPalabras(MESES_LARGO[idx])} ${y}` : (periodo || "");
+}
+function enPrimeraSemanaDelMes() {
+  return new Date().getDate() <= 7;
+}
+
+// Una fila lista para exportar (PDF o Excel) a partir de un ítem de auditoriaStockItems. La
+// diferencia usa el conteo de admin si existe, si no el de depósito — el mismo criterio que usa
+// resolverDiferenciaAuditoria para decidir cuánto ajustar si la decisión es "Ajustar stock".
+function filaAuditoriaExport(i, productos) {
+  const prod = productos.find((p) => p.nombre === i.codigo);
+  const contadoFinal = i.contadoAdmin != null ? i.contadoAdmin : i.contadoDeposito;
+  const diferencia = contadoFinal != null ? contadoFinal - i.sistemaAlAbrir : null;
+  return {
+    codigo: i.codigo, producto: prod ? nombreProducto(prod) : "", categoria: i.categoria || "", esRepuesto: !!i.esRepuesto,
+    sistema: i.sistemaAlAbrir, deposito: i.contadoDeposito != null ? i.contadoDeposito : "", admin: i.contadoAdmin != null ? i.contadoAdmin : "",
+    diferencia: diferencia != null ? diferencia : "", decision: i.decision || "", comentario: i.comentarioDecision || "",
+  };
+}
+function filasAuditoriaOrdenadas(items, productos) {
+  return [...items]
+    .sort((a, b) => (a.categoria || "").localeCompare(b.categoria || "") || a.codigo.localeCompare(b.codigo))
+    .map((i) => filaAuditoriaExport(i, productos));
+}
+function columnasAuditoriaPdf() {
+  return [
+    { key: "codigo", label: "Código", width: 95 },
+    { key: "producto", label: "Producto" },
+    { key: "sistema", label: "Sistema", width: 42 },
+    { key: "deposito", label: "Depósito", width: 48 },
+    { key: "admin", label: "Vos", width: 38 },
+    { key: "diferencia", label: "Diferencia", width: 52 },
+    { key: "decision", label: "Decisión", width: 110 },
+    { key: "comentario", label: "Comentario", width: 100 },
+  ];
+}
+function downloadAuditoriaStockExcel(items, productos, periodo) {
+  const filas = filasAuditoriaOrdenadas(items, productos);
+  const headers = ["Código", "Producto", "Categoría", "Sistema", "Depósito", "Vos", "Diferencia", "Decisión", "Comentario"];
+  const aoa = (lista) => [headers, ...lista.map((f) => [f.codigo, f.producto, f.categoria, f.sistema, f.deposito, f.admin, f.diferencia, f.decision, f.comentario])];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheetAoaConAnchoAuto(aoa(filas.filter((f) => !f.esRepuesto))), "Catálogo general");
+  const repuestos = filas.filter((f) => f.esRepuesto);
+  if (repuestos.length) XLSX.utils.book_append_sheet(wb, sheetAoaConAnchoAuto(aoa(repuestos)), "Repuestos");
+  XLSX.writeFile(wb, `Auditoria_stock_${periodo}.xlsx`);
+}
+// Las filas del historial no tienen los ítems cargados (serían 200+ por mes, no vale la pena
+// mantenerlos en vivo solo para que el botón de exportar esté listo) — se piden una sola vez,
+// al momento de exportar.
+async function obtenerItemsAuditoria(auditoriaId) {
+  const snap = await getDocs(fsQuery(collection(db, COLLECTIONS.auditoriaStockItems), where("auditoriaId", "==", auditoriaId)));
+  return snap.docs.map((d) => d.data());
+}
+
 // ---------- Main App ----------
 export default function App() {
   // undefined = todavía no sabemos (Firebase está chequeando la sesión guardada),
@@ -2259,7 +2340,7 @@ export default function App() {
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
-  const [conteoStock, setConteoStock] = useState([]);
+  const [auditoriasStock, setAuditoriasStock] = useState([]);
   const [preciosMercado, setPreciosMercado] = useState([]);
   const [preciosMayorista, setPreciosMayorista] = useState([]);
   const [ordenesCompra, setOrdenesCompra] = useState([]);
@@ -2318,7 +2399,7 @@ export default function App() {
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
       [COLLECTIONS.solicitudes]: setSolicitudes,
-      [COLLECTIONS.conteoStock]: setConteoStock,
+      [COLLECTIONS.auditoriasStock]: setAuditoriasStock,
       [COLLECTIONS.preciosMercado]: setPreciosMercado,
       [COLLECTIONS.preciosMayorista]: setPreciosMayorista,
       [COLLECTIONS.ordenesCompra]: setOrdenesCompra,
@@ -2543,15 +2624,162 @@ export default function App() {
   };
   const rechazarSolicitud = (id, motivo) => updateItem(COLLECTIONS.solicitudes, id, { estado: "Rechazada", motivoRechazo: motivo || "" });
 
-  // Conteo de stock: un documento por código, con el código de producto como ID del doc —
-  // volver a cargar el mismo código pisa el conteo anterior en vez de duplicarlo. Depósito
-  // solo carga la cantidad que contó; el sistema no le muestra nunca el stock esperado acá.
-  const guardarConteo = (codigo, cantidadContada) =>
-    setDoc(doc(db, COLLECTIONS.conteoStock, codigo), {
-      codigo, cantidadContada: Number(cantidadContada) || 0, createdAt: Date.now(),
-      creadoPorEmail: auth.currentUser?.email || null, creadoPorUid: auth.currentUser?.uid || null,
+  // ---------- Auditoría de stock ----------
+  // Reemplaza al viejo "Conteo de stock" (un solo número que se pisaba, sin historial) por una
+  // auditoría mensual con conteo doble ciego (depósito + admin, cada uno por su cuenta) y registro
+  // permanente de cada mes, exportable. Ver auditoriaAbierta/abrirAuditoria/cerrarAuditoria más abajo.
+  const auditoriaAbierta = auditoriasStock.find((a) => a.estado === "Abierta") || null;
+
+  const abrirAuditoria = async () => {
+    const periodo = periodoActual();
+    const ref = await addItem(COLLECTIONS.auditoriasStock, {
+      periodo, estado: "Abierta", fechaApertura: Date.now(), fechaCierre: null,
+      abiertaPorEmail: auth.currentUser?.email || null,
+      resumen: { totalItems: 0, contadosDeposito: 0, contadosAdmin: 0, conDiferencia: 0, sinResolver: 0, exactitudPct: 100 },
     });
-  const borrarConteo = (codigo) => deleteItem(COLLECTIONS.conteoStock, codigo);
+    const auditoriaId = ref?.id;
+    if (!auditoriaId) return;
+    const base = calcularSistemaPorCodigo(productos, equipos);
+    await Promise.all(base.map((it) => setDoc(doc(db, COLLECTIONS.auditoriaStockItems, `${auditoriaId}__${it.codigo}`), {
+      auditoriaId, codigo: it.codigo, categoria: it.categoria, esRepuesto: it.esRepuesto, sistemaAlAbrir: it.sistema,
+      contadoDeposito: null, contadoDepositoPorEmail: null, contadoDepositoEn: null,
+      contadoAdmin: null, contadoAdminPorEmail: null, contadoAdminEn: null,
+      decision: null, comentarioDecision: "", resueltoPorEmail: null, resueltoEn: null,
+    })));
+    updateItem(COLLECTIONS.auditoriasStock, auditoriaId, {
+      resumen: { totalItems: base.length, contadosDeposito: 0, contadosAdmin: 0, conDiferencia: 0, sinResolver: 0, exactitudPct: 100 },
+    });
+  };
+
+  const cerrarAuditoria = async (auditoriaId) => {
+    const confirmado = confirmBridge
+      ? await confirmBridge("¿Cerrar esta auditoría? Queda congelada para siempre — no se va a poder volver a cargar ni editar.")
+      : window.confirm("¿Cerrar esta auditoría? Queda congelada para siempre — no se va a poder volver a cargar ni editar.");
+    if (!confirmado) return;
+    return updateItem(COLLECTIONS.auditoriasStock, auditoriaId, {
+      estado: "Cerrada", fechaCierre: Date.now(), cerradaPorEmail: auth.currentUser?.email || null,
+    });
+  };
+
+  // campo: "contadoDeposito" o "contadoAdmin" — el merge:true hace que cada rol solo toque su
+  // propio campo, así los dos pueden contar al mismo tiempo sin pisarse entre sí.
+  const guardarConteoAuditoria = (auditoriaId, codigo, campo, valor) => {
+    const sufijo = campo === "contadoDeposito" ? "Deposito" : "Admin";
+    return setDoc(doc(db, COLLECTIONS.auditoriaStockItems, `${auditoriaId}__${codigo}`), {
+      [campo]: Number(valor) || 0,
+      [`contado${sufijo}PorEmail`]: auth.currentUser?.email || null,
+      [`contado${sufijo}En`]: Date.now(),
+    }, { merge: true });
+  };
+
+  // Corrige el stock real para que coincida con el conteo físico. Repuestos: stockDisponible es
+  // un solo número, se ajusta directo. Resto del catálogo (equipos por lote): una diferencia
+  // positiva se carga como un lote nuevo "Ajuste de auditoría"; una negativa se descuenta de los
+  // lotes existentes (los que tengan más stock libre primero), sin tocar lo ya comprometido.
+  const ajustarStockSistema = (codigo, esRepuesto, diff, periodoLabel) => {
+    if (!diff) return;
+    if (esRepuesto) {
+      const producto = productos.find((p) => p.nombre === codigo);
+      if (!producto) return;
+      updateItem(COLLECTIONS.productos, producto.id, { stockDisponible: Math.max(0, (Number(producto.stockDisponible) || 0) + diff) });
+      return;
+    }
+    if (diff > 0) {
+      addItem(COLLECTIONS.equipos, {
+        codigo: nextCodigoParaModelo(equipos, codigo), modelo: codigo, cantidad: diff,
+        estado: "En depósito", fechaIngreso: todayISO(), ubicacion: "Depósito principal",
+        notas: `Ajuste por auditoría de stock — ${periodoLabel}`,
+      });
+      return;
+    }
+    let restante = -diff;
+    const lotes = equipos
+      .filter((e) => e.modelo === codigo && e.estado !== "Vendido" && e.estado !== "Dado de baja")
+      .map((e) => ({ ...e, libre: Math.max(0, (Number(e.cantidad) || 1) - (Number(e.comprometido) || 0)) }))
+      .filter((e) => e.libre > 0)
+      .sort((a, b) => b.libre - a.libre);
+    for (const lote of lotes) {
+      if (restante <= 0) break;
+      const tomar = Math.min(restante, lote.libre);
+      const nuevaCantidad = (Number(lote.cantidad) || 1) - tomar;
+      // deleteItem pide confirmación (pensado para que la gatille un click directo de borrar) —
+      // acá ya es una corrección automática de un ajuste que el admin confirmó un paso antes, así
+      // que se borra directo con deleteDoc en vez de disparar un segundo popup de confirmación.
+      if (nuevaCantidad <= 0) deleteDoc(doc(db, COLLECTIONS.equipos, lote.id));
+      else updateItem(COLLECTIONS.equipos, lote.id, { cantidad: nuevaCantidad });
+      restante -= tomar;
+    }
+  };
+
+  // decision/comentario quedan documentados siempre; el stock del sistema solo se toca si la
+  // decisión elegida es puntualmente "Ajustar stock del sistema" (ver DECISIONES_AUDITORIA).
+  const resolverDiferenciaAuditoria = (auditoriaId, item, decision, comentario) => {
+    setDoc(doc(db, COLLECTIONS.auditoriaStockItems, `${auditoriaId}__${item.codigo}`), {
+      decision, comentarioDecision: comentario || "",
+      resueltoPorEmail: auth.currentUser?.email || null, resueltoEn: Date.now(),
+    }, { merge: true });
+    if (decision === "Ajustar stock del sistema") {
+      const contadoFinal = item.contadoAdmin != null ? item.contadoAdmin : item.contadoDeposito;
+      if (contadoFinal != null) {
+        const auditoria = auditoriasStock.find((a) => a.id === auditoriaId);
+        ajustarStockSistema(item.codigo, item.esRepuesto, contadoFinal - item.sistemaAlAbrir, tituloPeriodo(auditoria?.periodo));
+      }
+    }
+  };
+
+  const recalcularResumenAuditoria = (auditoriaId, items) => {
+    const totalItems = items.length;
+    const contadosDeposito = items.filter((i) => i.contadoDeposito != null).length;
+    const contadosAdmin = items.filter((i) => i.contadoAdmin != null).length;
+    const tieneDiferencia = (i) =>
+      (i.contadoDeposito != null && i.contadoDeposito !== i.sistemaAlAbrir) ||
+      (i.contadoAdmin != null && i.contadoAdmin !== i.sistemaAlAbrir) ||
+      (i.contadoDeposito != null && i.contadoAdmin != null && i.contadoDeposito !== i.contadoAdmin);
+    const conDiferencia = items.filter(tieneDiferencia).length;
+    const sinResolver = items.filter((i) => tieneDiferencia(i) && !i.decision).length;
+    const exactitudPct = totalItems ? Math.round(((totalItems - conDiferencia) / totalItems) * 100) : 100;
+    const nuevoResumen = { totalItems, contadosDeposito, contadosAdmin, conDiferencia, sinResolver, exactitudPct };
+    const actual = auditoriasStock.find((a) => a.id === auditoriaId)?.resumen;
+    if (JSON.stringify(actual) !== JSON.stringify(nuevoResumen)) {
+      updateItem(COLLECTIONS.auditoriasStock, auditoriaId, { resumen: nuevoResumen });
+    }
+  };
+
+  const handleDescargarAuditoriaPdf = async (auditoria) => {
+    setDescargandoId(auditoria.id + ":auditoria");
+    setPdfError("");
+    try {
+      const items = await obtenerItemsAuditoria(auditoria.id);
+      const filas = filasAuditoriaOrdenadas(items, productos);
+      await downloadListaPdf(`Auditoría de stock — ${tituloPeriodo(auditoria.periodo)}`, columnasAuditoriaPdf(), filas, todayISO(), "Auditoria_stock");
+    } catch (e) {
+      console.error("Error generando PDF de auditoría", e);
+      setPdfError("No se pudo generar el PDF de la auditoría. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleCompartirAuditoriaPdf = async (auditoria) => {
+    setDescargandoId(auditoria.id + ":auditoria-compartir");
+    setPdfError("");
+    try {
+      const items = await obtenerItemsAuditoria(auditoria.id);
+      const filas = filasAuditoriaOrdenadas(items, productos);
+      const titulo = `Auditoría de stock — ${tituloPeriodo(auditoria.periodo)}`;
+      const bytes = await generateListaPdf(titulo, columnasAuditoriaPdf(), filas, todayISO());
+      const ok = await compartirArchivo(bytes, nombreArchivoLista("Auditoria_stock", todayISO()), titulo);
+      if (!ok) await downloadListaPdf(titulo, columnasAuditoriaPdf(), filas, todayISO(), "Auditoria_stock");
+    } catch (e) {
+      console.error("Error compartiendo PDF de auditoría", e);
+      setPdfError("No se pudo compartir el PDF de la auditoría. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleDescargarAuditoriaExcel = async (auditoria) => {
+    const items = await obtenerItemsAuditoria(auditoria.id);
+    downloadAuditoriaStockExcel(items, productos, auditoria.periodo);
+  };
 
   function updateEquipoEstadoByCodigo(codigo, estado) {
     equipos.filter((e) => e.codigo === codigo).forEach((e) => updateItem(COLLECTIONS.equipos, e.id, { estado }));
@@ -3670,7 +3898,7 @@ export default function App() {
     { key: "muestras", label: "Muestras", icon: Star, section: "Stock e inventario" },
     { key: "catalogo", label: "Catálogo de productos", icon: Tag, section: "Stock e inventario" },
     { key: "matriz-costos", label: "Matriz de costos", icon: Calculator, section: "Stock e inventario" },
-    { key: "conteo", label: "Conteo de stock", icon: Boxes, section: "Stock e inventario" },
+    { key: "conteo", label: "Auditoría de stock", icon: Boxes, section: "Stock e inventario" },
     { key: "etiquetas", label: "Etiquetas de cajas", icon: ScanLine, section: "Stock e inventario" },
     // Movimientos
     { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine, section: "Movimientos" },
@@ -3868,6 +4096,7 @@ export default function App() {
             seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
             playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
             stockBajo={stockBajo}
+            esAdmin={esAdmin} auditoriaAbierta={auditoriaAbierta}
             onNavigate={navigateTo}
             onNuevaCotizacion={() => { navigateTo("cotizaciones"); setDrawer("cotizacion"); }}
           />
@@ -4064,10 +4293,15 @@ export default function App() {
         )}
 
         {tab === "conteo" && (
-          <ConteoStockView
-            productos={productos} equipos={equipos} conteoStock={conteoStock}
+          <AuditoriaStockView
+            productos={productos} equipos={equipos} movimientos={movimientos} entradas={entradas}
+            auditoriasStock={auditoriasStock} auditoriaAbierta={auditoriaAbierta}
             esAdmin={esAdmin} query={query} onQuery={setQuery}
-            onGuardar={guardarConteo} onBorrar={borrarConteo}
+            onAbrir={abrirAuditoria} onCerrar={cerrarAuditoria}
+            onGuardarConteo={guardarConteoAuditoria} onResolverDiferencia={resolverDiferenciaAuditoria}
+            onRecalcularResumen={recalcularResumenAuditoria}
+            onDescargarPdf={handleDescargarAuditoriaPdf} onCompartirPdf={handleCompartirAuditoriaPdf}
+            onDescargarExcel={handleDescargarAuditoriaExcel} descargandoId={descargandoId}
           />
         )}
 
@@ -5332,7 +5566,7 @@ function CuentaObrasTabla({ lista, onNavigate }) {
   );
 }
 
-function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, onNavigate, onNuevaCotizacion }) {
+function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
 
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
@@ -5402,6 +5636,16 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
       <p className="text-sm mb-4" style={{ color: MUTED }}>
         Lo que necesita tu atención hoy, y un vistazo rápido a cada área de la app.
       </p>
+
+      {esAdmin && !auditoriaAbierta && enPrimeraSemanaDelMes() && (
+        <div className="rounded-xl p-4 mb-4 flex items-center justify-between flex-wrap gap-3" style={{ backgroundColor: ACCENT_LIGHT }}>
+          <div>
+            <h3 className="text-base font-bold" style={{ color: INK }}>Todavía no abriste la auditoría de stock de {tituloPeriodo(periodoActual())}</h3>
+            <p className="text-sm mt-0.5" style={{ color: MUTED }}>Lo ideal es abrirla en la primera semana del mes.</p>
+          </div>
+          <SecondaryButton onClick={() => onNavigate("conteo")}>Ir a Auditoría de stock</SecondaryButton>
+        </div>
+      )}
 
       {(alertasContacto.length > 0 || seguimientosPendientes.length > 0) && (
         <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
@@ -10507,44 +10751,19 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
   );
 }
 
-// Celda editable de la tabla de admin — a diferencia de la fila de depósito, acá si se ve el
-// sistema al lado, así que no hay nada que ocultar; mismo guardado en blur/Enter.
-function ConteoCeldaAdmin({ item, onGuardar }) {
-  const [valor, setValor] = useState(item.contado != null ? String(item.contado) : "");
+// Fila de conteo a ciegas (depósito contando lo suyo, o admin contando lo suyo por separado) —
+// nunca muestra el campo `sistema`: por diseño, cada uno cuenta sin ver el número del otro ni el
+// del sistema, así la comparación en la revisión es un cruce real, no una copia.
+function ConteoCiegoRow({ item, campo, onGuardar }) {
+  const valorActual = item[campo];
+  const [valor, setValor] = useState(valorActual != null ? String(valorActual) : "");
   const [guardando, setGuardando] = useState(false);
-  useEffect(() => { setValor(item.contado != null ? String(item.contado) : ""); }, [item.contado]);
+  const guardado = valorActual != null && valor === String(valorActual);
 
   const confirmar = async () => {
-    if (valor.trim() === "" || Number(valor) === item.contado) return;
+    if (valor.trim() === "" || Number(valor) === valorActual) return;
     setGuardando(true);
-    await onGuardar(item.codigo, valor);
-    setGuardando(false);
-  };
-
-  return (
-    <input
-      type="number" min="0" inputMode="numeric" value={valor}
-      onChange={(e) => setValor(e.target.value)}
-      onBlur={confirmar}
-      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-      placeholder="—" disabled={guardando}
-      className="text-sm text-right rounded-lg px-2.5 py-1.5"
-      style={{ width: 84, border: `1px solid ${BORDER}` }}
-    />
-  );
-}
-
-// Fila con su propio input controlado — así cada campo se guarda solo (blur o Enter) sin
-// pisar lo que están escribiendo en otras filas al mismo tiempo.
-function ConteoRowDeposito({ item, onGuardar }) {
-  const [valor, setValor] = useState(item.contado != null ? String(item.contado) : "");
-  const [guardando, setGuardando] = useState(false);
-  const guardado = item.contado != null && valor === String(item.contado);
-
-  const confirmar = async () => {
-    if (valor.trim() === "" || Number(valor) === item.contado) return;
-    setGuardando(true);
-    await onGuardar(item.codigo, valor);
+    await onGuardar(item.codigo, campo, valor);
     setGuardando(false);
   };
 
@@ -10552,12 +10771,6 @@ function ConteoRowDeposito({ item, onGuardar }) {
     <div className="flex items-center gap-3 px-3.5 py-2 border-b" style={{ borderColor: BORDER }}>
       <div className="min-w-0 flex-1">
         <CodigoNombre codigo={item.codigo} />
-        {item.categoria === "Repuestos" && item.descripcion && (
-          <span className="text-xs ml-2" style={{ color: MUTED }}>{item.descripcion}</span>
-        )}
-        {item.contado != null && item.contadoEn && (
-          <span className="block text-[11px]" style={{ color: MUTED }}>Último conteo: {fmtFechaHora(item.contadoEn)}</span>
-        )}
       </div>
       <input
         type="number" min="0" inputMode="numeric" value={valor}
@@ -10571,6 +10784,258 @@ function ConteoRowDeposito({ item, onGuardar }) {
       <div style={{ width: 18 }}>
         {guardando ? <Clock size={15} style={{ color: MUTED }} /> : guardado ? <CheckCircle2 size={15} style={{ color: "#15803D" }} /> : null}
       </div>
+    </div>
+  );
+}
+
+// Lista de conteo ciego, agrupada por categoría y con buscador — la usan tanto depósito (su
+// propio conteo) como admin (el suyo), cada uno contra un campo distinto del mismo ítem.
+function ListaConteoCiego({ items, productos, query, onQuery, campo, onGuardar, titulo, subtitulo }) {
+  const filtrados = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((i) => i.codigo.toLowerCase().includes(q));
+  }, [items, query]);
+
+  const totalContados = items.filter((i) => i[campo] != null).length;
+  const progresoPct = items.length ? Math.round((totalContados / items.length) * 100) : 0;
+
+  const grupos = useMemo(() => {
+    const mapa = new Map();
+    for (const i of [...filtrados].sort((a, b) => a.codigo.localeCompare(b.codigo))) {
+      const cat = i.categoria || "Sin categoría";
+      if (!mapa.has(cat)) mapa.set(cat, []);
+      mapa.get(cat).push(i);
+    }
+    return [...mapa.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filtrados]);
+
+  return (
+    <div>
+      <div className="mb-3">
+        <h3 className="text-base font-bold" style={{ color: INK }}>{titulo}</h3>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>{subtitulo}</p>
+      </div>
+      <div className="mb-4 p-3 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
+        <div className="flex items-center justify-between text-xs font-medium mb-1.5" style={{ color: ACCENT }}>
+          <span>{totalContados} de {items.length} contados</span>
+          <span>{progresoPct}%</span>
+        </div>
+        <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "#FFFFFF" }}>
+          <div className="h-full rounded-full" style={{ width: `${progresoPct}%`, backgroundColor: ACCENT }} />
+        </div>
+      </div>
+      <div className="mb-3">
+        <BuscadorCodigoArbol productos={productos} query={query} onQuery={onQuery} />
+      </div>
+      <div className="rounded-lg border" style={{ borderColor: BORDER }}>
+        {grupos.map(([categoria, filas]) => (
+          <div key={categoria}>
+            <p className="text-xs font-semibold uppercase tracking-wide px-3.5 py-2" style={{ color: MUTED, backgroundColor: "#FAFBFC" }}>{categoria}</p>
+            {filas.map((item) => <ConteoCiegoRow key={item.codigo} item={item} campo={campo} onGuardar={onGuardar} />)}
+          </div>
+        ))}
+        {filtrados.length === 0 && (
+          <p className="text-sm text-center py-6" style={{ color: MUTED }}>Sin resultados.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Para una diferencia confirmada: a qué se debió y qué se hizo. "Ajustar stock del sistema" es
+// la única que efectivamente toca el stock (ver ajustarStockSistema) — todas las demás quedan
+// solo documentadas, tal cual lo pidió el usuario ("documentado sin tocar stock hasta resolver").
+const DECISIONES_AUDITORIA = [
+  "Ajustar stock del sistema",
+  "Recontar",
+  "Error de carga en el sistema",
+  "Pérdida o rotura confirmada",
+  "Mercadería en tránsito/pendiente de registrar",
+  "Diferencia aceptada sin acción",
+  "Otro",
+];
+
+// Entradas/salidas registradas en el sistema para un código, entre el cierre de la auditoría
+// anterior y la apertura de esta — evidencia para explicar una diferencia (ver RevisionItemRow).
+// Las entradas se guardan por equipo individual (sin cantidad ni modelo propio), por eso hay que
+// resolver su código interno contra el `equipos` vivo para saber a qué modelo comercial pertenecía
+// — igual que ya hace la pantalla de Entradas; si ese lote ya se vendió y salió de `equipos`, esa
+// entrada vieja no se puede re-atribuir y queda fuera de la cuenta (limitación conocida, no nueva).
+function movimientosEntradasDelPeriodo(codigo, desde, hasta, movimientos, entradas, equipos) {
+  const salidas = (movimientos || [])
+    .filter((m) => m.modelo === codigo && (m.createdAt || 0) >= desde && (m.createdAt || 0) < hasta)
+    .reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
+  const modeloPorCodigoInterno = new Map((equipos || []).map((e) => [e.codigo, e.modelo]));
+  const ingresos = (entradas || [])
+    .filter((e) => (e.createdAt || 0) >= desde && (e.createdAt || 0) < hasta && modeloPorCodigoInterno.get(e.codigo) === codigo)
+    .length;
+  return { entradas: ingresos, salidas };
+}
+
+// Una fila de la revisión: las 3 cifras, un estado calculado y, si hace falta, el panel para
+// documentar la decisión. `item` ya viene con diffDep/diffAdmin/diffEntre/tieneDiferencia
+// calculados por RevisionAuditoria (evita recalcularlo en cada fila).
+function RevisionItemRow({ item, evidencia, onResolver }) {
+  const [abierto, setAbierto] = useState(false);
+  const [decision, setDecision] = useState(item.decision || "");
+  const [comentario, setComentario] = useState(item.comentarioDecision || "");
+  const [guardando, setGuardando] = useState(false);
+
+  const badge = item.decision
+    ? { label: item.decision, bg: "#E9F7EF", color: "#15803D" }
+    : !item.ambosContaron
+      ? { label: "Falta un conteo", bg: "#FAFBFC", color: MUTED }
+      : item.diffEntre
+        ? { label: "Depósito y vos no coinciden — recontar", bg: "#FDF1E0", color: "#B45309" }
+        : item.tieneDiferencia
+          ? { label: "Diferencia contra el sistema", bg: "#FDECEC", color: "#B91C1C" }
+          : { label: "OK", bg: "#E9F7EF", color: "#15803D" };
+
+  const confirmar = async () => {
+    if (!decision) return;
+    setGuardando(true);
+    await onResolver(decision, comentario);
+    setGuardando(false);
+    setAbierto(false);
+  };
+
+  return (
+    <div className="rounded-lg p-3" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="min-w-0"><CodigoNombre codigo={item.codigo} /></div>
+        <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: badge.bg, color: badge.color }}>{badge.label}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 mt-2 text-center">
+        <div><p className="text-[10px]" style={{ color: MUTED }}>Sistema</p><p className="text-sm font-semibold" style={{ color: INK }}>{item.sistemaAlAbrir}</p></div>
+        <div><p className="text-[10px]" style={{ color: MUTED }}>Depósito</p><p className="text-sm font-semibold" style={{ color: INK }}>{item.contadoDeposito ?? "—"}</p></div>
+        <div><p className="text-[10px]" style={{ color: MUTED }}>Vos</p><p className="text-sm font-semibold" style={{ color: INK }}>{item.contadoAdmin ?? "—"}</p></div>
+      </div>
+      {(item.tieneDiferencia || item.decision) && (
+        <div className="mt-2">
+          {!abierto ? (
+            <button type="button" onClick={() => setAbierto(true)} className="text-xs underline" style={{ color: ACCENT }}>
+              {item.decision ? "Cambiar decisión" : "Resolver"}
+            </button>
+          ) : (
+            <div className="mt-2 p-2.5 rounded-lg" style={{ backgroundColor: "#FAFBFC" }}>
+              {(evidencia.entradas > 0 || evidencia.salidas > 0) && (
+                <p className="text-xs mb-2" style={{ color: MUTED }}>
+                  Desde la auditoría anterior: {evidencia.entradas} entrada(s) y {evidencia.salidas} unidad(es) de salida registradas en el sistema.
+                </p>
+              )}
+              <Field label="Decisión">
+                <Select value={decision} onChange={(e) => setDecision(e.target.value)}>
+                  <option value="">Elegí una opción...</option>
+                  {DECISIONES_AUDITORIA.map((d) => <option key={d} value={d}>{d}</option>)}
+                </Select>
+              </Field>
+              <Field label="Comentario"><Textarea value={comentario} onChange={(e) => setComentario(e.target.value)} placeholder="Qué se hizo y por qué..." /></Field>
+              <div className="flex gap-2">
+                <PrimaryButton onClick={confirmar} disabled={guardando || !decision}>{guardando ? "Guardando..." : "Guardar decisión"}</PrimaryButton>
+                <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Revisión de admin: cruza las 3 cifras por código y ordena lo que necesita atención primero
+// (diferencias sin resolver, después ya resueltas, después lo que falta contar, por último OK).
+function RevisionAuditoria({ items, productos, movimientos, entradas, equipos, auditoriasStock, auditoria, query, onQuery, onResolver }) {
+  const desde = useMemo(() => {
+    const anteriores = (auditoriasStock || [])
+      .filter((a) => a.estado === "Cerrada" && a.fechaCierre && a.fechaCierre < (auditoria.fechaApertura || Infinity));
+    anteriores.sort((a, b) => b.fechaCierre - a.fechaCierre);
+    return anteriores[0]?.fechaCierre || 0;
+  }, [auditoriasStock, auditoria]);
+  const hasta = auditoria.fechaApertura || Date.now();
+
+  const filtrados = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((i) => i.codigo.toLowerCase().includes(q));
+  }, [items, query]);
+
+  const conEstado = useMemo(() => filtrados.map((i) => {
+    const diffDep = i.contadoDeposito != null ? i.contadoDeposito - i.sistemaAlAbrir : null;
+    const diffAdmin = i.contadoAdmin != null ? i.contadoAdmin - i.sistemaAlAbrir : null;
+    const diffEntre = i.contadoDeposito != null && i.contadoAdmin != null ? i.contadoDeposito - i.contadoAdmin : null;
+    const hay = (d) => d != null && d !== 0;
+    return {
+      ...i, diffDep, diffAdmin, diffEntre,
+      tieneDiferencia: hay(diffDep) || hay(diffAdmin) || hay(diffEntre),
+      ambosContaron: i.contadoDeposito != null && i.contadoAdmin != null,
+    };
+  }), [filtrados]);
+
+  const sinResolver = conEstado.filter((i) => i.tieneDiferencia && !i.decision);
+  const resueltas = conEstado.filter((i) => i.tieneDiferencia && i.decision);
+  const sinContarCompleto = conEstado.filter((i) => !i.ambosContaron).sort((a, b) => a.codigo.localeCompare(b.codigo));
+  const ok = conEstado.filter((i) => i.ambosContaron && !i.tieneDiferencia).sort((a, b) => a.codigo.localeCompare(b.codigo));
+  const ordenadas = [...sinResolver, ...resueltas, ...sinContarCompleto, ...ok];
+
+  return (
+    <div>
+      <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <StatTile label="Sin resolver" valor={sinResolver.length} color={sinResolver.length ? "#B91C1C" : "#15803D"} />
+        <StatTile label="Resueltas" valor={resueltas.length} />
+        <StatTile label="Falta un conteo" valor={sinContarCompleto.length} />
+        <StatTile label="Exactitud" valor={`${auditoria.resumen?.exactitudPct ?? 100}%`} />
+      </div>
+      <div className="mb-3"><SearchBox value={query} onChange={onQuery} placeholder="Buscar código..." /></div>
+      <div className="space-y-2">
+        {ordenadas.map((i) => (
+          <RevisionItemRow
+            key={i.codigo} item={i}
+            evidencia={movimientosEntradasDelPeriodo(i.codigo, desde, hasta, movimientos, entradas, equipos)}
+            onResolver={(decision, comentario) => onResolver(i, decision, comentario)}
+          />
+        ))}
+        {ordenadas.length === 0 && <p className="text-sm text-center py-6" style={{ color: MUTED }}>Sin resultados.</p>}
+      </div>
+    </div>
+  );
+}
+
+// Historial: una fila por mes, con sus estadísticas ya calculadas (resumen, guardado en el propio
+// documento de la auditoría) — no hace falta cargar el detalle de ítems solo para listar esto.
+function HistorialAuditorias({ auditoriasStock, onVer, onCerrar, onDescargarPdf, onCompartirPdf, onDescargarExcel, descargandoId }) {
+  const ordenadas = [...auditoriasStock].sort((a, b) => (b.fechaApertura || 0) - (a.fechaApertura || 0));
+  return (
+    <div className="space-y-2">
+      {ordenadas.map((a) => (
+        <div key={a.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-bold" style={{ color: INK }}>{tituloPeriodo(a.periodo)}</p>
+              <p className="text-xs" style={{ color: MUTED }}>
+                {a.estado} · {a.resumen?.exactitudPct ?? 100}% exactitud · {a.resumen?.conDiferencia ?? 0} con diferencia
+                {a.resumen?.sinResolver ? ` · ${a.resumen.sinResolver} sin resolver` : ""}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button type="button" onClick={() => onVer(a.id)} className="text-xs underline" style={{ color: ACCENT }}>Ver detalle</button>
+              <button type="button" onClick={() => onDescargarPdf(a)} title="Descargar PDF" disabled={descargandoId === a.id + ":auditoria"}>
+                <Download size={15} style={{ color: ACCENT }} />
+              </button>
+              <button type="button" onClick={() => onCompartirPdf(a)} title="Compartir PDF" disabled={descargandoId === a.id + ":auditoria-compartir"}>
+                <Share2 size={15} style={{ color: ACCENT }} />
+              </button>
+              <button type="button" onClick={() => onDescargarExcel(a)} title="Descargar Excel">
+                <FileText size={15} style={{ color: ACCENT }} />
+              </button>
+              {a.estado === "Abierta" && (
+                <button type="button" onClick={() => onCerrar(a.id)} className="text-xs px-2 py-1 rounded border" style={{ borderColor: BORDER, color: "#B91C1C" }}>Cerrar</button>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+      {ordenadas.length === 0 && <EmptyState icon={Boxes} title="Todavía no hay auditorías" subtitle="Abrí la primera desde la pestaña Mi conteo." />}
     </div>
   );
 }
@@ -10766,155 +11231,143 @@ function EtiquetasView({ productos, transito = [], serialesEtiquetas, onReservar
   );
 }
 
-function ConteoStockView({ productos, equipos, conteoStock, esAdmin, query, onQuery, onGuardar, onBorrar }) {
-  const items = useMemo(() => {
-    const stockPorModelo = new Map();
-    for (const e of equipos) {
-      if (e.estado === "Vendido" || e.estado === "Dado de baja") continue;
-      stockPorModelo.set(e.modelo, (stockPorModelo.get(e.modelo) || 0) + (Number(e.cantidad) || 1));
-    }
-    const contados = new Map(conteoStock.map((c) => [c.codigo, c]));
-    return productos
-      .map((p) => {
-        const esRepuesto = p.categoriaPrincipal === "Repuestos";
-        const sistema = esRepuesto ? (Number(p.stockDisponible) || 0) : (stockPorModelo.get(p.nombre) || 0);
-        const c = contados.get(p.nombre);
-        return {
-          id: p.id, codigo: p.nombre, descripcion: p.descripcion || "", categoria: p.categoriaPrincipal,
-          sistema, contado: c ? c.cantidadContada : null, contadoPor: c ? c.creadoPorEmail : null, contadoEn: c ? c.createdAt : null,
-        };
-      })
-      .sort((a, b) => a.categoria.localeCompare(b.categoria) || a.codigo.localeCompare(b.codigo));
-  }, [productos, equipos, conteoStock]);
+function AuditoriaStockView({
+  productos, equipos, movimientos, entradas, auditoriasStock, auditoriaAbierta, esAdmin,
+  query, onQuery, onAbrir, onCerrar, onGuardarConteo, onResolverDiferencia, onRecalcularResumen,
+  onDescargarPdf, onCompartirPdf, onDescargarExcel, descargandoId,
+}) {
+  const [vista, setVista] = useState("contar"); // "contar" | "revision" | "historial"
+  const [auditoriaHistorialId, setAuditoriaHistorialId] = useState(null);
+  const [abriendo, setAbriendo] = useState(false);
 
-  const filtrados = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((i) => i.codigo.toLowerCase().includes(q) || i.descripcion.toLowerCase().includes(q));
-  }, [items, query]);
+  const auditoriaActivaId = vista === "historial" && auditoriaHistorialId ? auditoriaHistorialId : auditoriaAbierta?.id;
+  const auditoriaActiva = auditoriasStock.find((a) => a.id === auditoriaActivaId) || null;
 
-  const totalContados = items.filter((i) => i.contado != null).length;
-  const progresoPct = items.length ? Math.round((totalContados / items.length) * 100) : 0;
+  // El detalle (ítems) de la auditoría solo se pide mientras esta pantalla está abierta, y nada
+  // más que para la que se está mirando — por eso es un onSnapshot propio acá, no la lista
+  // completa de siempre: una auditoría con 200 ítems por mes no tiene que pesar en cada apertura
+  // de la app como pesaban las fichas técnicas (ver el fix de esa misma historia).
+  const [items, setItems] = useState([]);
+  const [cargandoItems, setCargandoItems] = useState(false);
+  useEffect(() => {
+    if (!auditoriaActivaId) { setItems([]); return; }
+    setCargandoItems(true);
+    const q = fsQuery(collection(db, COLLECTIONS.auditoriaStockItems), where("auditoriaId", "==", auditoriaActivaId));
+    const unsub = onSnapshot(q, (snap) => {
+      const nuevos = snap.docs.map((d) => d.data());
+      setItems(nuevos);
+      setCargandoItems(false);
+      // El resumen (para Historial y para el banner de Resumen) se recalcula solo mientras se
+      // mira la auditoría abierta — una cerrada ya no cambia, no hace falta repetir el cálculo.
+      if (auditoriaActivaId === auditoriaAbierta?.id) onRecalcularResumen(auditoriaActivaId, nuevos);
+    }, (err) => { console.error("Firestore subscribe error (auditoriaStockItems)", err); setCargandoItems(false); });
+    return () => unsub();
+  }, [auditoriaActivaId]);
 
-  const grupos = useMemo(() => {
-    const mapa = new Map();
-    for (const i of filtrados) {
-      if (!mapa.has(i.categoria)) mapa.set(i.categoria, []);
-      mapa.get(i.categoria).push(i);
-    }
-    return [...mapa.entries()];
-  }, [filtrados]);
+  const abrir = async () => {
+    setAbriendo(true);
+    await onAbrir();
+    setAbriendo(false);
+  };
 
+  // ---------- Depósito: solo su propio conteo ciego, atado a lo que esté abierto hoy ----------
   if (!esAdmin) {
+    if (!auditoriaAbierta) {
+      return <EmptyState icon={Boxes} title="Todavía no hay una auditoría de stock abierta" subtitle="Avisale al administrador para que abra la de este mes." />;
+    }
     return (
-      <div>
-        <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
-          <div>
-            <h2 className="text-xl font-bold" style={{ color: INK }}>Conteo de stock</h2>
-            <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-              Contá lo que hay físicamente para cada código y cargá la cantidad acá — se guarda solo al salir del campo.
-            </p>
-          </div>
-        </div>
-        <div className="mb-4 p-3 rounded-lg" style={{ backgroundColor: ACCENT_LIGHT }}>
-          <div className="flex items-center justify-between text-xs font-medium mb-1.5" style={{ color: ACCENT }}>
-            <span>{totalContados} de {items.length} contados</span>
-            <span>{progresoPct}%</span>
-          </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "#FFFFFF" }}>
-            <div className="h-full rounded-full" style={{ width: `${progresoPct}%`, backgroundColor: ACCENT }} />
-          </div>
-        </div>
-        <div className="mb-3">
-          <BuscadorCodigoArbol productos={productos} query={query} onQuery={onQuery} />
-        </div>
-        <div className="rounded-lg border" style={{ borderColor: BORDER }}>
-          {grupos.map(([categoria, filas]) => (
-            <div key={categoria}>
-              <p className="text-xs font-semibold uppercase tracking-wide px-3.5 py-2" style={{ color: MUTED, backgroundColor: "#FAFBFC" }}>{categoria}</p>
-              {filas.map((item) => <ConteoRowDeposito key={item.id} item={item} onGuardar={onGuardar} />)}
-            </div>
-          ))}
-          {filtrados.length === 0 && (
-            <p className="text-sm text-center py-6" style={{ color: MUTED }}>Sin resultados.</p>
-          )}
-        </div>
-      </div>
+      <ListaConteoCiego
+        items={items} productos={productos} query={query} onQuery={onQuery} campo="contadoDeposito"
+        onGuardar={(codigo, campo, valor) => onGuardarConteo(auditoriaAbierta.id, codigo, campo, valor)}
+        titulo={`Auditoría de stock — ${tituloPeriodo(auditoriaAbierta.periodo)}`}
+        subtitulo="Contá lo que hay físicamente para cada código y cargalo acá — se guarda solo al salir del campo."
+      />
     );
   }
 
-  // Vista admin: contado vs sistema vs diferencia, en vivo a medida que depósito va cargando
-  // — y admin también puede cargar directo acá (ve el sistema, así que no hace falta que sea
-  // a ciegas). Orden: diferencias primero (de mayor a menor), después lo que falta contar,
-  // por último lo que ya cerró OK.
-  const conConteo = filtrados.filter((i) => i.contado != null);
-  const conDiferencia = conConteo.filter((i) => i.contado !== i.sistema);
-  const sinContar = filtrados.filter((i) => i.contado == null);
-  const filasOrdenadas = [...conDiferencia].sort((a, b) => Math.abs(b.contado - b.sistema) - Math.abs(a.contado - a.sistema))
-    .concat([...sinContar].sort((a, b) => a.codigo.localeCompare(b.codigo)))
-    .concat([...conConteo.filter((i) => i.contado === i.sistema)].sort((a, b) => a.codigo.localeCompare(b.codigo)));
+  // ---------- Admin: Mi conteo / Revisión / Historial ----------
+  const TABS = [
+    { key: "contar", label: "Mi conteo" },
+    { key: "revision", label: "Revisión" },
+    { key: "historial", label: "Historial" },
+  ];
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
-        <div>
-          <h2 className="text-xl font-bold" style={{ color: INK }}>Conteo de stock</h2>
-          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            {totalContados} de {items.length} contados · {conDiferencia.length} con diferencia contra el sistema.
-          </p>
+      <div className="mb-4">
+        <h2 className="text-xl font-bold" style={{ color: INK }}>Auditoría de stock</h2>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+          Conteo doble (vos y depósito, cada uno a ciegas) con historial mensual exportable — reemplaza al viejo Conteo de stock.
+        </p>
+      </div>
+      <div className="flex gap-1 mb-4 p-1 rounded-lg w-fit" style={{ backgroundColor: "#F1F2F4" }}>
+        {TABS.map((t) => (
+          <button
+            key={t.key} onClick={() => setVista(t.key)}
+            className="text-sm px-3 py-1.5 rounded-md font-medium"
+            style={{ backgroundColor: vista === t.key ? "#FFFFFF" : "transparent", color: vista === t.key ? ACCENT : MUTED }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {(vista === "contar" || vista === "revision") && !auditoriaAbierta && (
+        <div className="p-4 rounded-lg mb-4" style={{ backgroundColor: ACCENT_LIGHT }}>
+          <p className="text-sm mb-2" style={{ color: INK }}>No hay ninguna auditoría abierta — lo ideal es abrirla en la primera semana del mes.</p>
+          <PrimaryButton onClick={abrir} disabled={abriendo}>{abriendo ? "Abriendo..." : `Abrir auditoría de ${tituloPeriodo(periodoActual())}`}</PrimaryButton>
         </div>
-      </div>
-      <div className="mb-3">
-        <BuscadorCodigoArbol productos={productos} query={query} onQuery={onQuery} />
-      </div>
-      <div className="rounded-lg border overflow-x-auto" style={{ borderColor: BORDER }}>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left" style={{ backgroundColor: "#FAFBFC", color: MUTED }}>
-              <th className="px-3.5 py-2 font-medium">Código</th>
-              <th className="px-3.5 py-2 font-medium text-right">Contado</th>
-              <th className="px-3.5 py-2 font-medium text-right">Sistema</th>
-              <th className="px-3.5 py-2 font-medium text-right">Diferencia</th>
-              <th className="px-3.5 py-2 font-medium">Contado por</th>
-              <th className="px-3.5 py-2 font-medium">Contado el</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filasOrdenadas.map((i) => {
-              const diff = i.contado != null ? i.contado - i.sistema : null;
-              return (
-                <tr key={i.id} className="border-t" style={{ borderColor: BORDER }}>
-                  <td className="px-3.5 py-2"><CodigoNombre codigo={i.codigo} /></td>
-                  <td className="px-3.5 py-2 text-right"><ConteoCeldaAdmin item={i} onGuardar={onGuardar} /></td>
-                  <td className="px-3.5 py-2 text-right" style={{ color: MUTED }}>{i.sistema}</td>
-                  <td className="px-3.5 py-2 text-right">
-                    {diff == null ? (
-                      <span style={{ color: MUTED }}>—</span>
-                    ) : diff === 0 ? (
-                      <span style={{ color: "#15803D" }}>OK</span>
-                    ) : (
-                      <span className="font-semibold" style={{ color: diff > 0 ? "#B45309" : "#B91C1C" }}>{diff > 0 ? `+${diff}` : diff}</span>
-                    )}
-                  </td>
-                  <td className="px-3.5 py-2 text-xs" style={{ color: MUTED }}>{i.contadoPor}</td>
-                  <td className="px-3.5 py-2 text-xs" style={{ color: MUTED }}>{fmtFechaHora(i.contadoEn)}</td>
-                  <td className="px-3.5 py-2 text-right">
-                    {i.contado != null && (
-                      <button onClick={() => onBorrar(i.codigo)} title="Borrar este conteo">
-                        <Trash2 size={13} style={{ color: MUTED }} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {filtrados.length === 0 && (
-          <p className="text-sm text-center py-6" style={{ color: MUTED }}>Sin resultados.</p>
-        )}
-      </div>
+      )}
+
+      {vista === "contar" && auditoriaAbierta && (
+        cargandoItems ? <p className="text-sm" style={{ color: MUTED }}>Cargando...</p> : (
+          <ListaConteoCiego
+            items={items} productos={productos} query={query} onQuery={onQuery} campo="contadoAdmin"
+            onGuardar={(codigo, campo, valor) => onGuardarConteo(auditoriaAbierta.id, codigo, campo, valor)}
+            titulo={`Tu conteo — ${tituloPeriodo(auditoriaAbierta.periodo)}`}
+            subtitulo="Este conteo es tuyo y va a ciegas, igual que el de depósito — ni vos ves el del sistema acá, ni depósito ve el tuyo. Se cruzan los tres en Revisión."
+          />
+        )
+      )}
+
+      {vista === "revision" && auditoriaAbierta && (
+        cargandoItems ? <p className="text-sm" style={{ color: MUTED }}>Cargando...</p> : (
+          <>
+            <RevisionAuditoria
+              items={items} productos={productos} movimientos={movimientos} entradas={entradas} equipos={equipos}
+              auditoriasStock={auditoriasStock} auditoria={auditoriaAbierta} query={query} onQuery={onQuery}
+              onResolver={(item, decision, comentario) => onResolverDiferencia(auditoriaAbierta.id, item, decision, comentario)}
+            />
+            <div className="mt-4 pt-4 border-t flex items-center justify-between flex-wrap gap-2" style={{ borderColor: BORDER }}>
+              <p className="text-xs" style={{ color: MUTED }}>Cerrar deja esta auditoría congelada para siempre — ya no se puede volver a cargar ni editar.</p>
+              <SecondaryButton onClick={() => onCerrar(auditoriaAbierta.id)}>Cerrar auditoría</SecondaryButton>
+            </div>
+          </>
+        )
+      )}
+
+      {vista === "historial" && (
+        auditoriaHistorialId ? (
+          <div>
+            <button type="button" onClick={() => setAuditoriaHistorialId(null)} className="text-xs underline mb-3 inline-flex items-center gap-1" style={{ color: ACCENT }}>
+              <ArrowLeft size={13} /> Volver al historial
+            </button>
+            {cargandoItems ? <p className="text-sm" style={{ color: MUTED }}>Cargando...</p> : (
+              <RevisionAuditoria
+                items={items} productos={productos} movimientos={movimientos} entradas={entradas} equipos={equipos}
+                auditoriasStock={auditoriasStock} auditoria={auditoriaActiva} query={query} onQuery={onQuery}
+                onResolver={(item, decision, comentario) => onResolverDiferencia(auditoriaActivaId, item, decision, comentario)}
+              />
+            )}
+          </div>
+        ) : (
+          <HistorialAuditorias
+            auditoriasStock={auditoriasStock} onVer={setAuditoriaHistorialId} onCerrar={onCerrar}
+            onDescargarPdf={onDescargarPdf} onCompartirPdf={onCompartirPdf} onDescargarExcel={onDescargarExcel}
+            descargandoId={descargandoId}
+          />
+        )
+      )}
     </div>
   );
 }

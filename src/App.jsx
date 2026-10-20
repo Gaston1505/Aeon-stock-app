@@ -2365,6 +2365,7 @@ export default function App() {
   };
   const [retiroTarget, setRetiroTarget] = useState(null);
   const [pagoTarget, setPagoTarget] = useState(null);
+  const [pagoVentaTarget, setPagoVentaTarget] = useState(null);
   const [promptFichaVenta, setPromptFichaVenta] = useState(null);
   const [cotizacionParaVenta, setCotizacionParaVenta] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
@@ -2572,6 +2573,22 @@ export default function App() {
   };
   const deleteMovimiento = (id) => deleteItem(COLLECTIONS.movimientos, id);
   const updateMovimiento = (id, patch) => updateItem(COLLECTIONS.movimientos, id, patch);
+  // Cobro de una venta cerrada: mismo patrón que Ventas comprometidas (lista de pagos, pueden
+  // ser varios en fechas distintas), pero guardado en la primera línea del grupo del remito —
+  // el mismo lugar donde ya se guarda la foto de remito — porque una venta con varias líneas
+  // (una por lote retirado) es un solo cobro, no uno por línea.
+  const agregarPagoVenta = (movimientoId, data) => {
+    const m = movimientos.find((x) => x.id === movimientoId);
+    if (!m) return;
+    const pagos = [...(m.pagos || []), { fecha: data.fecha || todayISO(), monto: Number(data.monto) || 0, formaPago: data.formaPago || "" }];
+    updateMovimiento(movimientoId, { pagos });
+  };
+  const quitarPagoVenta = (movimientoId, idx) => {
+    const m = movimientos.find((x) => x.id === movimientoId);
+    if (!m) return;
+    const pagos = (m.pagos || []).filter((_, i) => i !== idx);
+    updateMovimiento(movimientoId, { pagos });
+  };
   // Foto de remito cargada en cualquier momento después de la salida, no solo al cargarla — se
   // guarda en la primera línea del grupo, que es de donde la lee RemitoGrupoCard para mostrarla.
   // Hay que comprimirla igual que en el resto de los lugares donde se sube foto de remito: una
@@ -3825,6 +3842,17 @@ export default function App() {
 
   // Ventas cerradas = salidas ya retiradas del depósito con motivo Venta (fuente única de verdad, sin duplicar Equipos totales)
   const ventasCerradas = useMemo(() => movimientos.filter((m) => m.motivo === "Venta"), [movimientos]);
+  // Agrupadas por remito (una venta puede salir en varias líneas/lotes) — es donde vive el cobro:
+  // se guarda en la primera línea del grupo, igual que la foto de remito.
+  const gruposVentasCerradas = useMemo(
+    () => agruparPorRemito(
+      ventasCerradas,
+      (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
+      (m) => Number(m.cantidad) || 1,
+      () => null,
+    ),
+    [ventasCerradas]
+  );
 
   const proximosServices = useMemo(() => {
     const items = [];
@@ -4135,6 +4163,7 @@ export default function App() {
             esAdmin={esAdmin} auditoriaAbierta={auditoriaAbierta}
             onNavigate={navigateTo}
             onNuevaCotizacion={() => { navigateTo("cotizaciones"); setDrawer("cotizacion"); }}
+            onPagoVenta={(key) => setPagoVentaTarget(key)}
           />
         )}
 
@@ -4753,6 +4782,22 @@ export default function App() {
             onQuitar={(idx) => quitarPago(pagoTarget, idx)}
           />
         )}
+      </Drawer>
+
+      <Drawer open={!!pagoVentaTarget} onClose={() => setPagoVentaTarget(null)} title="Pagos">
+        {pagoVentaTarget && (() => {
+          const grupo = gruposVentasCerradas.find((g) => g.key === pagoVentaTarget);
+          if (!grupo) return null;
+          const m0 = grupo.items[0];
+          const montoTotal = grupo.items.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+          return (
+            <PagosForm
+              comprometida={{ cliente: m0.cliente, obra: m0.obra, monto: montoTotal, pagos: m0.pagos || [] }}
+              onAgregar={(d) => agregarPagoVenta(m0.id, d)}
+              onQuitar={(idx) => quitarPagoVenta(m0.id, idx)}
+            />
+          );
+        })()}
       </Drawer>
       <PhotoViewer src={fotoView} onClose={() => setFotoView(null)} />
       <ConfirmDialog state={confirmState} onResolve={resolveConfirm} />
@@ -5541,14 +5586,42 @@ function ComprometidaPagoBox({ comprometidas }) {
   );
 }
 
-function VentasCerradasPanel({ ventasCerradas }) {
+function VentasCerradasPanel({ ventasCerradas, onPago }) {
   const [q, setQ] = useState("");
-  const filtered = ventasCerradas.filter((v) => {
+  const anioActual = String(new Date().getFullYear());
+  const anios = useMemo(() => {
+    const set = new Set(ventasCerradas.map((v) => (v.fecha || "").slice(0, 4)).filter(Boolean));
+    return Array.from(set).sort().reverse();
+  }, [ventasCerradas]);
+  const [anio, setAnio] = useState(anioActual);
+
+  const porAnio = ventasCerradas.filter((v) => anio === "todos" || (v.fecha || "").startsWith(anio));
+  const filtered = porAnio.filter((v) => {
     const s = q.toLowerCase();
     return !s || [v.cliente, v.obra, v.modelo].some((x) => (x || "").toLowerCase().includes(s));
   });
   const totalCantidad = filtered.reduce((acc, v) => acc + (Number(v.cantidad) || 0), 0);
   const totalMonto = filtered.reduce((acc, v) => acc + (Number(v.monto) || 0), 0);
+
+  const grupos = useMemo(
+    () => agruparPorRemito(
+      filtered,
+      (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
+      (m) => Number(m.cantidad) || 1,
+      () => null,
+    ),
+    [filtered]
+  );
+  const gruposConMonto = useMemo(() => grupos.map((g) => {
+    const m0 = g.items[0];
+    const monto = g.items.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+    const cobrado = (m0.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+    const porModelo = new Map();
+    g.items.forEach((m) => porModelo.set(m.modelo || "—", (porModelo.get(m.modelo || "—") || 0) + (Number(m.cantidad) || 0)));
+    return { ...g, m0, monto, cobrado, saldo: Math.max(0, monto - cobrado), porModelo: Array.from(porModelo.entries()) };
+  }), [grupos]);
+  const totalCobrado = gruposConMonto.reduce((acc, g) => acc + g.cobrado, 0);
+  const totalSaldo = gruposConMonto.reduce((acc, g) => acc + g.saldo, 0);
 
   const porProducto = useMemo(() => {
     const map = {};
@@ -5568,31 +5641,53 @@ function VentasCerradasPanel({ ventasCerradas }) {
           <TrendingUp size={15} style={{ color: ACCENT }} />
           <h3 className="text-base font-bold" style={{ color: INK }}>Ventas cerradas</h3>
         </div>
-        <SearchBox value={q} onChange={setQ} placeholder="Buscar cliente, obra o producto..." />
+        <div className="flex items-center gap-2 flex-wrap">
+          <div style={{ width: 130 }}>
+            <Select value={anio} onChange={(e) => setAnio(e.target.value)}>
+              {!anios.includes(anioActual) && <option value={anioActual}>{anioActual}</option>}
+              {anios.map((a) => <option key={a} value={a}>{a}</option>)}
+              <option value="todos">Todos los años</option>
+            </Select>
+          </div>
+          <SearchBox value={q} onChange={setQ} placeholder="Buscar cliente, obra o producto..." />
+        </div>
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-sm" style={{ color: MUTED }}>Todavía no hay ventas con retiro registrado.</p>
+        <p className="text-sm" style={{ color: MUTED }}>Todavía no hay ventas con retiro registrado {anio === "todos" ? "" : `en ${anio}`}.</p>
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border mb-3" style={{ borderColor: BORDER }}>
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ backgroundColor: "#FAFBFC" }}>
-                  {["Fecha", "Razón social", "Obra", "Producto", "Cantidad", "Monto U$S"].map((h) => (
+                  {["Entregado", "Razón social", "Obra", "Producto", "Cantidad", "Monto U$S", "Cobrado", "Saldo", ""].map((h) => (
                     <th key={h} className="text-left font-medium px-3 py-2 border-b" style={{ color: MUTED, borderColor: BORDER, fontSize: 12 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filtered.slice(0, 10).map((v, i) => (
-                  <tr key={i} className="border-b last:border-0" style={{ borderColor: BORDER }}>
-                    <td className="px-3 py-2" style={{ color: INK }}>{fmtDate(v.fecha)}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{v.cliente || "—"}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{v.obra || "—"}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}><CodigoNombre codigo={v.modelo} /></td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{v.cantidad}</td>
-                    <td className="px-3 py-2" style={{ color: INK }}>{Number(v.monto || 0).toLocaleString("es-PY")}</td>
+                {gruposConMonto.slice(0, 10).map((g) => (
+                  <tr key={g.key} className="border-b last:border-0" style={{ borderColor: BORDER }}>
+                    <td className="px-3 py-2" style={{ color: INK }}>{fmtDate(g.m0.fecha)}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}>{g.m0.cliente || "—"}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}>{g.m0.obra || "—"}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}>
+                      {g.porModelo.map(([modelo, cant]) => (
+                        <div key={modelo}>{cant}× <CodigoNombre codigo={modelo} /></div>
+                      ))}
+                    </td>
+                    <td className="px-3 py-2" style={{ color: INK }}>{g.unidades}</td>
+                    <td className="px-3 py-2" style={{ color: INK }}>{g.monto.toLocaleString("es-PY")}</td>
+                    <td className="px-3 py-2" style={{ color: g.cobrado > 0 ? "#15803D" : MUTED }}>{g.cobrado.toLocaleString("es-PY")}</td>
+                    <td className="px-3 py-2" style={{ color: g.saldo > 0 ? "#B45309" : MUTED }}>{g.saldo.toLocaleString("es-PY")}</td>
+                    <td className="px-3 py-2">
+                      {onPago && (
+                        <button onClick={() => onPago(g.key)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
+                          Pagos
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -5601,6 +5696,9 @@ function VentasCerradasPanel({ ventasCerradas }) {
                   <td colSpan={4} className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>Total</td>
                   <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalCantidad}</td>
                   <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalMonto.toLocaleString("es-PY")}</td>
+                  <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalCobrado.toLocaleString("es-PY")}</td>
+                  <td className="px-3 py-2 text-sm font-medium" style={{ color: ACCENT }}>{totalSaldo.toLocaleString("es-PY")}</td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>
@@ -5706,7 +5804,7 @@ function CuentaObrasTabla({ lista, onNavigate }) {
   );
 }
 
-function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion }) {
+function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion, onPagoVenta }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
 
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
@@ -5899,7 +5997,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
         )}
       </div>
 
-      <VentasCerradasPanel ventasCerradas={ventasCerradas} />
+      <VentasCerradasPanel ventasCerradas={ventasCerradas} onPago={onPagoVenta} />
 
       {/* Acceso rápido: crear una cotización sin tener que ir primero a esa pestaña. */}
       <button
@@ -9197,6 +9295,7 @@ function PagosForm({ comprometida, onAgregar, onQuitar }) {
   const pagado = pagos.reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
   const total = Number(comprometida.monto) || 0;
   const saldo = Math.max(0, total - pagado);
+  const nombre = comprometida.razonSocial || comprometida.cliente;
 
   const [fecha, setFecha] = useState(todayISO());
   const [monto, setMonto] = useState("");
@@ -9217,7 +9316,7 @@ function PagosForm({ comprometida, onAgregar, onQuitar }) {
   return (
     <div>
       <div className="mb-4 p-3 rounded" style={{ backgroundColor: "#F7F8FA" }}>
-        <p className="text-sm font-medium" style={{ color: INK }}>{comprometida.razonSocial} — {comprometida.obra}</p>
+        <p className="text-sm font-medium" style={{ color: INK }}>{nombre}{comprometida.obra ? ` — ${comprometida.obra}` : ""}</p>
         <p className="text-xs mt-0.5" style={{ color: MUTED }}>
           Pagado U$S {pagado.toLocaleString("es-PY")} de U$S {total.toLocaleString("es-PY")} · saldo U$S {saldo.toLocaleString("es-PY")}
         </p>

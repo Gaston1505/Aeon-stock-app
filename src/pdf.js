@@ -2372,7 +2372,7 @@ export async function downloadReporteJoelPdf(filasFisicoPorCategoria, costosTran
 // ---------- Lista de precios para clientes ----------
 // `secciones`: [{ categoria, grupos: [{ titulo, filas: [{ codigo, capacidad, precio }] }] }] — solo
 // código, capacidad y precio de lista; cada categoría arranca en página nueva.
-export async function generateListaPreciosPdf(secciones, fecha) {
+export async function generateListaPreciosPdf(secciones, fecha, conFoto = false) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -2391,6 +2391,14 @@ export async function generateListaPreciosPdf(secciones, fecha) {
   function rect(x, yy, w, h, opts = {}) {
     page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
   }
+  function drawImageContained(img, cellX, cellTopY, cellW, cellH, pad = 3) {
+    const maxW = cellW - pad * 2;
+    const maxH = cellH - pad * 2;
+    const scale = Math.min(maxW / img.width, maxH / img.height);
+    const iw = img.width * scale;
+    const ih = img.height * scale;
+    page.drawImage(img, { x: cellX + cellW / 2 - iw / 2, y: cellTopY - cellH / 2 - ih / 2, width: iw, height: ih });
+  }
   function barraCategoria(nombre, continuacion) {
     rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT });
     text(continuacion ? `${nombre} (continuación)` : nombre, MARGIN + 8, y - 14, { bold: true, size: 10.5, color: WHITE });
@@ -2407,9 +2415,12 @@ export async function generateListaPreciosPdf(secciones, fecha) {
     }
   }
 
-  const colCodigo = CONTENT_W * 0.5;
-  const colCapacidad = CONTENT_W * 0.28;
-  const colPrecio = CONTENT_W - colCodigo - colCapacidad;
+  const rowH = conFoto ? 38 : 16;
+  const colFoto = conFoto ? 42 : 0;
+  const colRestante = CONTENT_W - colFoto;
+  const colCodigo = colRestante * 0.5;
+  const colCapacidad = colRestante * 0.28;
+  const colPrecio = colRestante - colCodigo - colCapacidad;
   const recortar = (str, w, size, f) => {
     let t = String(str ?? "");
     while (t.length > 1 && f.widthOfTextAtSize(t, size) > w - 8) t = t.slice(0, -1);
@@ -2418,7 +2429,10 @@ export async function generateListaPreciosPdf(secciones, fecha) {
   function encabezadoTabla() {
     rect(MARGIN, y - 16, CONTENT_W, 16, { fill: ACCENT_LIGHT });
     let cx = MARGIN;
-    [["Código", colCodigo], ["Capacidad", colCapacidad], ["Precio de lista U$S", colPrecio]].forEach(([label, w]) => {
+    const cols = conFoto
+      ? [["", colFoto], ["Código", colCodigo], ["Capacidad", colCapacidad], ["Precio de lista U$S", colPrecio]]
+      : [["Código", colCodigo], ["Capacidad", colCapacidad], ["Precio de lista U$S", colPrecio]];
+    cols.forEach(([label, w]) => {
       const lw = bold.widthOfTextAtSize(label, 7);
       text(label, cx + w / 2 - lw / 2, y - 11, { bold: true, size: 7, color: ACCENT });
       cx += w;
@@ -2459,14 +2473,23 @@ export async function generateListaPreciosPdf(secciones, fecha) {
     barraCategoria(sec.categoria, false);
     for (const g of sec.grupos) {
       // El título del grupo no se queda solo al final de una página: se exige lugar para él + encabezado + 2 filas.
-      ensureSpace(20 + 16 + 34);
+      ensureSpace(20 + 16 + rowH * 2);
       text(g.titulo, MARGIN, y - 9, { bold: true, size: 9, color: INK });
       y -= 16;
       encabezadoTabla();
       for (const f of g.filas) {
-        const rowH = 16;
         ensureSpace(rowH);
         let cx = MARGIN;
+        if (conFoto) {
+          rect(cx, y - rowH, colFoto, rowH, { border: BORDER });
+          if (f.foto) {
+            try {
+              const img = await embedImagenDataUrl(pdf, f.foto);
+              drawImageContained(img, cx, y, colFoto, rowH);
+            } catch (e) { /* skip broken image */ }
+          }
+          cx += colFoto;
+        }
         rect(cx, y - rowH, colCodigo, rowH, { border: BORDER });
         text(recortar(f.codigo, colCodigo, 7.5, font), cx + 5, y - rowH / 2 - 2.5, { size: 7.5 });
         cx += colCodigo;
@@ -2498,15 +2521,15 @@ export function nombreArchivoListaPrecios(fecha) {
   return `Lista_de_precios_AEON_${fecha || ""}.pdf`;
 }
 
-export async function downloadListaPreciosPdf(secciones, fecha) {
-  const bytes = await generateListaPreciosPdf(secciones, fecha);
+export async function downloadListaPreciosPdf(secciones, fecha, conFoto = false) {
+  const bytes = await generateListaPreciosPdf(secciones, fecha, conFoto);
   downloadBlob(bytes, nombreArchivoListaPrecios(fecha), "application/pdf");
 }
 
 // ---------- Listado de productos para clientes (igual que Lista de precios, pero sin precio) ----------
 // Mismo armado que generateListaPreciosPdf, con nombre y título distintos a propósito — para que
 // nunca se confunda con "Catálogo" (el PDF institucional ya cargado, con fotos y descripciones).
-export async function generateListadoProductosPdf(secciones, fecha) {
+export async function generateListadoProductosPdf(secciones, fecha, conFoto = false) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -2525,6 +2548,14 @@ export async function generateListadoProductosPdf(secciones, fecha) {
   function rect(x, yy, w, h, opts = {}) {
     page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
   }
+  function drawImageContained(img, cellX, cellTopY, cellW, cellH, pad = 3) {
+    const maxW = cellW - pad * 2;
+    const maxH = cellH - pad * 2;
+    const scale = Math.min(maxW / img.width, maxH / img.height);
+    const iw = img.width * scale;
+    const ih = img.height * scale;
+    page.drawImage(img, { x: cellX + cellW / 2 - iw / 2, y: cellTopY - cellH / 2 - ih / 2, width: iw, height: ih });
+  }
   function barraCategoria(nombre, continuacion) {
     rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT });
     text(continuacion ? `${nombre} (continuación)` : nombre, MARGIN + 8, y - 14, { bold: true, size: 10.5, color: WHITE });
@@ -2541,8 +2572,11 @@ export async function generateListadoProductosPdf(secciones, fecha) {
     }
   }
 
-  const colCodigo = CONTENT_W * 0.68;
-  const colCapacidad = CONTENT_W - colCodigo;
+  const rowH = conFoto ? 38 : 16;
+  const colFoto = conFoto ? 42 : 0;
+  const colRestante = CONTENT_W - colFoto;
+  const colCodigo = colRestante * 0.68;
+  const colCapacidad = colRestante - colCodigo;
   const recortar = (str, w, size, f) => {
     let t = String(str ?? "");
     while (t.length > 1 && f.widthOfTextAtSize(t, size) > w - 8) t = t.slice(0, -1);
@@ -2551,7 +2585,8 @@ export async function generateListadoProductosPdf(secciones, fecha) {
   function encabezadoTabla() {
     rect(MARGIN, y - 16, CONTENT_W, 16, { fill: ACCENT_LIGHT });
     let cx = MARGIN;
-    [["Código", colCodigo], ["Capacidad", colCapacidad]].forEach(([label, w]) => {
+    const cols = conFoto ? [["", colFoto], ["Código", colCodigo], ["Capacidad", colCapacidad]] : [["Código", colCodigo], ["Capacidad", colCapacidad]];
+    cols.forEach(([label, w]) => {
       const lw = bold.widthOfTextAtSize(label, 7);
       text(label, cx + w / 2 - lw / 2, y - 11, { bold: true, size: 7, color: ACCENT });
       cx += w;
@@ -2591,14 +2626,23 @@ export async function generateListadoProductosPdf(secciones, fecha) {
     categoriaActual = sec.categoria;
     barraCategoria(sec.categoria, false);
     for (const g of sec.grupos) {
-      ensureSpace(20 + 16 + 34);
+      ensureSpace(20 + 16 + rowH * 2);
       text(g.titulo, MARGIN, y - 9, { bold: true, size: 9, color: INK });
       y -= 16;
       encabezadoTabla();
       for (const f of g.filas) {
-        const rowH = 16;
         ensureSpace(rowH);
         let cx = MARGIN;
+        if (conFoto) {
+          rect(cx, y - rowH, colFoto, rowH, { border: BORDER });
+          if (f.foto) {
+            try {
+              const img = await embedImagenDataUrl(pdf, f.foto);
+              drawImageContained(img, cx, y, colFoto, rowH);
+            } catch (e) { /* skip broken image */ }
+          }
+          cx += colFoto;
+        }
         rect(cx, y - rowH, colCodigo, rowH, { border: BORDER });
         text(recortar(f.codigo, colCodigo, 7.5, font), cx + 5, y - rowH / 2 - 2.5, { size: 7.5 });
         cx += colCodigo;
@@ -2626,8 +2670,8 @@ export function nombreArchivoListadoProductos(fecha) {
   return `Listado_de_productos_AEON_${fecha || ""}.pdf`;
 }
 
-export async function downloadListadoProductosPdf(secciones, fecha) {
-  const bytes = await generateListadoProductosPdf(secciones, fecha);
+export async function downloadListadoProductosPdf(secciones, fecha, conFoto = false) {
+  const bytes = await generateListadoProductosPdf(secciones, fecha, conFoto);
   downloadBlob(bytes, nombreArchivoListadoProductos(fecha), "application/pdf");
 }
 

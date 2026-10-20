@@ -9948,7 +9948,7 @@ function construirListaPrecios(productos, categoriasElegidas) {
     const grupos = [];
     for (const entry of agruparProductosPorCategoria(items)) {
       const titulo = tituloGrupoLista(entry.items[0]);
-      const filas = entry.items.map((p) => ({ codigo: p.nombre, capacidad: capacidadDeProducto(p), precio: Number(p.precioLista) }));
+      const filas = entry.items.map((p) => ({ codigo: p.nombre, capacidad: capacidadDeProducto(p), precio: Number(p.precioLista), foto: p.foto || "" }));
       const anterior = grupos[grupos.length - 1];
       if (anterior && anterior.titulo === titulo) anterior.filas.push(...filas); // p. ej. anafes de 2, 3 y 4 zonas: un solo grupo
       else grupos.push({ titulo, filas });
@@ -10033,7 +10033,7 @@ function construirListadoProductos(productos, categoriasElegidas) {
     const grupos = [];
     for (const entry of agruparProductosPorCategoria(items)) {
       const titulo = tituloGrupoLista(entry.items[0]);
-      const filas = entry.items.map((p) => ({ codigo: p.nombre, capacidad: capacidadDeProducto(p) }));
+      const filas = entry.items.map((p) => ({ codigo: p.nombre, capacidad: capacidadDeProducto(p), foto: p.foto || "" }));
       const anterior = grupos[grupos.length - 1];
       if (anterior && anterior.titulo === titulo) anterior.filas.push(...filas);
       else grupos.push({ titulo, filas });
@@ -10057,6 +10057,7 @@ function downloadListadoProductosExcel(secciones, fecha) {
 function ListadoProductosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
   const [excluidos, setExcluidos] = useState(() => new Set());
+  const [conFoto, setConFoto] = useState(false);
   const [ocupado, setOcupado] = useState("");
   const [msg, setMsg] = useState(null);
   const secciones = useMemo(() => construirListadoProductos(productos, elegidas), [productos, elegidas]);
@@ -10104,8 +10105,12 @@ function ListadoProductosPanel({ productos, onCerrar }) {
         onDeseleccionarTodos={() => setExcluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
         mostrarPrecio={false}
       />
+      <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: INK }}>
+        <input type="checkbox" checked={conFoto} onChange={(e) => setConFoto(e.target.checked)} />
+        Incluir foto de cada producto (solo en PDF — alarga bastante el archivo; Excel siempre va sin fotos)
+      </label>
       <div className="flex gap-2 flex-wrap">
-        <PrimaryButton onClick={() => accion("pdf", () => downloadListadoProductosPdf(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
+        <PrimaryButton onClick={() => accion("pdf", () => downloadListadoProductosPdf(seccionesFiltradas, hoy, conFoto))} disabled={totalSeleccionado === 0 || !!ocupado}>
           <Download size={14} /> {ocupado === "pdf" ? "Generando..." : "PDF"}
         </PrimaryButton>
         <SecondaryButton onClick={() => accion("excel", async () => downloadListadoProductosExcel(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
@@ -10113,9 +10118,9 @@ function ListadoProductosPanel({ productos, onCerrar }) {
         </SecondaryButton>
         <SecondaryButton
           onClick={() => accion("compartir", async () => {
-            const bytes = await generateListadoProductosPdf(seccionesFiltradas, hoy);
+            const bytes = await generateListadoProductosPdf(seccionesFiltradas, hoy, conFoto);
             const ok = await compartirArchivo(bytes, nombreArchivoListadoProductos(hoy), "Listado de productos — AEON Home Tech");
-            if (!ok) await downloadListadoProductosPdf(seccionesFiltradas, hoy);
+            if (!ok) await downloadListadoProductosPdf(seccionesFiltradas, hoy, conFoto);
           })}
           disabled={totalSeleccionado === 0 || !!ocupado}
         >
@@ -10221,6 +10226,7 @@ function PreciosSegunMetricasPanel({ productos, matrizCostos, onAplicar, onCerra
 function ListaPreciosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
   const [excluidos, setExcluidos] = useState(() => new Set());
+  const [conFoto, setConFoto] = useState(false);
   const [ocupado, setOcupado] = useState("");
   const [msg, setMsg] = useState(null);
   const secciones = useMemo(() => construirListaPrecios(productos, elegidas), [productos, elegidas]);
@@ -10270,8 +10276,12 @@ function ListaPreciosPanel({ productos, onCerrar }) {
       {sinPrecio.length > 0 && (
         <p className="text-xs mb-3" style={{ color: "#B45309" }}>{sinPrecio.length} producto(s) sin precio de lista cargado no entran en la lista.</p>
       )}
+      <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: INK }}>
+        <input type="checkbox" checked={conFoto} onChange={(e) => setConFoto(e.target.checked)} />
+        Incluir foto de cada producto (solo en PDF — alarga bastante el archivo; Excel siempre va sin fotos)
+      </label>
       <div className="flex gap-2 flex-wrap">
-        <PrimaryButton onClick={() => accion("pdf", () => downloadListaPreciosPdf(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
+        <PrimaryButton onClick={() => accion("pdf", () => downloadListaPreciosPdf(seccionesFiltradas, hoy, conFoto))} disabled={totalSeleccionado === 0 || !!ocupado}>
           <Download size={14} /> {ocupado === "pdf" ? "Generando..." : "PDF"}
         </PrimaryButton>
         <SecondaryButton onClick={() => accion("excel", async () => downloadListaPreciosExcel(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
@@ -10279,9 +10289,9 @@ function ListaPreciosPanel({ productos, onCerrar }) {
         </SecondaryButton>
         <SecondaryButton
           onClick={() => accion("compartir", async () => {
-            const bytes = await generateListaPreciosPdf(seccionesFiltradas, hoy);
+            const bytes = await generateListaPreciosPdf(seccionesFiltradas, hoy, conFoto);
             const ok = await compartirArchivo(bytes, nombreArchivoListaPrecios(hoy), "Lista de precios — AEON Home Tech");
-            if (!ok) await downloadListaPreciosPdf(seccionesFiltradas, hoy);
+            if (!ok) await downloadListaPreciosPdf(seccionesFiltradas, hoy, conFoto);
           })}
           disabled={totalSeleccionado === 0 || !!ocupado}
         >

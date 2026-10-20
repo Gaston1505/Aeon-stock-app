@@ -16629,7 +16629,17 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
   const totalCosto = enCamino.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
   return (
     <Section
-      title="Tránsito"
+      title={
+        <span className="inline-flex items-center gap-1">
+          Tránsito
+          <InfoTip>
+            <p><strong>Qué cuenta acá.</strong> Solo los envíos que todavía NO están "Llegado". Al tocar "Dar llegada" el envío deja de sumar en Tránsito y Resumen — pasa a ser stock físico real en Depósito/Maestro de equipos, valorizado ahí con el Costo Real del Catálogo.</p>
+            <p><strong>"U$S ... en costos totales"</strong> es la factura real de ESE envío: lo efectivamente pagado o comprometido — adelanto + pago final a fábrica, representante en China, flete, comisión, despacho y seguro — cargado a mano al crear el envío.</p>
+            <p><strong>"Origen / Puesto en PY / Venta"</strong> es en cambio una ESTIMACIÓN: toma el costo de origen que está cargado en el Catálogo para cada modelo (un valor de referencia, no lo que se pagó puntualmente en esta compra) y le suma la logística real de este envío (representante, flete, comisión, despacho, seguro — sin volver a sumar el pago a fábrica, para no duplicar el costo de la mercadería).</p>
+            <p>Por eso "Puesto en PY" puede no coincidir con "costos totales": si lo que se negoció realmente con la fábrica en este pedido fue distinto al costo de referencia del Catálogo para esos modelos, las dos cifras miden cosas distintas — una es la factura real de este envío, la otra una proyección con el costo "oficial" de Catálogo. No es un error, son dos números con objetivos diferentes.</p>
+          </InfoTip>
+        </span>
+      }
       subtitle={`Envíos fabricándose o en camino desde China — todavía no es stock físico. ${enCamino.length} envío(s) en camino · ${totalUnidades} unidad(es) · U$S ${totalCosto.toLocaleString("es-PY")} en costos.`}
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo envío"

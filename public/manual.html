@@ -252,6 +252,16 @@
         </div>
       </section>
 
+      <section class="card"><h3>Pre-lista de pedido</h3>
+        <p class="desc">Borrador vivo de lo que tener presente para el próximo pedido a fábrica, antes de llegar a armar la Orden de Compra. Se va agregando a medida que surge la necesidad —puede ser un repuesto que todavía ni existe en el catálogo— agrupado por rubro, y se completa con más info a medida que se consigue.</p>
+        <div class="fields">
+          <div class="field"><div class="k">Al cargar</div><div class="v">Solo rubro y nombre son obligatorios — código de catálogo, fábrica, cantidad y precio se completan después, si corresponde.</div></div>
+          <div class="field"><div class="k">Fábrica</div><div class="v">Para anotar cuál, cuando un mismo producto se puede pedir a más de una.</div></div>
+          <div class="field"><div class="k">Estado</div><div class="v">Por cotizar → Cotizado → Confirmado, o Descartado (queda aparte, al final de la lista).</div></div>
+        </div>
+        <div class="tip gray"><b>No es la Orden de Compra.</b> Esta es una lista de intención, sin cálculo de m3/contenedores — la Orden de Compra trabaja con productos reales del catálogo para planificar la compra en sí.</div>
+      </section>
+
       <section class="card"><h3>Etiquetas de cajas</h3>
         <p class="desc">Genera las etiquetas (código de barras) para pegar en las cajas — mismo formato que la de fábrica: 70×20mm, código Code 128 con el código del producto + un serial de 6 dígitos que la app numera sola por producto, para que nunca se repita un número.</p>
         <div class="fields">
@@ -290,6 +300,16 @@
       <section class="card"><h3>Ventas comprometidas</h3><p class="desc">Mercadería ya vendida pero que sigue físicamente en depósito — reserva el stock para que nadie más lo use, y se puede retirar en varias tandas (parcialmente) hasta completarse.</p></section>
 
       <section class="card"><h3>Ventas y garantías</h3><p class="desc">La ficha de una obra ya vendida: contrato, remitos vinculados y certificado de garantía, con seguimiento de service a los 12 y 24 meses.</p></section>
+
+      <section class="card" style="grid-column:1/-1"><h3>Historial de reclamos</h3>
+        <p class="desc">Trazabilidad de un problema post-venta: qué equipo, de qué obra/cliente, qué pasó y qué se hizo — sin necesidad de que esa venta esté cargada en la app (sirve también para ventas viejas, de antes de usar AEON). Se puede abrir desde acá, desde la ficha de Ventas y garantías ("Cargar reclamo") o desde Maestro de equipos (ícono de alerta en la fila del equipo).</p>
+        <div class="fields">
+          <div class="field"><div class="k">Datos del reclamo</div><div class="v">Código del equipo (o modelo, si no hay código), cliente, obra, dirección, fecha y descripción del problema.</div></div>
+          <div class="field"><div class="k">Resolución</div><div class="v">Reparado, Repuestos extraídos, Reemplazado, Dado de baja u Otro — con comentario obligatorio.</div></div>
+          <div class="field"><div class="k">Reinstalación</div><div class="v">Si el equipo se vuelve a instalar en otro cliente/obra, se agrega como un nuevo capítulo sin perder el historial anterior — el reclamo vuelve a quedar "Abierto".</div></div>
+        </div>
+        <div class="tip gray"><b>No reemplaza Banco de recuperables.</b> Son dos herramientas separadas: Banco de recuperables es el stock físico de unidades en reparación; Historial de reclamos es la bitácora de qué le pasó a cada una — incluso a equipos que ni siquiera pasan por ahí, como uno que se le devolvió reparado al mismo cliente.</div>
+      </section>
 
       <section class="card"><h3>Cotizaciones</h3><p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por cliente y obra — volver a cotizar la misma obra crea una nueva versión con historial, no una cotización suelta. Cada línea muestra un indicador de color contra el Costo Real (ver Matriz de costos) para saber al toque si el descuento todavía deja margen.</p></section>
 

@@ -183,6 +183,8 @@ const COLLECTIONS = {
   fichasTecnicas: "fichasTecnicas",
   auditoriasStock: "auditoriasStock",
   auditoriaStockItems: "auditoriaStockItems",
+  reclamos: "reclamos",
+  preListaPedido: "preListaPedido",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -2344,6 +2346,8 @@ export default function App() {
   const [preciosMercado, setPreciosMercado] = useState([]);
   const [preciosMayorista, setPreciosMayorista] = useState([]);
   const [ordenesCompra, setOrdenesCompra] = useState([]);
+  const [reclamos, setReclamos] = useState([]);
+  const [preListaPedido, setPreListaPedido] = useState([]);
   const [matrizCostos, setMatrizCostos] = useState(null);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
@@ -2403,6 +2407,8 @@ export default function App() {
       [COLLECTIONS.preciosMercado]: setPreciosMercado,
       [COLLECTIONS.preciosMayorista]: setPreciosMayorista,
       [COLLECTIONS.ordenesCompra]: setOrdenesCompra,
+      [COLLECTIONS.reclamos]: setReclamos,
+      [COLLECTIONS.preListaPedido]: setPreListaPedido,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -3285,6 +3291,33 @@ export default function App() {
   const addOrdenCompra = (data) => addItem(COLLECTIONS.ordenesCompra, data);
   const updateOrdenCompra = (id, data) => updateItem(COLLECTIONS.ordenesCompra, id, data);
   const deleteOrdenCompra = (id) => deleteItem(COLLECTIONS.ordenesCompra, id);
+
+  // ---------- Historial de reclamos ----------
+  // Trazabilidad de un equipo a lo largo de su vida — no depende de que exista una venta cargada
+  // en el sistema (la empresa es más vieja que la app, hay reclamos de ventas de antes que nunca
+  // quedaron como "obra" acá) y no reemplaza a Banco de recuperables: ese sigue para el día a día
+  // de reparación; esto es el registro permanente de qué pasó, con quién y qué se hizo.
+  const addReclamo = (data) => addItem(COLLECTIONS.reclamos, { estado: "Abierto", reinstalaciones: [], ...data });
+  const updateReclamo = (id, data) => updateItem(COLLECTIONS.reclamos, id, data);
+  const deleteReclamo = (id) => deleteItem(COLLECTIONS.reclamos, id);
+  const resolverReclamo = (reclamo, resolucionTipo, resolucionComentario) =>
+    updateReclamo(reclamo.id, {
+      estado: "Resuelto", resolucionTipo, resolucionComentario,
+      resueltoPorEmail: auth.currentUser?.email || null, resueltoEn: Date.now(),
+    });
+  const agregarReinstalacion = (reclamo, reinstalacion) =>
+    updateReclamo(reclamo.id, {
+      estado: "Abierto", // vuelve a quedar activo: es un nuevo capítulo de la trazabilidad
+      reinstalaciones: [...(reclamo.reinstalaciones || []), { ...reinstalacion, fecha: reinstalacion.fecha || todayISO() }],
+    });
+
+  // ---------- Pre-lista de pedido a fábrica ----------
+  // Más suelta que Orden de Compra (que ya calcula m3/contenedores sobre productos reales del
+  // catálogo) — acá se anota lo que hay que tener presente para el próximo pedido, exista o no
+  // todavía en el catálogo, con el nombre como dato principal y el resto completándose después.
+  const addPreListaItem = (data) => addItem(COLLECTIONS.preListaPedido, { estado: "Por cotizar", ...data });
+  const updatePreListaItem = (id, data) => updateItem(COLLECTIONS.preListaPedido, id, data);
+  const deletePreListaItem = (id) => deleteItem(COLLECTIONS.preListaPedido, id);
 
   // Tránsito: mercadería fabricándose/en camino desde China, todavía no es stock físico real
   // — se traslada a Maestro de equipos recién cuando llega (manualmente, como una entrada más).
@@ -16194,7 +16227,10 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
                   </div>
                 </div>
                 <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString("es-PY")} en costos totales</p>
-                {!llegado && <ValorizacionResumen v={valuacionTransito([t], productos)} />}
+                {!llegado && (() => {
+                  const v = valuacionTransito([t], productos);
+                  return <ValorizacionResumen v={{ origen: v.costoOrigen, py: v.costoPuestoPy, venta: v.ventaPrecioLista }} />;
+                })()}
                 <div className="mt-1.5 space-y-1.5">
                   {(t.lineas || []).map((l, i) => {
                     const comprometido = comprometidoEnLineaTransito(l);

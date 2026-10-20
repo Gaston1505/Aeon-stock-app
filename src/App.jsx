@@ -4392,7 +4392,7 @@ export default function App() {
 
         {tab === "transito" && (
           <TransitoView
-            transito={filteredTransito} query={query} onQuery={setQuery}
+            transito={filteredTransito} productos={productos} query={query} onQuery={setQuery}
             onNew={() => { setEnvioEditando(null); setDrawer("transito"); }}
             onEdit={(t) => { setEnvioEditando(t); setDrawer("transito"); }}
             onDelete={deleteTransito}
@@ -5346,6 +5346,12 @@ const CONCEPTOS_COSTO_TRANSITO = [
   { key: "seguro", label: "Seguro" },
 ];
 const COMISION_FLETE_PORCENTAJE = 0.0471;
+// Subconjunto de "logística pura" — sin el pago a fábrica, porque ese ya está representado
+// (en forma estimada) por el costoOrigen del catálogo. Sumar ambos duplicaría el costo de la
+// mercadería (ver valuacionTransito).
+const CONCEPTOS_LOGISTICA_TRANSITO = CONCEPTOS_COSTO_TRANSITO.filter(
+  (c) => c.key !== "adelantoFabrica" && c.key !== "pagoFinalFabrica"
+);
 
 function costoTotalEnvio(t) {
   return CONCEPTOS_COSTO_TRANSITO.reduce((acc, c) => acc + (Number(t[c.key]) || 0), 0);
@@ -5362,29 +5368,43 @@ function resumenCostosTransito(transitoEnvios) {
 }
 
 // Valuación de lo que viene en tránsito (envíos que todavía no llegaron), sumando productos
-// (líneas) y repuestos juntos — para el "balance" de Reporte Joel: cuánto costó en origen,
-// cuánto termina costando puesto en PY (origen + costos compartidos del envío) y cuánto vale
-// si se vendiera a precio de lista. El costo de origen de un repuesto es el de esa compra
-// puntual (ya cargado en el propio repuesto de tránsito); el de un producto sale del catálogo.
-function valuacionTransito(transitoEnvios, productos, costosCompartidosTotal) {
-  let costoOrigen = 0;
-  let ventaPrecioLista = 0;
+// (líneas) y repuestos juntos — para el "balance" de Reporte Joel y para Resumen/Tránsito:
+// cuánto costó en origen, cuánto termina costando puesto en PY, y cuánto vale si se vendiera.
+//
+// La logística de cada envío (representante, flete, comisión, despacho, seguro — sin el pago a
+// fábrica, ver CONCEPTOS_LOGISTICA_TRANSITO) se reparte entre productos y repuestos de ESE envío,
+// proporcional a lo que pesa cada uno en su costo de origen. Antes esto sumaba el pago REAL a
+// fábrica (adelanto + pago final) Y el costoOrigen ESTIMADO del catálogo, duplicando el costo de
+// la mercadería — por eso "Puesto en PY" en Resumen no coincidía con el total de costos que se ve
+// adentro de Tránsito (ese sí es el total real pagado, sin duplicar nada).
+//
+// Precio de venta: para productos, el precio de lista del catálogo (confiable). Para repuestos,
+// que en tránsito muchas veces no tienen un precio de lista cargado todavía (código de fábrica sin
+// vincular), se usa 3× su costo puesto en PY — el margen de referencia para repuestos.
+function valuacionTransito(transitoEnvios, productos) {
+  let costoOrigen = 0, costoPuestoPy = 0, ventaPrecioLista = 0;
   for (const t of transitoEnvios) {
     if (t.estado === "Llegado") continue;
+    const logistica = CONCEPTOS_LOGISTICA_TRANSITO.reduce((acc, c) => acc + (Number(t[c.key]) || 0), 0);
+    let origenProductos = 0, ventaProductos = 0, origenRepuestos = 0;
     for (const l of t.lineas || []) {
       const cant = Number(l.cantidad) || 0;
       const p = productos.find((pp) => pp.nombre === l.modelo);
-      costoOrigen += cant * (Number(p?.costoOrigen) || 0);
-      ventaPrecioLista += cant * (Number(p?.precioLista) || 0);
+      origenProductos += cant * (Number(p?.costoOrigen) || 0);
+      ventaProductos += cant * (Number(p?.precioLista) || 0);
     }
     for (const r of t.repuestos || []) {
-      const cant = Number(r.cantidad) || 0;
-      costoOrigen += cant * (Number(r.costoOrigen) || 0);
-      const p = r.codigoPieza ? productos.find((pp) => pp.categoriaPrincipal === "Repuestos" && pp.codigoFabrica === r.codigoPieza) : null;
-      ventaPrecioLista += cant * (Number(p?.precioLista) || 0);
+      origenRepuestos += (Number(r.cantidad) || 0) * (Number(r.costoOrigen) || 0);
     }
+    const origenEnvio = origenProductos + origenRepuestos;
+    const logisticaRepuestos = origenEnvio > 0 ? logistica * (origenRepuestos / origenEnvio) : 0;
+    const logisticaProductos = logistica - logisticaRepuestos;
+    const pyRepuestos = origenRepuestos + logisticaRepuestos;
+    costoOrigen += origenEnvio;
+    costoPuestoPy += origenProductos + logisticaProductos + pyRepuestos;
+    ventaPrecioLista += ventaProductos + pyRepuestos * 3;
   }
-  return { costoOrigen, costoPuestoPy: costoOrigen + costosCompartidosTotal, ventaPrecioLista };
+  return { costoOrigen, costoPuestoPy, ventaPrecioLista };
 }
 
 // Clasifica una venta comprometida cruzando cuánto se entregó (retirado) contra cuánto se
@@ -5617,8 +5637,8 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
   const costosTransito = useMemo(() => resumenCostosTransito(transitoEnCamino), [transitoEnCamino]);
   const valuacionTransitoData = useMemo(
-    () => valuacionTransito(transitoEnCamino, productos, costosTransito.total),
-    [transitoEnCamino, productos, costosTransito]
+    () => valuacionTransito(transitoEnCamino, productos),
+    [transitoEnCamino, productos]
   );
 
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
@@ -5651,7 +5671,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
     {
       label: "Tránsito", icon: Ship, tab: "transito",
       value: transitoEnCamino.length,
-      sub: `Puesto en PY: U$S ${valuacionTransitoData.costoPuestoPy.toLocaleString("es-PY")}`,
+      sub: `Origen ${fmtUsd0(valuacionTransitoData.costoOrigen)} · PY ${fmtUsd0(valuacionTransitoData.costoPuestoPy)} · Venta ${fmtUsd0(valuacionTransitoData.ventaPrecioLista)}`,
     },
     {
       // "Entregado sin pagar" es plata de una venta ya concretada (se entregó mercadería) —
@@ -16129,7 +16149,7 @@ function ArmadoPedidoView({ ordenesCompra, productos, cotizaciones, comprometida
   );
 }
 
-function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada, onAgregarRepuesto, onQuitarRepuesto }) {
+function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada, onAgregarRepuesto, onQuitarRepuesto }) {
   const enCamino = transito.filter((t) => t.estado !== "Llegado");
   const totalUnidades = enCamino.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
   const totalCosto = enCamino.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
@@ -16174,6 +16194,7 @@ function TransitoView({ transito, query, onQuery, onNew, onEdit, onDelete, onCom
                   </div>
                 </div>
                 <p className="text-sm mt-2" style={{ color: INK }}>{unidades} unidad(es) · U$S {costo.toLocaleString("es-PY")} en costos totales</p>
+                {!llegado && <ValorizacionResumen v={valuacionTransito([t], productos)} />}
                 <div className="mt-1.5 space-y-1.5">
                   {(t.lineas || []).map((l, i) => {
                     const comprometido = comprometidoEnLineaTransito(l);
@@ -16523,11 +16544,11 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
   }, [filasFisico]);
   const costosTransito = useMemo(() => resumenCostosTransito(transitoEnCamino), [transitoEnCamino]);
   // Balance de lo que viene en camino: cuánto costó en origen, cuánto termina costando puesto
-  // en PY (origen + costos compartidos de arriba), y cuánto vale si se vende a precio de lista
-  // — sumando productos y repuestos de tránsito juntos.
+  // en PY, y cuánto vale si se vende a precio de lista — sumando productos y repuestos de
+  // tránsito juntos.
   const valuacionTransitoData = useMemo(
-    () => valuacionTransito(transitoEnCamino, productos, costosTransito.total),
-    [transitoEnCamino, productos, costosTransito]
+    () => valuacionTransito(transitoEnCamino, productos),
+    [transitoEnCamino, productos]
   );
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);

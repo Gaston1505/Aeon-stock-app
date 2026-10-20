@@ -275,6 +275,10 @@
         <p class="desc">Dos carpetas separadas: <b>Productos</b> (Aire Acondicionado, Cocina, Termocalefones) y <b>Repuestos</b>. Cada producto trae precio de lista, ficha técnica, stock actual (verde/rojo, al lado del precio — para productos es la suma de Maestro de equipos, para repuestos es su propio campo de stock), y un panel de solo lectura con el desglose completo del <b>Costo Real</b> (ver Matriz de costos abajo).</p>
         <div class="chip-row"><span class="chip">nombre / código</span><span class="chip">costoOrigen</span><span class="chip">costoPy</span><span class="chip">costoReal</span><span class="chip">precioLista</span><span class="chip">contenedor</span></div>
         <div class="tip gray"><b>Info interna.</b> El costo de origen, puesto en PY y Costo Real nunca aparecen en una cotización — son solo para uso interno, visibles acá y en los reportes.</div>
+        <div class="fields">
+          <div class="field"><div class="k">Lista de precios</div><div class="v">PDF/Excel para un cliente: código, capacidad y precio de lista, por rubro (Aire Acondicionado, Cocina, Termocalefón). Todo arranca tildado — se puede destildar producto por producto antes de generar, sin sacar todo el rubro.</div></div>
+          <div class="field"><div class="k">Listado de productos</div><div class="v">Lo mismo pero sin ningún precio — solo código y capacidad. No es el mismo archivo que "Catálogo" de Descargas rápidas (ese es el PDF institucional con fotos); esto es un listado simple para pasar modelos sin mostrar valores.</div></div>
+        </div>
       </section>
 
       <section class="card" style="grid-column:1/-1"><h3>Matriz de costos</h3>

@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye,
+  Calculator, ShoppingCart, Layers, Eye, List,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -28,6 +28,7 @@ import {
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
+  downloadListadoProductosPdf, generateListadoProductosPdf, nombreArchivoListadoProductos,
   COMPANY, fmtFecha, dataUrlToBytes,
 } from "./pdf";
 import { prepararPdfParaFirestore } from "./pdfCompress";
@@ -9968,6 +9969,164 @@ function downloadListaPreciosExcel(secciones, fecha) {
   XLSX.writeFile(wb, `Lista_de_precios_AEON_${fecha}.xlsx`);
 }
 
+// Quita de las secciones las filas marcadas como excluidas (selección a nivel producto, ver
+// PanelSeleccionCatalogo) y descarta los grupos/categorías que quedan vacíos — lo que se le pasa
+// a PDF/Excel/Compartir siempre es el resultado de este filtro, nunca las secciones completas.
+function filtrarSeccionesPorExcluidos(secciones, excluidos) {
+  return secciones
+    .map((s) => ({ ...s, grupos: s.grupos.map((g) => ({ ...g, filas: g.filas.filter((f) => !excluidos.has(f.codigo)) })).filter((g) => g.filas.length > 0) }))
+    .filter((s) => s.grupos.length > 0);
+}
+
+// Checklist de productos por categoría/grupo para Lista de precios y Listado de productos: todo
+// viene tildado por defecto (ver filtrarSeccionesPorExcluidos), y de acá se puede destildar lo
+// puntual que no se quiera mandar en esta lista en particular, sin tener que sacar todo el rubro.
+function PanelSeleccionCatalogo({ secciones, excluidos, onToggleItem, onSeleccionarTodos, onDeseleccionarTodos, mostrarPrecio }) {
+  const totalItems = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
+  const seleccionados = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.filter((f) => !excluidos.has(f.codigo)).length, 0), 0);
+  if (totalItems === 0) return null;
+  return (
+    <div className="mb-3 rounded-lg border" style={{ borderColor: BORDER }}>
+      <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ backgroundColor: "#FAFBFC", borderBottom: `0.5px solid ${BORDER}` }}>
+        <span className="text-xs font-medium" style={{ color: INK }}>{seleccionados} de {totalItems} producto(s) seleccionados</span>
+        <div className="flex gap-2.5">
+          <button type="button" onClick={onSeleccionarTodos} className="text-xs underline" style={{ color: ACCENT }}>Seleccionar todos</button>
+          <button type="button" onClick={onDeseleccionarTodos} className="text-xs underline" style={{ color: MUTED }}>Deseleccionar todos</button>
+        </div>
+      </div>
+      <div className="px-3 py-2 space-y-3 max-h-64 overflow-y-auto">
+        {secciones.map((s) => (
+          <div key={s.categoria}>
+            <p className="text-xs font-bold mb-1" style={{ color: ACCENT }}>{s.categoria}</p>
+            {s.grupos.map((g) => (
+              <div key={g.titulo} className="mb-1.5">
+                <p className="text-[11px] font-medium mb-0.5" style={{ color: MUTED }}>{g.titulo}</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {g.filas.map((f) => (
+                    <label key={f.codigo} className="flex items-center gap-1 text-xs" style={{ color: INK }}>
+                      <input type="checkbox" checked={!excluidos.has(f.codigo)} onChange={() => onToggleItem(f.codigo)} />
+                      {f.codigo}{mostrarPrecio ? ` — U$S ${Number(f.precio).toLocaleString("es-PY")}` : ""}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Listado de productos para clientes (como Lista de precios, pero sin ningún valor) ----------
+// Nombre y título a propósito distintos de "Catálogo" (el PDF institucional con fotos) — esto es
+// solo código y capacidad, el mismo agrupado de Lista de precios, para compartir sin mostrar precios.
+function entraEnListado(p, categoria) {
+  return p.categoriaPrincipal === categoria && !p.noDisponible && !esProductoUsado(p);
+}
+function construirListadoProductos(productos, categoriasElegidas) {
+  const secciones = [];
+  for (const cat of CATEGORIAS_LISTA_PRECIOS) {
+    if (!categoriasElegidas.includes(cat.key)) continue;
+    const items = productos.filter((p) => entraEnListado(p, cat.key));
+    if (items.length === 0) continue;
+    const grupos = [];
+    for (const entry of agruparProductosPorCategoria(items)) {
+      const titulo = tituloGrupoLista(entry.items[0]);
+      const filas = entry.items.map((p) => ({ codigo: p.nombre, capacidad: capacidadDeProducto(p) }));
+      const anterior = grupos[grupos.length - 1];
+      if (anterior && anterior.titulo === titulo) anterior.filas.push(...filas);
+      else grupos.push({ titulo, filas });
+    }
+    secciones.push({ categoria: cat.label, grupos });
+  }
+  return secciones;
+}
+function downloadListadoProductosExcel(secciones, fecha) {
+  const wb = XLSX.utils.book_new();
+  for (const sec of secciones) {
+    const filas = [["Grupo", "Código", "Capacidad"]];
+    for (const g of sec.grupos) for (const f of g.filas) filas.push([g.titulo, f.codigo, f.capacidad || ""]);
+    const ws = XLSX.utils.aoa_to_sheet(filas);
+    ws["!cols"] = [{ wch: 34 }, { wch: 30 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, ws, sec.categoria.slice(0, 31));
+  }
+  XLSX.writeFile(wb, `Listado_de_productos_AEON_${fecha}.xlsx`);
+}
+
+function ListadoProductosPanel({ productos, onCerrar }) {
+  const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
+  const [excluidos, setExcluidos] = useState(() => new Set());
+  const [ocupado, setOcupado] = useState("");
+  const [msg, setMsg] = useState(null);
+  const secciones = useMemo(() => construirListadoProductos(productos, elegidas), [productos, elegidas]);
+  const seccionesFiltradas = useMemo(() => filtrarSeccionesPorExcluidos(secciones, excluidos), [secciones, excluidos]);
+  const cuentaPorCategoria = (key) => productos.filter((p) => entraEnListado(p, key)).length;
+  const totalSeleccionado = seccionesFiltradas.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
+  const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  const toggleItem = (codigo) => setExcluidos((prev) => { const n = new Set(prev); if (n.has(codigo)) n.delete(codigo); else n.add(codigo); return n; });
+  const hoy = todayISO();
+  const accion = async (nombre, fn) => {
+    setOcupado(nombre);
+    setMsg(null);
+    try { await fn(); } catch (e) { console.error("Listado de productos", e); setMsg("No se pudo generar el listado. Probá de nuevo."); }
+    setOcupado("");
+  };
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <p className="text-base font-bold" style={{ color: INK }}>Listado de productos (sin precio)</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+            Solo código y capacidad, agrupado igual que la Lista de precios, pero sin mostrar ningún valor. No es el Catálogo institucional (el PDF con fotos y descripciones) — es un listado simple de modelos.
+          </p>
+        </div>
+        <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
+      </div>
+      <div className="flex gap-2 flex-wrap mb-3">
+        {CATEGORIAS_LISTA_PRECIOS.map((c) => {
+          const activo = elegidas.includes(c.key);
+          return (
+            <button
+              key={c.key} type="button" onClick={() => alternar(c.key)}
+              className="text-sm px-3 py-1.5 rounded-lg border font-medium"
+              style={{ borderColor: activo ? ACCENT : BORDER, backgroundColor: activo ? ACCENT : "#FFFFFF", color: activo ? "#FFFFFF" : INK }}
+            >
+              {c.label} ({cuentaPorCategoria(c.key)})
+            </button>
+          );
+        })}
+      </div>
+      <PanelSeleccionCatalogo
+        secciones={secciones} excluidos={excluidos}
+        onToggleItem={toggleItem}
+        onSeleccionarTodos={() => setExcluidos(new Set())}
+        onDeseleccionarTodos={() => setExcluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
+        mostrarPrecio={false}
+      />
+      <div className="flex gap-2 flex-wrap">
+        <PrimaryButton onClick={() => accion("pdf", () => downloadListadoProductosPdf(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
+          <Download size={14} /> {ocupado === "pdf" ? "Generando..." : "PDF"}
+        </PrimaryButton>
+        <SecondaryButton onClick={() => accion("excel", async () => downloadListadoProductosExcel(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
+          <Download size={14} /> Excel
+        </SecondaryButton>
+        <SecondaryButton
+          onClick={() => accion("compartir", async () => {
+            const bytes = await generateListadoProductosPdf(seccionesFiltradas, hoy);
+            const ok = await compartirArchivo(bytes, nombreArchivoListadoProductos(hoy), "Listado de productos — AEON Home Tech");
+            if (!ok) await downloadListadoProductosPdf(seccionesFiltradas, hoy);
+          })}
+          disabled={totalSeleccionado === 0 || !!ocupado}
+        >
+          <Share2 size={14} /> {ocupado === "compartir" ? "Generando..." : "Compartir"}
+        </SecondaryButton>
+      </div>
+      {msg && <p className="text-xs mt-2" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
 // Productos cuyo precio de lista no coincide con el que dan las métricas (costo de origen → Costo PY →
 // × markup de lista). Pasa cuando se cambia un costo de origen por fuera del formulario, o una variable
 // de la Matriz (flete, despacho, comisión) o un markup. Se aplica de a uno o todos juntos.
@@ -10061,13 +10220,16 @@ function PreciosSegunMetricasPanel({ productos, matrizCostos, onAplicar, onCerra
 
 function ListaPreciosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
+  const [excluidos, setExcluidos] = useState(() => new Set());
   const [ocupado, setOcupado] = useState("");
   const [msg, setMsg] = useState(null);
   const secciones = useMemo(() => construirListaPrecios(productos, elegidas), [productos, elegidas]);
+  const seccionesFiltradas = useMemo(() => filtrarSeccionesPorExcluidos(secciones, excluidos), [secciones, excluidos]);
   const cuentaPorCategoria = (key) => productos.filter((p) => entraEnListaPrecios(p, key)).length;
   const sinPrecio = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && !esProductoUsado(p) && !(Number(p.precioLista) > 0));
-  const total = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
+  const totalSeleccionado = seccionesFiltradas.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
   const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  const toggleItem = (codigo) => setExcluidos((prev) => { const n = new Set(prev); if (n.has(codigo)) n.delete(codigo); else n.add(codigo); return n; });
   const hoy = todayISO();
   const accion = async (nombre, fn) => {
     setOcupado(nombre);
@@ -10080,7 +10242,7 @@ function ListaPreciosPanel({ productos, onCerrar }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <p className="text-base font-bold" style={{ color: INK }}>Lista de precios para clientes</p>
-          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Solo productos nuevos disponibles (equipos y accesorios): sin usados ni repuestos.</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Solo productos nuevos disponibles (equipos y accesorios): sin usados ni repuestos. Todo arranca tildado — destildá lo puntual que no quieras mandar en esta lista.</p>
         </div>
         <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
       </div>
@@ -10098,32 +10260,30 @@ function ListaPreciosPanel({ productos, onCerrar }) {
           );
         })}
       </div>
-      {secciones.length > 0 && (
-        <div className="mb-3 space-y-0.5">
-          {secciones.map((s) => (
-            <p key={s.categoria} className="text-xs" style={{ color: MUTED }}>
-              <b style={{ color: INK }}>{s.categoria}:</b> {s.grupos.map((g) => `${g.titulo} (${g.filas.length})`).join(" · ")}
-            </p>
-          ))}
-        </div>
-      )}
+      <PanelSeleccionCatalogo
+        secciones={secciones} excluidos={excluidos}
+        onToggleItem={toggleItem}
+        onSeleccionarTodos={() => setExcluidos(new Set())}
+        onDeseleccionarTodos={() => setExcluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
+        mostrarPrecio
+      />
       {sinPrecio.length > 0 && (
         <p className="text-xs mb-3" style={{ color: "#B45309" }}>{sinPrecio.length} producto(s) sin precio de lista cargado no entran en la lista.</p>
       )}
       <div className="flex gap-2 flex-wrap">
-        <PrimaryButton onClick={() => accion("pdf", () => downloadListaPreciosPdf(secciones, hoy))} disabled={total === 0 || !!ocupado}>
+        <PrimaryButton onClick={() => accion("pdf", () => downloadListaPreciosPdf(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
           <Download size={14} /> {ocupado === "pdf" ? "Generando..." : "PDF"}
         </PrimaryButton>
-        <SecondaryButton onClick={() => accion("excel", async () => downloadListaPreciosExcel(secciones, hoy))} disabled={total === 0 || !!ocupado}>
+        <SecondaryButton onClick={() => accion("excel", async () => downloadListaPreciosExcel(seccionesFiltradas, hoy))} disabled={totalSeleccionado === 0 || !!ocupado}>
           <Download size={14} /> Excel
         </SecondaryButton>
         <SecondaryButton
           onClick={() => accion("compartir", async () => {
-            const bytes = await generateListaPreciosPdf(secciones, hoy);
+            const bytes = await generateListaPreciosPdf(seccionesFiltradas, hoy);
             const ok = await compartirArchivo(bytes, nombreArchivoListaPrecios(hoy), "Lista de precios — AEON Home Tech");
-            if (!ok) await downloadListaPreciosPdf(secciones, hoy);
+            if (!ok) await downloadListaPreciosPdf(seccionesFiltradas, hoy);
           })}
-          disabled={total === 0 || !!ocupado}
+          disabled={totalSeleccionado === 0 || !!ocupado}
         >
           <Share2 size={14} /> {ocupado === "compartir" ? "Generando..." : "Compartir"}
         </SecondaryButton>
@@ -10231,6 +10391,7 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
   const [catTab, setCatTab] = useState(CATALOGO_TABS[0].key);
   const [verTablaMulti, setVerTablaMulti] = useState(false);
   const [verListaPrecios, setVerListaPrecios] = useState(false);
+  const [verListadoProductos, setVerListadoProductos] = useState(false);
   const [verMetricas, setVerMetricas] = useState(false);
   // Compartir fichas técnicas de una selección libre de productos (sin pasar por una
   // cotización) — se arma un solo PDF combinado y se comparte (o descarga si no hay share nativo).
@@ -10317,6 +10478,7 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
           <SecondaryButton onClick={() => setVerListaPrecios((v) => !v)}><FileText size={14} /> Lista de precios</SecondaryButton>
+          <SecondaryButton onClick={() => setVerListadoProductos((v) => !v)}><List size={14} /> Listado de productos</SecondaryButton>
           <SecondaryButton onClick={() => setVerMetricas((v) => !v)}><Calculator size={14} /> Precios según métricas</SecondaryButton>
           <SecondaryButton onClick={() => (modoCompartir ? salirModoCompartir() : setModoCompartir(true))}>
             <Share2 size={14} /> {modoCompartir ? "Cancelar selección" : "Compartir fichas"}
@@ -10346,6 +10508,7 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
       </div>
 
       {verListaPrecios && <ListaPreciosPanel productos={productos} onCerrar={() => setVerListaPrecios(false)} />}
+      {verListadoProductos && <ListadoProductosPanel productos={productos} onCerrar={() => setVerListadoProductos(false)} />}
       {verMetricas && <PreciosSegunMetricasPanel productos={productosTodos || productos} matrizCostos={matrizCostos} onAplicar={onAplicarPrecios} onCerrar={() => setVerMetricas(false)} />}
 
       {importResultado && (

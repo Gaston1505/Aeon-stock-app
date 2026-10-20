@@ -2503,6 +2503,134 @@ export async function downloadListaPreciosPdf(secciones, fecha) {
   downloadBlob(bytes, nombreArchivoListaPrecios(fecha), "application/pdf");
 }
 
+// ---------- Listado de productos para clientes (igual que Lista de precios, pero sin precio) ----------
+// Mismo armado que generateListaPreciosPdf, con nombre y título distintos a propósito — para que
+// nunca se confunda con "Catálogo" (el PDF institucional ya cargado, con fotos y descripciones).
+export async function generateListadoProductosPdf(secciones, fecha) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+  let categoriaActual = "";
+
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  function barraCategoria(nombre, continuacion) {
+    rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT });
+    text(continuacion ? `${nombre} (continuación)` : nombre, MARGIN + 8, y - 14, { bold: true, size: 10.5, color: WHITE });
+    y -= 30;
+  }
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN + 14) {
+      newPage();
+      if (categoriaActual) barraCategoria(categoriaActual, true);
+    }
+  }
+
+  const colCodigo = CONTENT_W * 0.68;
+  const colCapacidad = CONTENT_W - colCodigo;
+  const recortar = (str, w, size, f) => {
+    let t = String(str ?? "");
+    while (t.length > 1 && f.widthOfTextAtSize(t, size) > w - 8) t = t.slice(0, -1);
+    return t;
+  };
+  function encabezadoTabla() {
+    rect(MARGIN, y - 16, CONTENT_W, 16, { fill: ACCENT_LIGHT });
+    let cx = MARGIN;
+    [["Código", colCodigo], ["Capacidad", colCapacidad]].forEach(([label, w]) => {
+      const lw = bold.widthOfTextAtSize(label, 7);
+      text(label, cx + w / 2 - lw / 2, y - 11, { bold: true, size: 7, color: ACCENT });
+      cx += w;
+    });
+    y -= 16;
+  }
+
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
+  text("Fecha:", PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
+  text(fmtFecha(fecha), PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+  y -= 16;
+
+  rect(MARGIN, y - 20, CONTENT_W, 20, { fill: ACCENT_LIGHT });
+  const titulo = "LISTADO DE PRODUCTOS";
+  const tw = bold.widthOfTextAtSize(titulo, 12);
+  text(titulo, MARGIN + CONTENT_W / 2 - tw / 2, y - 14, { bold: true, size: 12, color: ACCENT });
+  y -= 36;
+
+  let primera = true;
+  for (const sec of secciones) {
+    if (!primera) newPage();
+    primera = false;
+    categoriaActual = sec.categoria;
+    barraCategoria(sec.categoria, false);
+    for (const g of sec.grupos) {
+      ensureSpace(20 + 16 + 34);
+      text(g.titulo, MARGIN, y - 9, { bold: true, size: 9, color: INK });
+      y -= 16;
+      encabezadoTabla();
+      for (const f of g.filas) {
+        const rowH = 16;
+        ensureSpace(rowH);
+        let cx = MARGIN;
+        rect(cx, y - rowH, colCodigo, rowH, { border: BORDER });
+        text(recortar(f.codigo, colCodigo, 7.5, font), cx + 5, y - rowH / 2 - 2.5, { size: 7.5 });
+        cx += colCodigo;
+        rect(cx, y - rowH, colCapacidad, rowH, { border: BORDER });
+        const cap = f.capacidad || "—";
+        text(cap, cx + colCapacidad / 2 - font.widthOfTextAtSize(cap, 7.5) / 2, y - rowH / 2 - 2.5, { size: 7.5 });
+        y -= rowH;
+      }
+      y -= 12;
+    }
+  }
+
+  // Pie en todas las páginas: sin precios, solo numeración — a diferencia de Lista de precios.
+  const paginas = pdf.getPages();
+  paginas.forEach((pg, i) => {
+    pg.drawText("Listado de modelos disponibles, sin precios. Sujeto a modificación sin previo aviso.", { x: MARGIN, y: 22, size: 6.5, font, color: MUTED });
+    const num = `Página ${i + 1} de ${paginas.length}`;
+    pg.drawText(num, { x: PAGE_W - MARGIN - font.widthOfTextAtSize(num, 6.5), y: 22, size: 6.5, font, color: MUTED });
+  });
+
+  return pdf.save();
+}
+
+export function nombreArchivoListadoProductos(fecha) {
+  return `Listado_de_productos_AEON_${fecha || ""}.pdf`;
+}
+
+export async function downloadListadoProductosPdf(secciones, fecha) {
+  const bytes = await generateListadoProductosPdf(secciones, fecha);
+  downloadBlob(bytes, nombreArchivoListadoProductos(fecha), "application/pdf");
+}
+
 // ---------- Lista genérica (exportación contextual por pestaña) ----------
 // `columnas`: [{ key, label, width? }] — sin width, se reparte el ancho disponible por partes iguales.
 // `filas`: array de objetos planos, cada uno con esas keys.

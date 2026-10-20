@@ -111,6 +111,8 @@ service cloud.firestore {
     match /preciosMayorista/{docId} { allow read, write: if esAdmin(); }
     match /configuracion/{docId} { allow read, write: if esAdmin(); }
     match /ordenesCompra/{docId} { allow read, write: if esAdmin(); }
+    match /reclamos/{docId} { allow read, write: if esAdmin(); }
+    match /preListaPedido/{docId} { allow read, write: if esAdmin(); }
 
     // El PDF de la ficha técnica de cada producto vive acá (no en productos/{docId}) para que
     // el catálogo entero no se descargue cargado de PDFs cada vez que se abre la app — se pide

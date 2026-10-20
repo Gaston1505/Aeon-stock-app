@@ -2372,6 +2372,7 @@ export default function App() {
   const [comprometerTarget, setComprometerTarget] = useState(null);
   const [llegadaTarget, setLlegadaTarget] = useState(null);
   const [repuestoTarget, setRepuestoTarget] = useState(null);
+  const [reclamoPrefill, setReclamoPrefill] = useState(null);
   const [cotizacionPrefill, setCotizacionPrefill] = useState(null);
   const [cotizacionEditando, setCotizacionEditando] = useState(null);
   const [armadoEditando, setArmadoEditando] = useState(null);
@@ -3925,6 +3926,7 @@ export default function App() {
     { key: "deposito", label: "Depósito", icon: Warehouse, section: "Stock e inventario" },
     { key: "transito", label: "Tránsito", icon: Ship, section: "Stock e inventario" },
     { key: "armado-pedido", label: "Orden de Compra", icon: ShoppingCart, section: "Stock e inventario" },
+    { key: "pre-lista-pedido", label: "Pre-lista de pedido", icon: ClipboardList, section: "Stock e inventario" },
     { key: "playa", label: "Zona de playa", icon: Inbox, section: "Stock e inventario" },
     { key: "equipos", label: "Maestro de equipos", icon: Package, section: "Stock e inventario" },
     { key: "recuperables", label: "Banco de recuperables", icon: Wrench, section: "Stock e inventario" },
@@ -3945,6 +3947,7 @@ export default function App() {
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature, section: "Ventas" },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock, section: "Ventas" },
     { key: "ventas", label: "Garantías", icon: ShieldCheck, section: "Ventas" },
+    { key: "reclamos", label: "Historial de reclamos", icon: AlertTriangle, section: "Ventas" },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer, section: "Ventas" },
     // Clientes
     { key: "clientes", label: "Clientes", icon: Phone, section: "Clientes" },
@@ -4188,11 +4191,19 @@ export default function App() {
                 { key: "modelo", label: "Código comercial / producto" }, { key: "fechaIngreso", label: "Ingreso" },
                 { key: "estado", label: "Estado" }, { key: "cantidad", label: "Cant." },
                 { key: "comprometido", label: "Comprometido" }, { key: "motivoBaja", label: "Motivo de baja" },
-                { key: "ubicacion", label: "Ubicación" },
+                { key: "ubicacion", label: "Ubicación" }, { key: "reclamo", label: "" },
               ]}
               rows={filteredEquipos}
               onDelete={deleteEquipo}
               renderCell={(key, row) => {
+                if (key === "reclamo") return (
+                  <button
+                    onClick={() => { setReclamoPrefill({ equipoCodigo: row.codigo, modelo: row.modelo }); setDrawer("reclamo"); }}
+                    title="Cargar reclamo para este equipo" className="p-1 rounded hover:bg-gray-100"
+                  >
+                    <AlertTriangle size={14} style={{ color: MUTED }} />
+                  </button>
+                );
                 if (key === "codigo") return <CodeTag>{row.codigo}</CodeTag>;
                 if (key === "fechaIngreso") return fmtDate(row.fechaIngreso);
                 if (key === "modelo") return (
@@ -4291,8 +4302,23 @@ export default function App() {
             onVerFoto={setFotoView}
             onDescargarGarantia={handleDescargarGarantiaPdf}
             onDescargarGarantiaCompleta={handleDescargarGarantiaCompletaPdf}
+            onCargarReclamo={(v) => {
+              setReclamoPrefill({ cliente: v.cliente, obra: v.obra, modelo: (v.lineas || [])[0]?.modelo || "", ventaId: v.id });
+              setDrawer("reclamo");
+            }}
             descargandoId={descargandoId}
             pdfError={pdfError}
+          />
+        )}
+
+        {tab === "reclamos" && (
+          <ReclamosView
+            reclamos={reclamos}
+            query={query} onQuery={setQuery}
+            onNew={() => { setReclamoPrefill(null); setDrawer("reclamo"); }}
+            onResolver={resolverReclamo}
+            onReinstalar={agregarReinstalacion}
+            onDelete={deleteReclamo}
           />
         )}
 
@@ -4448,6 +4474,16 @@ export default function App() {
           />
         )}
 
+        {tab === "pre-lista-pedido" && (
+          <PreListaPedidoView
+            items={preListaPedido} productos={productos}
+            query={query} onQuery={setQuery}
+            onNew={() => setDrawer("pre-lista-item")}
+            onUpdate={updatePreListaItem}
+            onDelete={deletePreListaItem}
+          />
+        )}
+
         {tab === "reporte-seguro" && (
           <ReporteSeguroView mercaderia={mercaderiaFisicaParaguayCosto} comprometidas={comprometidas} />
         )}
@@ -4577,6 +4613,12 @@ export default function App() {
             setOrdenCompraEditando(null);
           }}
         />
+      </Drawer>
+      <Drawer open={drawer === "pre-lista-item"} onClose={() => setDrawer(null)} title="Agregar a la pre-lista de pedido">
+        <PreListaPedidoForm productos={productos} onSave={(d) => { addPreListaItem(d); setDrawer(null); }} />
+      </Drawer>
+      <Drawer open={drawer === "reclamo"} onClose={() => { setDrawer(null); setReclamoPrefill(null); }} title="Nuevo reclamo">
+        <ReclamoForm equipos={equipos} productos={productos} prefill={reclamoPrefill} onSave={(d) => { addReclamo(d); setDrawer(null); setReclamoPrefill(null); }} />
       </Drawer>
       <Drawer
         open={drawer === "transito"} onClose={() => { setDrawer(null); setEnvioEditando(null); }}
@@ -6565,7 +6607,7 @@ const COMPROMETIDA_BADGE = {
   Retirada: { color: "#15803D", bg: "#E9F7EF" },
 };
 
-function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, descargandoId, pdfError }) {
+function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, onCargarReclamo, descargandoId, pdfError }) {
   // Garantías es solo lo que hace a la garantía en sí: datos de la venta, contrato firmado y
   // seguimiento de service — remito y factura viven en Salidas (ver RemitoGrupoCard), que es de
   // donde salen de verdad (el pedido de facturación nace ahí, y la factura es la respuesta a ese
@@ -6716,6 +6758,14 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                       <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleContrato(v, e.target.files?.[0])} />
                     </label>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => onCargarReclamo(v)}
+                    className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                    style={{ borderColor: BORDER, color: ACCENT }}
+                  >
+                    <AlertTriangle size={13} /> Cargar reclamo
+                  </button>
                 </div>
               </div>
             );
@@ -16178,6 +16228,298 @@ function ArmadoPedidoView({ ordenesCompra, productos, cotizaciones, comprometida
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const RUBROS_PRELISTA = ["Aire Acondicionado", "Cocina", "Termocalefón", "Repuestos", "Otro"];
+const ESTADOS_PRELISTA = ["Por cotizar", "Cotizado", "Confirmado", "Descartado"];
+
+// Una fila editable inline (igual que PrecioMercadoCard) — todo se completa de a poco, lo único
+// obligatorio al cargar es el nombre y la cantidad; fábrica/precio/notas se van sumando después.
+function PreListaItemCard({ item, onUpdate, onDelete }) {
+  return (
+    <div className="rounded-lg p-3" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex-1"><ComentarioEditor value={item.nombre} onSave={(v) => onUpdate(item.id, { nombre: v })} placeholder="Qué se necesita..." /></div>
+        <button onClick={() => onDelete(item.id)} title="Eliminar"><Trash2 size={13} style={{ color: MUTED }} /></button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <Field label="Fábrica"><ComentarioEditor value={item.fabrica} onSave={(v) => onUpdate(item.id, { fabrica: v })} placeholder="Opcional" /></Field>
+        <Field label="Cantidad">
+          <TextInput type="number" min="1" value={item.cantidad ?? ""} onChange={(e) => onUpdate(item.id, { cantidad: e.target.value })} />
+        </Field>
+        <Field label="Precio est. U$S">
+          <TextInput type="number" value={item.precioEstimado ?? ""} onChange={(e) => onUpdate(item.id, { precioEstimado: e.target.value })} placeholder="Luego" />
+        </Field>
+        <Field label="Estado">
+          <Select value={item.estado} onChange={(e) => onUpdate(item.id, { estado: e.target.value })}>
+            {ESTADOS_PRELISTA.map((s) => <option key={s} value={s}>{s}</option>)}
+          </Select>
+        </Field>
+      </div>
+      {(item.codigoCatalogo || item.notas != null) && (
+        <div className="mt-2"><Field label="Notas"><ComentarioEditor value={item.notas} onSave={(v) => onUpdate(item.id, { notas: v })} placeholder="Opcional" /></Field></div>
+      )}
+    </div>
+  );
+}
+
+function PreListaPedidoForm({ productos, onSave }) {
+  const [rubro, setRubro] = useState(RUBROS_PRELISTA[0]);
+  const [nombre, setNombre] = useState("");
+  const [codigoCatalogo, setCodigoCatalogo] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+  const [fabrica, setFabrica] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    if (!nombre.trim()) { setError("Ingresá qué es lo que necesitás."); return; }
+    onSave({ rubro, nombre: nombre.trim(), codigoCatalogo: codigoCatalogo || null, cantidad: Number(cantidad) || 1, fabrica: fabrica.trim(), precioEstimado: null, notas: "" });
+  };
+
+  return (
+    <div>
+      <Field label="Rubro"><Select value={rubro} onChange={(e) => setRubro(e.target.value)}>{RUBROS_PRELISTA.map((r) => <option key={r} value={r}>{r}</option>)}</Select></Field>
+      <Field label="Qué necesitás"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre libre — con o sin código" /></Field>
+      <Field label="Código del catálogo (si ya existe)"><SelectorModeloOTexto productos={productos} value={codigoCatalogo} onChange={setCodigoCatalogo} placeholder="Opcional" /></Field>
+      <Field label="Cantidad"><TextInput type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+      <Field label="Fábrica candidata"><TextInput value={fabrica} onChange={(e) => setFabrica(e.target.value)} placeholder="Opcional — puede haber más de una para elegir después" /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Agregar a la lista</PrimaryButton>
+    </div>
+  );
+}
+
+function PreListaPedidoView({ items, productos, query, onQuery, onNew, onUpdate, onDelete }) {
+  const filtrados = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((i) => [i.nombre, i.fabrica, i.rubro].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [items, query]);
+
+  const grupos = useMemo(() => {
+    const mapa = new Map();
+    for (const i of filtrados.filter((i) => i.estado !== "Descartado")) {
+      if (!mapa.has(i.rubro)) mapa.set(i.rubro, []);
+      mapa.get(i.rubro).push(i);
+    }
+    return [...mapa.entries()].sort((a, b) => RUBROS_PRELISTA.indexOf(a[0]) - RUBROS_PRELISTA.indexOf(b[0]));
+  }, [filtrados]);
+  const descartados = filtrados.filter((i) => i.estado === "Descartado");
+
+  return (
+    <div>
+      <Section
+        title="Pre-lista de pedido a fábrica"
+        subtitle="Lo que hay que tener presente para el próximo pedido — no calcula m3 ni contenedores como Orden de Compra, es solo para no perder de vista ideas sueltas mientras se arman."
+        query={query} onQuery={onQuery} onNew={onNew} newLabel="Agregar"
+      >
+        {filtrados.length === 0 ? (
+          <EmptyState icon={ClipboardList} title="Todavía no hay nada anotado" subtitle="Usá el botón de arriba para empezar." />
+        ) : (
+          <div className="space-y-5">
+            {grupos.map(([rubro, lista]) => (
+              <div key={rubro}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MUTED }}>{rubro} ({lista.length})</p>
+                <div className="space-y-2">{lista.map((i) => <PreListaItemCard key={i.id} item={i} onUpdate={onUpdate} onDelete={onDelete} />)}</div>
+              </div>
+            ))}
+            {descartados.length > 0 && (
+              <div style={{ opacity: 0.6 }}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MUTED }}>Descartados ({descartados.length})</p>
+                <div className="space-y-2">{descartados.map((i) => <PreListaItemCard key={i.id} item={i} onUpdate={onUpdate} onDelete={onDelete} />)}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+// ---------- Historial de reclamos ----------
+// Trazabilidad por equipo: qué pasó, qué se hizo, y si se reinstaló — independiente de que la
+// venta original esté cargada en el sistema (hay reclamos de ventas de antes de la app) y aparte
+// de Banco de recuperables (que sigue para el día a día de reparación).
+const RESOLUCIONES_RECLAMO = ["Reparado", "Repuestos extraídos", "Reemplazado", "Dado de baja", "Otro"];
+
+function ReclamoForm({ equipos, productos, prefill, onSave }) {
+  const [equipoCodigo, setEquipoCodigo] = useState(prefill?.equipoCodigo || "");
+  const [modelo, setModelo] = useState(prefill?.modelo || "");
+  const [cliente, setCliente] = useState(prefill?.cliente || "");
+  const [obra, setObra] = useState(prefill?.obra || "");
+  const [direccion, setDireccion] = useState("");
+  const [fecha, setFecha] = useState(todayISO());
+  const [descripcionProblema, setDescripcionProblema] = useState("");
+  const [error, setError] = useState("");
+  const datalistId = useRef(`reclamo-equipo-${Math.random().toString(36).slice(2)}`).current;
+
+  const handleEquipoCodigo = (v) => {
+    setEquipoCodigo(v);
+    const eq = equipos.find((e) => (e.codigo || "").toLowerCase() === v.trim().toLowerCase());
+    if (eq) setModelo(eq.modelo);
+  };
+
+  const submit = () => {
+    if (!cliente.trim()) { setError("Ingresá el cliente."); return; }
+    if (!descripcionProblema.trim()) { setError("Contá qué pasó."); return; }
+    onSave({
+      equipoCodigo: equipoCodigo.trim(), modelo, ventaId: prefill?.ventaId || "",
+      cliente: cliente.trim(), obra: obra.trim(), direccion: direccion.trim(), fecha, descripcionProblema: descripcionProblema.trim(),
+    });
+  };
+
+  return (
+    <div>
+      <Field label="Código interno del equipo (si lo tenés)">
+        <TextInput value={equipoCodigo} list={datalistId} onChange={(e) => handleEquipoCodigo(e.target.value)} placeholder="Ej: AEO-0123 — opcional" />
+        <datalist id={datalistId}>{equipos.map((e) => <option key={e.id} value={e.codigo}>{e.modelo}</option>)}</datalist>
+      </Field>
+      <Field label="Modelo / producto"><SelectorModeloOTexto productos={productos} value={modelo} onChange={setModelo} placeholder="Código o nombre del producto..." /></Field>
+      <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Opcional" /></Field>
+      <Field label="Dirección / depto"><TextInput value={direccion} onChange={(e) => setDireccion(e.target.value)} placeholder="Opcional — de qué unidad es" /></Field>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Qué pasó"><Textarea value={descripcionProblema} onChange={(e) => setDescripcionProblema(e.target.value)} /></Field>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+      <PrimaryButton onClick={submit}>Guardar reclamo</PrimaryButton>
+    </div>
+  );
+}
+
+function ReclamoCard({ reclamo, onResolver, onReinstalar, onDelete }) {
+  const [resolviendo, setResolviendo] = useState(false);
+  const [resolucionTipo, setResolucionTipo] = useState("");
+  const [resolucionComentario, setResolucionComentario] = useState("");
+  const [reinstalando, setReinstalando] = useState(false);
+  const [reCliente, setReCliente] = useState("");
+  const [reObra, setReObra] = useState("");
+  const [reDireccion, setReDireccion] = useState("");
+  const [reComentario, setReComentario] = useState("");
+
+  const badge = reclamo.estado === "Resuelto"
+    ? { label: reclamo.resolucionTipo || "Resuelto", bg: "#E9F7EF", color: "#15803D" }
+    : { label: reclamo.estado, bg: "#FDF1E0", color: "#B45309" };
+
+  const confirmarResolucion = () => {
+    onResolver(reclamo, resolucionTipo, resolucionComentario);
+    setResolviendo(false);
+  };
+  const confirmarReinstalacion = () => {
+    onReinstalar(reclamo, { cliente: reCliente, obra: reObra, direccion: reDireccion, comentario: reComentario });
+    setReinstalando(false);
+    setReCliente(""); setReObra(""); setReDireccion(""); setReComentario("");
+  };
+
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium" style={{ color: INK }}>{reclamo.cliente}{reclamo.obra ? ` — ${reclamo.obra}` : ""}</p>
+          {reclamo.direccion && <p className="text-xs" style={{ color: MUTED }}>{reclamo.direccion}</p>}
+          <p className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: MUTED }}>
+            {reclamo.modelo && <CodeTag>{reclamo.modelo}</CodeTag>}
+            {reclamo.equipoCodigo && <span>unidad {reclamo.equipoCodigo}</span>}
+            <span>· {fmtDate(reclamo.fecha)}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: badge.bg, color: badge.color }}>{badge.label}</span>
+          <button onClick={() => onDelete(reclamo.id)} title="Eliminar"><Trash2 size={13} style={{ color: MUTED }} /></button>
+        </div>
+      </div>
+      <p className="text-sm mt-2" style={{ color: INK }}>{reclamo.descripcionProblema}</p>
+
+      {reclamo.resolucionComentario && (
+        <p className="text-xs mt-1.5 p-2 rounded" style={{ backgroundColor: "#FAFBFC", color: MUTED }}>
+          <b style={{ color: INK }}>{reclamo.resolucionTipo}:</b> {reclamo.resolucionComentario}
+        </p>
+      )}
+
+      {(reclamo.reinstalaciones || []).map((r, i) => (
+        <p key={i} className="text-xs mt-1.5 pl-2.5" style={{ borderLeft: `2px solid ${BORDER}`, color: MUTED }}>
+          Reinstalado el {fmtDate(r.fecha)} — {r.cliente}{r.obra ? ` / ${r.obra}` : ""}{r.direccion ? ` (${r.direccion})` : ""}{r.comentario ? `: ${r.comentario}` : ""}
+        </p>
+      ))}
+
+      <div className="flex gap-3 mt-2.5">
+        {reclamo.estado !== "Resuelto" && !resolviendo && (
+          <button onClick={() => setResolviendo(true)} className="text-xs underline" style={{ color: ACCENT }}>Marcar resuelto</button>
+        )}
+        {!reinstalando && (
+          <button onClick={() => setReinstalando(true)} className="text-xs underline" style={{ color: ACCENT }}>Agregar reinstalación</button>
+        )}
+      </div>
+
+      {resolviendo && (
+        <div className="mt-2 p-2.5 rounded-lg" style={{ backgroundColor: "#FAFBFC" }}>
+          <Field label="Qué se hizo">
+            <Select value={resolucionTipo} onChange={(e) => setResolucionTipo(e.target.value)}>
+              <option value="">Elegí una opción...</option>
+              {RESOLUCIONES_RECLAMO.map((r) => <option key={r} value={r}>{r}</option>)}
+            </Select>
+          </Field>
+          <Field label="Comentario"><Textarea value={resolucionComentario} onChange={(e) => setResolucionComentario(e.target.value)} /></Field>
+          <div className="flex gap-2">
+            <PrimaryButton onClick={confirmarResolucion} disabled={!resolucionTipo}>Guardar</PrimaryButton>
+            <SecondaryButton onClick={() => setResolviendo(false)}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      )}
+
+      {reinstalando && (
+        <div className="mt-2 p-2.5 rounded-lg" style={{ backgroundColor: "#FAFBFC" }}>
+          <Field label="Cliente"><TextInput value={reCliente} onChange={(e) => setReCliente(e.target.value)} /></Field>
+          <Field label="Obra"><TextInput value={reObra} onChange={(e) => setReObra(e.target.value)} placeholder="Opcional" /></Field>
+          <Field label="Dirección / depto"><TextInput value={reDireccion} onChange={(e) => setReDireccion(e.target.value)} placeholder="Opcional" /></Field>
+          <Field label="Comentario"><Textarea value={reComentario} onChange={(e) => setReComentario(e.target.value)} placeholder="Opcional" /></Field>
+          <div className="flex gap-2">
+            <PrimaryButton onClick={confirmarReinstalacion} disabled={!reCliente.trim()}>Guardar</PrimaryButton>
+            <SecondaryButton onClick={() => setReinstalando(false)}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReclamosView({ reclamos, query, onQuery, onNew, onResolver, onReinstalar, onDelete }) {
+  const filtrados = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return reclamos;
+    return reclamos.filter((r) => [r.cliente, r.obra, r.direccion, r.modelo, r.equipoCodigo, r.descripcionProblema].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [reclamos, query]);
+
+  const abiertos = [...filtrados.filter((r) => r.estado !== "Resuelto")].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  const resueltos = [...filtrados.filter((r) => r.estado === "Resuelto")].sort((a, b) => (b.resueltoEn || 0) - (a.resueltoEn || 0));
+
+  return (
+    <div>
+      <Section
+        title="Historial de reclamos"
+        subtitle="Trazabilidad por equipo: qué pasó, qué se hizo, y si se volvió a instalar — no hace falta que la venta esté cargada en el sistema."
+        query={query} onQuery={onQuery} onNew={onNew} newLabel="Nuevo reclamo"
+      >
+        {filtrados.length === 0 ? (
+          <EmptyState icon={AlertTriangle} title="No hay reclamos cargados" subtitle="También se pueden cargar desde Garantías o Maestro de equipos." />
+        ) : (
+          <div className="space-y-5">
+            {abiertos.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MUTED }}>Abiertos ({abiertos.length})</p>
+                <div className="space-y-2">{abiertos.map((r) => <ReclamoCard key={r.id} reclamo={r} onResolver={onResolver} onReinstalar={onReinstalar} onDelete={onDelete} />)}</div>
+              </div>
+            )}
+            {resueltos.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MUTED }}>Resueltos ({resueltos.length})</p>
+                <div className="space-y-2">{resueltos.map((r) => <ReclamoCard key={r.id} reclamo={r} onResolver={onResolver} onReinstalar={onReinstalar} onDelete={onDelete} />)}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }

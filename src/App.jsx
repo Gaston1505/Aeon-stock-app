@@ -4536,7 +4536,7 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "escanear-equipo"} onClose={() => setDrawer(null)} title="Buscar equipo por escaneo">
         <EscanearEquipoForm
-          equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas}
+          equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas} grupos={gruposEmpresas}
           onSalida={addMovimiento}
           onReubicar={reubicarEquipoPorEscaneo}
           onEnviarPlaya={enviarEquipoAPlayaPorEscaneo}
@@ -4544,7 +4544,7 @@ export default function App() {
         />
       </Drawer>
       <Drawer open={drawer === "movimiento"} onClose={() => setDrawer(null)} title="Nueva salida">
-        <MovimientoForm equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addMovimiento(d) : crearSolicitud("salida", d); setDrawer(null); }} />
+        <MovimientoForm equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas} grupos={gruposEmpresas} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addMovimiento(d) : crearSolicitud("salida", d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "entrada"} onClose={() => setDrawer(null)} title="Nueva entrada">
         <EntradaForm equipos={equipos} productos={productos} esAdmin={esAdmin} onSave={(d) => { esAdmin ? addEntrada(d) : crearSolicitud("entrada", d); setDrawer(null); }} />
@@ -7591,7 +7591,7 @@ function reservasPendientesDeEquipo(comprometidas, equipoId) {
 }
 const textoReserva = (r) => `${r.razonSocial || "Sin cliente"}${r.obra ? ` — ${r.obra}` : ""}`;
 
-function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave, preset, esAdmin = true }) {
+function MovimientoForm({ equipos, playa, productos, comprometidas = [], grupos = [], onSave, preset, esAdmin = true }) {
   const [fecha, setFecha] = useState(todayISO());
   // Qué hacer con el stock comprometido: "libre" (solo lo no comprometido), "reserva" (la salida es
   // para una de las ventas comprometidas) o "igual" (sacar usando lo comprometido a otros).
@@ -7675,6 +7675,23 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave,
       if (!cliente) setCliente(r.razonSocial || "");
       if (!empresaCliente) setEmpresaCliente(r.razonSocial || "");
       if (!obra) setObra(r.obra || "");
+      if (!rucCliente) {
+        const razones = razonesSocialesDeNombre(r.razonSocial, grupos);
+        if (razones.length > 0) setRucCliente(razones[0].ruc || "");
+      }
+    }
+  };
+
+  // Acá "Cliente / destino" es texto libre (no un selector de una cotización ya cargada, como en
+  // Salidas desde cotización), así que el arrastre de RUC se dispara al salir del campo en vez de
+  // al elegir algo de una lista — busca por nombre comercial o alias (ver Clientes → Agrupar
+  // empresas). Nunca pisa lo que ya se haya escrito a mano en Empresa/RUC.
+  const razonesCliente = useMemo(() => razonesSocialesDeNombre(cliente, grupos), [cliente, grupos]);
+  const autocompletarRuc = () => {
+    if (empresaCliente || rucCliente) return;
+    if (razonesCliente.length > 0) {
+      setEmpresaCliente(razonesCliente[0].nombre || cliente || "");
+      setRucCliente(razonesCliente[0].ruc || "");
     }
   };
 
@@ -7914,8 +7931,25 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave,
       )}
 
       <p className="text-base font-bold mt-5 mb-2" style={{ color: ACCENT }}>Ficha de remito</p>
-      <Field label="Cliente / destino"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      <Field label="Cliente / destino">
+        <TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} onBlur={autocompletarRuc} />
+      </Field>
       <Field label="Lugar de salida"><TextInput value={lugarSalida} onChange={(e) => setLugarSalida(e.target.value)} /></Field>
+      {razonesCliente.length > 1 && (
+        <Field label="Razón social registrada (elegí cuál usar)">
+          <Select
+            value={rucCliente}
+            onChange={(e) => {
+              const r = razonesCliente.find((x) => (x.ruc || "") === e.target.value);
+              if (r) { setEmpresaCliente(r.nombre || ""); setRucCliente(r.ruc || ""); }
+            }}
+          >
+            {razonesCliente.map((r, i) => (
+              <option key={i} value={r.ruc || ""}>{r.nombre}{r.ruc ? ` (RUC ${r.ruc})` : ""}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
       <Field label="Empresa (razón social)"><TextInput value={empresaCliente} onChange={(e) => setEmpresaCliente(e.target.value)} /></Field>
       <Field label="RUC"><TextInput value={rucCliente} onChange={(e) => setRucCliente(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} placeholder="Opcional" /></Field>
@@ -7944,7 +7978,7 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], onSave,
 
 // Buscar un equipo ya cargado por código o N° de serie (pistola o cámara) y, una vez
 // encontrado, elegir qué hacer: darle salida (reusa MovimientoForm) o reubicarlo.
-function EscanearEquipoForm({ equipos, playa, productos, comprometidas, onSalida, onReubicar, onEnviarPlaya, onClose }) {
+function EscanearEquipoForm({ equipos, playa, productos, comprometidas, grupos, onSalida, onReubicar, onEnviarPlaya, onClose }) {
   const [paso, setPaso] = useState("scan"); // scan | encontrado | salida | reubicar
   const [scanInput, setScanInput] = useState("");
   const [equipo, setEquipo] = useState(null);
@@ -8099,7 +8133,7 @@ function EscanearEquipoForm({ equipos, playa, productos, comprometidas, onSalida
       <div>
         <button onClick={() => setPaso("encontrado")} className="text-xs mb-3" style={{ color: ACCENT }}>← Volver</button>
         <MovimientoForm
-          equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas}
+          equipos={equipos} playa={playa} productos={productos} comprometidas={comprometidas} grupos={grupos}
           preset={{ categoria: cat.value, sourceId: equipo.id }}
           onSave={(data) => { onSalida(data); onClose(); }}
         />

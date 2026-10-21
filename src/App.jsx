@@ -12480,10 +12480,199 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
   );
 }
 
+// Arma una fila de comparación Real vs Simulado para una etapa del costo (ver calcularCostosProducto).
+// `invertido` es para filas donde "más barato" no se puede juzgar como bueno/malo a simple vista
+// (el precio de lista sugerido) — ahí la diferencia se muestra neutra, sin verde/rojo.
+function filaComparacion(label, real, sim, { destacado = false, invertido = false } = {}) {
+  const tieneAmbos = real != null && sim != null;
+  const diferencia = tieneAmbos ? sim - real : null;
+  const diferenciaPct = tieneAmbos && real !== 0 ? (diferencia / Math.abs(real)) * 100 : null;
+  const colorDif = diferencia == null || diferencia === 0 ? MUTED : invertido ? INK : (diferencia < 0 ? "#15803D" : "#B91C1C");
+  return { label, real, sim, diferencia, diferenciaPct, colorDif, destacado };
+}
+
+// Comparador de costo de origen: mismo motor de Armado de precios (Matriz de costos,
+// calcularCostosProducto) aplicado a un costo de origen hipotético — para evaluar una negociación
+// con fábrica o comparar entre proveedores de China — mostrando, etapa por etapa, cuánto cambia
+// contra lo que hoy está cargado como real en el Catálogo. 100% client-side, no guarda nada.
+function LineaComparacionCosto({ linea, matrizCostos, onCambiar, onQuitar }) {
+  const p = linea.producto;
+  const real = useMemo(() => calcularCostosProducto(p, matrizCostos), [p, matrizCostos]);
+  const simProducto = useMemo(() => ({
+    ...p,
+    costoOrigen: Number(linea.origenSimulado) || 0,
+    contenedorCantidad: Number(linea.contenedorSimulado) || 0,
+  }), [p, linea.origenSimulado, linea.contenedorSimulado]);
+  const sim = useMemo(() => calcularCostosProducto(simProducto, matrizCostos), [simProducto, matrizCostos]);
+  const mk = useMemo(() => markupListaDe(p, matrizCostos), [p, matrizCostos]);
+
+  const precioRealLista = real && mk ? Math.round(real.costoPy * (1 + mk.pct / 100)) : null;
+  const precioSimLista = sim && mk ? Math.round(sim.costoPy * (1 + mk.pct / 100)) : null;
+
+  const filas = [
+    filaComparacion("Costo de origen", real?.origen, sim?.origen),
+    filaComparacion("Comisión agente", real?.comisionAgente, sim?.comisionAgente),
+    filaComparacion("Flete (por unidad)", real?.flete, sim?.flete),
+    filaComparacion("Despacho", real?.despacho, sim?.despacho),
+    filaComparacion("Costo puesto en PY", real?.costoPy, sim?.costoPy, { destacado: true }),
+    filaComparacion("Comisión de venta", real?.comisionVenta, sim?.comisionVenta),
+    filaComparacion("Costo financiero", real?.costoFinanciero, sim?.costoFinanciero),
+    filaComparacion("Costo Real", real?.costoReal, sim?.costoReal, { destacado: true }),
+    filaComparacion("Precio de lista sugerido", precioRealLista, precioSimLista, { destacado: true, invertido: true }),
+  ];
+
+  const ahorroPct = real?.costoReal && sim?.costoReal ? ((real.costoReal - sim.costoReal) / real.costoReal) * 100 : null;
+  const cantidad = Number(linea.cantidad) || 0;
+  const ahorroTotal = ahorroPct != null && cantidad > 0 ? (real.costoReal - sim.costoReal) * cantidad : null;
+  const faltaDatos = !sim || !mk;
+  const money = (n) => (n == null ? "—" : usd(n));
+
+  return (
+    <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          {p.foto ? (
+            <img src={p.foto} alt="" className="rounded border shrink-0" style={{ width: 36, height: 36, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
+          ) : (
+            <div className="rounded border shrink-0 flex items-center justify-center" style={{ width: 36, height: 36, borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+              <Tag size={15} style={{ color: MUTED }} />
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-medium truncate" style={{ color: INK }}>{p.nombre}</p>
+            <p className="text-xs truncate" style={{ color: MUTED }}>{nombreProducto(p)}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {ahorroPct != null && (
+            <span
+              className="text-xs px-2 py-1 rounded-full font-medium"
+              style={{
+                backgroundColor: ahorroPct > 0 ? "#E9F7EF" : ahorroPct < 0 ? "#FBEAEA" : "#F7F8FA",
+                color: ahorroPct > 0 ? "#15803D" : ahorroPct < 0 ? "#B91C1C" : MUTED,
+              }}
+            >
+              {ahorroPct > 0 ? `Ahorra ${fmtN(ahorroPct, 1)}% en Costo Real` : ahorroPct < 0 ? `${fmtN(Math.abs(ahorroPct), 1)}% más caro en Costo Real` : "Sin cambio"}
+            </span>
+          )}
+          <button onClick={onQuitar}><X size={14} style={{ color: MUTED }} /></button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+        <Field label="Costo de origen simulado (U$S)">
+          <TextInput type="number" value={linea.origenSimulado} onChange={(e) => onCambiar("origenSimulado", e.target.value)} />
+        </Field>
+        <Field label="Unidades por contenedor (simulado)">
+          <TextInput type="number" value={linea.contenedorSimulado} onChange={(e) => onCambiar("contenedorSimulado", e.target.value)} />
+        </Field>
+      </div>
+
+      {faltaDatos ? (
+        <p className="text-xs" style={{ color: "#B45309" }}>
+          Completá costo de origen y unidades por contenedor simulados (mayores a 0) — también hace falta un markup de lista cargado para este producto o su categoría en la Matriz de costos.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-lg border" style={{ borderColor: BORDER }}>
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ backgroundColor: "#FAFBFC" }}>
+                  <th className="text-left font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Etapa</th>
+                  <th className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Real</th>
+                  <th className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Simulado</th>
+                  <th className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Diferencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((f) => (
+                  <tr key={f.label} style={{ borderTop: `0.5px solid ${BORDER}`, backgroundColor: f.destacado ? ACCENT_LIGHT : "transparent" }}>
+                    <td className="px-2.5 py-1.5" style={{ color: f.destacado ? ACCENT : INK, fontWeight: f.destacado ? 600 : 400 }}>{f.label}</td>
+                    <td className="text-right px-2.5 py-1.5" style={{ color: INK }}>{money(f.real)}</td>
+                    <td className="text-right px-2.5 py-1.5" style={{ color: INK, fontWeight: f.destacado ? 600 : 400 }}>{money(f.sim)}</td>
+                    <td className="text-right px-2.5 py-1.5 font-medium" style={{ color: f.colorDif }}>
+                      {f.diferencia == null
+                        ? "—"
+                        : `${f.diferencia > 0 ? "+" : ""}${usd(f.diferencia)}${f.diferenciaPct != null ? ` (${f.diferencia > 0 ? "+" : ""}${fmtN(f.diferenciaPct, 1)}%)` : ""}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-3 flex items-end gap-3 flex-wrap">
+            <Field label="Cantidad a importar (opcional — para ver el ahorro total)">
+              <TextInput type="number" value={linea.cantidad} onChange={(e) => onCambiar("cantidad", e.target.value)} placeholder="Ej: 200" />
+            </Field>
+            {ahorroTotal != null && (
+              <p className="text-sm font-medium pb-2" style={{ color: ahorroTotal > 0 ? "#15803D" : ahorroTotal < 0 ? "#B91C1C" : MUTED }}>
+                {ahorroTotal > 0 ? `Ahorro total estimado: ${usd(ahorroTotal)}` : ahorroTotal < 0 ? `Costo adicional total estimado: ${usd(Math.abs(ahorroTotal))}` : "Sin diferencia"}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ComparadorCostosOrigen({ productos, matrizCostos }) {
+  const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
+  const [productoId, setProductoId] = useState("");
+  const [lineas, setLineas] = useState([]);
+
+  const handleAgregar = () => {
+    const p = productosDisponibles.find((x) => x.id === productoId);
+    if (!p) return;
+    setLineas((prev) => [...prev, {
+      id: `${p.id}-${Date.now()}`,
+      producto: p,
+      origenSimulado: Number(p.costoOrigen) > 0 ? String(Number(p.costoOrigen)) : "",
+      contenedorSimulado: Number(p.contenedorCantidad) > 0 ? String(Number(p.contenedorCantidad)) : "",
+      cantidad: "",
+    }]);
+    setProductoId("");
+  };
+  const quitarLinea = (id) => setLineas((prev) => prev.filter((l) => l.id !== id));
+  const actualizarLinea = (id, campo, valor) => setLineas((prev) => prev.map((l) => (l.id === id ? { ...l, [campo]: valor } : l)));
+
+  return (
+    <div>
+      <div className="p-2.5 rounded mb-4" style={{ backgroundColor: "#F7F8FA" }}>
+        <Field label="Producto del catálogo a comparar">
+          <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={setProductoId} />
+        </Field>
+        <SecondaryButton onClick={handleAgregar} disabled={!productoId}><Plus size={14} /> Agregar a la comparación</SecondaryButton>
+      </div>
+
+      {lineas.length === 0 ? (
+        <EmptyState
+          icon={FlaskConical}
+          title="Todavía no agregaste nada"
+          subtitle="Elegí un producto del catálogo para simular un costo de origen distinto y compararlo, paso a paso, contra lo que hoy está cargado como real."
+        />
+      ) : (
+        <div className="space-y-4">
+          {lineas.map((l) => (
+            <LineaComparacionCosto
+              key={l.id} linea={l} matrizCostos={matrizCostos}
+              onCambiar={(campo, valor) => actualizarLinea(l.id, campo, valor)}
+              onQuitar={() => quitarLinea(l.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Panel de simulación: un ejercicio de "si me piden esto, con qué lo cubro" contra el stock y
 // el tránsito reales — pero 100% ficticio y client-side, nada se guarda en Firestore hasta que
 // se confirma como cotización real (ver onConfirmar, que abre CotizacionForm precargado).
 function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar }) {
+  const [modo, setModo] = useState("venta"); // "venta" (cobertura de stock) | "costos" (comparar origen vs. real)
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -12601,10 +12790,28 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
       <div className="mb-4">
         <h2 className="text-xl font-bold" style={{ color: INK }}>Panel de simulación</h2>
         <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-          Ejercicio de "si me piden esto, con qué lo cubro" — no reserva stock ni guarda nada hasta que lo confirmes como cotización real.
+          {modo === "venta"
+            ? 'Ejercicio de "si me piden esto, con qué lo cubro" — no reserva stock ni guarda nada hasta que lo confirmes como cotización real.'
+            : "Simulá un costo de origen distinto (otra fábrica, otra negociación) y compará, etapa por etapa, contra lo que hoy está cargado como real — con la misma Matriz de costos de Armado de precios."}
         </p>
       </div>
 
+      <div className="flex gap-2 mb-4">
+        {[{ key: "venta", label: "Cobertura de venta" }, { key: "costos", label: "Comparar costo de origen" }].map((op) => (
+          <button
+            key={op.key} onClick={() => setModo(op.key)}
+            className="text-sm px-3.5 py-1.5 rounded-md font-medium"
+            style={modo === op.key ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F7F8FA", color: MUTED }}
+          >
+            {op.label}
+          </button>
+        ))}
+      </div>
+
+      {modo === "costos" ? (
+        <ComparadorCostosOrigen productos={productos} matrizCostos={matrizCostos} />
+      ) : (
+      <>
       <div className="mb-4 px-3 py-2 rounded-lg text-sm flex items-start gap-2" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
         <AlertTriangle size={15} className="shrink-0 mt-0.5" />
         <span>Esto es ficticio: mientras no lo confirmes como cotización, no cuenta para Reporte Seguro, Reporte Financiero ni ningún otro cálculo real de la app.</span>
@@ -12725,6 +12932,8 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
 
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={confirmar} disabled={filas.length === 0}>Confirmar como cotización real</PrimaryButton>
+      </>
+      )}
     </div>
   );
 }

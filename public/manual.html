@@ -326,8 +326,13 @@
 
       <section class="card"><h3>Presupuestos de reparación</h3><p class="desc">Vía separada de las cotizaciones de venta — para reparación, repuestos y mantenimiento de un equipo puntual (AA, termocalefón, campana).</p></section>
 
-      <section class="card" style="grid-column:1/-1"><h3>Panel de simulación</h3><p class="desc">Un ejercicio de "si me piden esto, con qué lo cubro" — armás una lista de productos para ver disponibilidad y precio, sin que cuente como nada real todavía.</p>
-        <div class="tip"><b>Importante.</b> Mientras no lo confirmes como cotización real, no reserva stock ni entra en el Reporte para Seguro, Reporte Financiero, ni ningún cálculo real de la app. Es puramente un borrador.</div>
+      <section class="card" style="grid-column:1/-1"><h3>Panel de simulación</h3>
+        <p class="desc">Dos pestañas dentro de la misma pantalla:</p>
+        <div class="fields">
+          <div class="field"><div class="k">Cobertura de venta</div><div class="v">El ejercicio de siempre: "si me piden esto, con qué lo cubro" — armás una lista de productos para ver disponibilidad y precio, sin que cuente como nada real todavía.</div></div>
+          <div class="field"><div class="k">Comparar costo de origen</div><div class="v">Para una negociación con fábrica o para comparar entre proveedores de China: elegís un producto del catálogo, cargás un costo de origen (y unidades por contenedor) hipotético, y se compara etapa por etapa — comisión agente, flete, despacho, Costo PY, comisión de venta, costo financiero, Costo Real y precio de lista sugerido — contra lo que hoy está cargado como real, con la misma Matriz de costos de Armado de precios.</div></div>
+        </div>
+        <div class="tip"><b>Importante.</b> Las dos pestañas son 100% ficticias y client-side — nada se guarda. En "Cobertura de venta", mientras no confirmes el ejercicio como cotización real, no entra en el Reporte para Seguro, Reporte Financiero ni ningún cálculo real de la app.</div>
       </section>
     </div>
 

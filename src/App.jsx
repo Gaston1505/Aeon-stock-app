@@ -12510,20 +12510,25 @@ function LineaComparacionCosto({ linea, matrizCostos, onCambiar, onQuitar }) {
   const precioSimLista = sim && mk ? Math.round(sim.costoPy * (1 + mk.pct / 100)) : null;
 
   const filas = [
-    filaComparacion("Costo de origen", real?.origen, sim?.origen),
+    filaComparacion("Costo de origen (compra en China)", real?.origen, sim?.origen),
     filaComparacion("Comisión agente", real?.comisionAgente, sim?.comisionAgente),
     filaComparacion("Flete (por unidad)", real?.flete, sim?.flete),
     filaComparacion("Despacho", real?.despacho, sim?.despacho),
-    filaComparacion("Costo puesto en PY", real?.costoPy, sim?.costoPy, { destacado: true }),
+    filaComparacion("Costo puesto en PY (origen + logística)", real?.costoPy, sim?.costoPy, { destacado: true }),
     filaComparacion("Comisión de venta", real?.comisionVenta, sim?.comisionVenta),
     filaComparacion("Costo financiero", real?.costoFinanciero, sim?.costoFinanciero),
-    filaComparacion("Costo Real", real?.costoReal, sim?.costoReal, { destacado: true }),
-    filaComparacion("Precio de lista sugerido", precioRealLista, precioSimLista, { destacado: true, invertido: true }),
+    filaComparacion("Costo Real (costo total para la empresa)", real?.costoReal, sim?.costoReal, { destacado: true }),
+    filaComparacion("Precio de lista sugerido (referencia)", precioRealLista, precioSimLista, { destacado: true, invertido: true }),
   ];
 
   const ahorroPct = real?.costoReal && sim?.costoReal ? ((real.costoReal - sim.costoReal) / real.costoReal) * 100 : null;
   const cantidad = Number(linea.cantidad) || 0;
-  const ahorroTotal = ahorroPct != null && cantidad > 0 ? (real.costoReal - sim.costoReal) * cantidad : null;
+  // Dos totales distintos a propósito — uno no reemplaza al otro: "en la compra" es lo que
+  // realmente se negocia con la fábrica (el precio en China); "en Costo Real" es el impacto total
+  // para la empresa, porque comisión de agente y despacho se calculan como % del origen y también
+  // se mueven con él. Ninguno de los dos es el precio de venta al cliente.
+  const ahorroCompraTotal = real && sim && cantidad > 0 ? (real.origen - sim.origen) * cantidad : null;
+  const ahorroCostoRealTotal = ahorroPct != null && cantidad > 0 ? (real.costoReal - sim.costoReal) * cantidad : null;
   const faltaDatos = !sim || !mk;
   const money = (n) => (n == null ? "—" : usd(n));
 
@@ -12539,7 +12544,15 @@ function LineaComparacionCosto({ linea, matrizCostos, onCambiar, onQuitar }) {
             </div>
           )}
           <div className="min-w-0">
-            <p className="text-sm font-medium truncate" style={{ color: INK }}>{p.nombre}</p>
+            <span className="flex items-center gap-1">
+              <span className="text-sm font-medium truncate" style={{ color: INK }}>{p.nombre}</span>
+              <InfoTip>
+                <p><strong>Costo de origen</strong> es el precio de compra en China — lo que se negocia directo con la fábrica.</p>
+                <p><strong>Costo puesto en PY</strong> le suma la logística (comisión de agente, flete, despacho). <strong>Costo Real</strong> le suma además comisión de venta y costo financiero — es el costo total que le implica a la empresa, ni el precio de compra solo ni el precio de venta.</p>
+                <p><strong>Precio de lista sugerido</strong> es una referencia (Costo PY × markup de la categoría) — no se aplica solo, por eso su diferencia no se pinta verde/rojo: achicar el costo no es automáticamente "bueno" ahí, depende de si bajás el precio o te quedás con más margen.</p>
+                <p>Abajo, "Ahorro en la compra" es solo el precio de China; "Ahorro en Costo Real" es el impacto total (compra + logística + comisión + financiero) para la cantidad cargada. Ninguno de los dos es el precio de venta al cliente.</p>
+              </InfoTip>
+            </span>
             <p className="text-xs truncate" style={{ color: MUTED }}>{nombreProducto(p)}</p>
           </div>
         </div>
@@ -12601,14 +12614,26 @@ function LineaComparacionCosto({ linea, matrizCostos, onCambiar, onQuitar }) {
             </table>
           </div>
 
-          <div className="mt-3 flex items-end gap-3 flex-wrap">
-            <Field label="Cantidad a importar (opcional — para ver el ahorro total)">
+          <div className="mt-3">
+            <Field label="Cantidad a importar (opcional — para ver el ahorro total de la operación)">
               <TextInput type="number" value={linea.cantidad} onChange={(e) => onCambiar("cantidad", e.target.value)} placeholder="Ej: 200" />
             </Field>
-            {ahorroTotal != null && (
-              <p className="text-sm font-medium pb-2" style={{ color: ahorroTotal > 0 ? "#15803D" : ahorroTotal < 0 ? "#B91C1C" : MUTED }}>
-                {ahorroTotal > 0 ? `Ahorro total estimado: ${usd(ahorroTotal)}` : ahorroTotal < 0 ? `Costo adicional total estimado: ${usd(Math.abs(ahorroTotal))}` : "Sin diferencia"}
-              </p>
+            {(ahorroCompraTotal != null || ahorroCostoRealTotal != null) && (
+              <div className="mt-2 space-y-1">
+                {ahorroCompraTotal != null && (
+                  <p className="text-sm" style={{ color: ahorroCompraTotal > 0 ? "#15803D" : ahorroCompraTotal < 0 ? "#B91C1C" : MUTED }}>
+                    <span style={{ color: MUTED }}>Ahorro en la compra (solo precio de China): </span>
+                    <b>{ahorroCompraTotal >= 0 ? usd(ahorroCompraTotal) : `-${usd(Math.abs(ahorroCompraTotal))}`}</b>
+                  </p>
+                )}
+                {ahorroCostoRealTotal != null && (
+                  <p className="text-sm" style={{ color: ahorroCostoRealTotal > 0 ? "#15803D" : ahorroCostoRealTotal < 0 ? "#B91C1C" : MUTED }}>
+                    <span style={{ color: MUTED }}>Ahorro en Costo Real total (compra + logística + comisión + financiero): </span>
+                    <b>{ahorroCostoRealTotal >= 0 ? usd(ahorroCostoRealTotal) : `-${usd(Math.abs(ahorroCostoRealTotal))}`}</b>
+                  </p>
+                )}
+                <p className="text-[11px]" style={{ color: MUTED }}>Ninguno de los dos es el precio de venta al cliente — para {cantidad} unidad(es).</p>
+              </div>
             )}
           </div>
         </>

@@ -9881,9 +9881,18 @@ function agruparProductosPorCategoria(productos) {
     return i === -1 ? orden.length : i;
   };
   const claveGrupo = (p) => {
-    const tab = CATALOGO_TABS.find((t) => t.filtro(p));
-    const ordenes = tab?.ordenesPorNivel || {};
     const esRepuesto = p.categoriaPrincipal === "Repuestos";
+    // En Cocina, cada subcategoría (Anafe/Campana/Horno) es una PESTAÑA DISTINTA del Catálogo,
+    // cada una con su propio ordenesPorNivel acotado a sí misma — ninguna sabe nada de las otras.
+    // Antes, eso dejaba a subOrden en 999 para las cuatro por igual, y el desempate cayó en
+    // alfabético por accidente: "Enfriador de vinos" (sin pestaña propia, cae a "Otros") terminaba
+    // entre Campana y Horno en vez de al final, como en el Catálogo real (la pestaña "Otros"
+    // siempre es la última). El índice de la pestaña en CATALOGO_TABS es el que marca ese orden
+    // entre pestañas; sin pestaña propia (como "Otros") va después de todas.
+    const tabIndex = CATALOGO_TABS.findIndex((t) => t.filtro(p));
+    const tab = tabIndex === -1 ? null : CATALOGO_TABS[tabIndex];
+    const ordenes = tab?.ordenesPorNivel || {};
+    const ordenTab = esRepuesto ? 0 : (tabIndex === -1 ? CATALOGO_TABS.length : tabIndex);
     const subOrden = esRepuesto ? (FAMILIA_REPUESTO[(p.subcategoria || "").trim()] ?? 99) : indiceEnOrden(p.subcategoria, ordenes[1]);
     // subcategoria3 suele ser una cantidad (ej. hornallas de un anafe) — si se puede leer como
     // número, ordenar de menos a más (mismo criterio que el BTU de los aires); si no, alfabético.
@@ -9891,6 +9900,7 @@ function agruparProductosPorCategoria(productos) {
     const sub3Numero = sub3 !== "" && !Number.isNaN(Number(sub3)) ? Number(sub3) : null;
     return [
       indiceEnOrden(p.categoriaPrincipal, ORDEN_CATEGORIA_PRINCIPAL), p.categoriaPrincipal || "",
+      ordenTab,
       subOrden, (p.subcategoria || "").trim(),
       indiceEnOrden(p.subcategoria2, ordenes[2]), (p.subcategoria2 || "").trim(),
       sub3Numero !== null ? sub3Numero : indiceEnOrden(sub3, ordenes[3]), sub3,
@@ -9969,21 +9979,22 @@ function downloadListaPreciosExcel(secciones, fecha) {
   XLSX.writeFile(wb, `Lista_de_precios_AEON_${fecha}.xlsx`);
 }
 
-// Quita de las secciones las filas marcadas como excluidas (selección a nivel producto, ver
+// Deja en las secciones solo las filas marcadas como incluidas (selección a nivel producto, ver
 // PanelSeleccionCatalogo) y descarta los grupos/categorías que quedan vacíos — lo que se le pasa
 // a PDF/Excel/Compartir siempre es el resultado de este filtro, nunca las secciones completas.
-function filtrarSeccionesPorExcluidos(secciones, excluidos) {
+function filtrarSeccionesPorIncluidos(secciones, incluidos) {
   return secciones
-    .map((s) => ({ ...s, grupos: s.grupos.map((g) => ({ ...g, filas: g.filas.filter((f) => !excluidos.has(f.codigo)) })).filter((g) => g.filas.length > 0) }))
+    .map((s) => ({ ...s, grupos: s.grupos.map((g) => ({ ...g, filas: g.filas.filter((f) => incluidos.has(f.codigo)) })).filter((g) => g.filas.length > 0) }))
     .filter((s) => s.grupos.length > 0);
 }
 
-// Checklist de productos por categoría/grupo para Lista de precios y Listado de productos: todo
-// viene tildado por defecto (ver filtrarSeccionesPorExcluidos), y de acá se puede destildar lo
-// puntual que no se quiera mandar en esta lista en particular, sin tener que sacar todo el rubro.
-function PanelSeleccionCatalogo({ secciones, excluidos, onToggleItem, onSeleccionarTodos, onDeseleccionarTodos, mostrarPrecio }) {
+// Checklist de productos por categoría/grupo para Lista de precios y Listado de productos: arranca
+// sin nada tildado a propósito — mandar una lista entera por descuido (todo tildado por defecto)
+// fue justo lo que no quedó cómodo la primera vez. Se arma tildando de a uno, o con el tick de
+// cabecera de cada rubro para sumarlo entero de una.
+function PanelSeleccionCatalogo({ secciones, incluidos, onToggleItem, onToggleCategoria, onSeleccionarTodos, onDeseleccionarTodos, mostrarPrecio }) {
   const totalItems = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
-  const seleccionados = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.filter((f) => !excluidos.has(f.codigo)).length, 0), 0);
+  const seleccionados = secciones.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.filter((f) => incluidos.has(f.codigo)).length, 0), 0);
   if (totalItems === 0) return null;
   return (
     <div className="mb-3 rounded-lg border" style={{ borderColor: BORDER }}>
@@ -9995,24 +10006,31 @@ function PanelSeleccionCatalogo({ secciones, excluidos, onToggleItem, onSeleccio
         </div>
       </div>
       <div className="px-3 py-2 space-y-3 max-h-64 overflow-y-auto">
-        {secciones.map((s) => (
-          <div key={s.categoria}>
-            <p className="text-xs font-bold mb-1" style={{ color: ACCENT }}>{s.categoria}</p>
-            {s.grupos.map((g) => (
-              <div key={g.titulo} className="mb-1.5">
-                <p className="text-[11px] font-medium mb-0.5" style={{ color: MUTED }}>{g.titulo}</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
-                  {g.filas.map((f) => (
-                    <label key={f.codigo} className="flex items-center gap-1 text-xs" style={{ color: INK }}>
-                      <input type="checkbox" checked={!excluidos.has(f.codigo)} onChange={() => onToggleItem(f.codigo)} />
-                      {f.codigo}{mostrarPrecio ? ` — U$S ${Number(f.precio).toLocaleString("es-PY")}` : ""}
-                    </label>
-                  ))}
+        {secciones.map((s) => {
+          const codigosCategoria = s.grupos.flatMap((g) => g.filas.map((f) => f.codigo));
+          const todaLaCategoria = codigosCategoria.length > 0 && codigosCategoria.every((c) => incluidos.has(c));
+          return (
+            <div key={s.categoria}>
+              <label className="flex items-center gap-1.5 text-xs font-bold mb-1 cursor-pointer" style={{ color: ACCENT }}>
+                <input type="checkbox" checked={todaLaCategoria} onChange={() => onToggleCategoria(codigosCategoria, !todaLaCategoria)} />
+                {s.categoria}
+              </label>
+              {s.grupos.map((g) => (
+                <div key={g.titulo} className="mb-1.5">
+                  <p className="text-[11px] font-medium mb-0.5" style={{ color: MUTED }}>{g.titulo}</p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {g.filas.map((f) => (
+                      <label key={f.codigo} className="flex items-center gap-1 text-xs" style={{ color: INK }}>
+                        <input type="checkbox" checked={incluidos.has(f.codigo)} onChange={() => onToggleItem(f.codigo)} />
+                        {f.codigo}{mostrarPrecio ? ` — U$S ${Number(f.precio).toLocaleString("es-PY")}` : ""}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ))}
+              ))}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -10056,16 +10074,21 @@ function downloadListadoProductosExcel(secciones, fecha) {
 
 function ListadoProductosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
-  const [excluidos, setExcluidos] = useState(() => new Set());
+  const [incluidos, setIncluidos] = useState(() => new Set());
   const [conFoto, setConFoto] = useState(false);
   const [ocupado, setOcupado] = useState("");
   const [msg, setMsg] = useState(null);
   const secciones = useMemo(() => construirListadoProductos(productos, elegidas), [productos, elegidas]);
-  const seccionesFiltradas = useMemo(() => filtrarSeccionesPorExcluidos(secciones, excluidos), [secciones, excluidos]);
+  const seccionesFiltradas = useMemo(() => filtrarSeccionesPorIncluidos(secciones, incluidos), [secciones, incluidos]);
   const cuentaPorCategoria = (key) => productos.filter((p) => entraEnListado(p, key)).length;
   const totalSeleccionado = seccionesFiltradas.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
   const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
-  const toggleItem = (codigo) => setExcluidos((prev) => { const n = new Set(prev); if (n.has(codigo)) n.delete(codigo); else n.add(codigo); return n; });
+  const toggleItem = (codigo) => setIncluidos((prev) => { const n = new Set(prev); if (n.has(codigo)) n.delete(codigo); else n.add(codigo); return n; });
+  const toggleCategoria = (codigos, incluir) => setIncluidos((prev) => {
+    const n = new Set(prev);
+    codigos.forEach((c) => (incluir ? n.add(c) : n.delete(c)));
+    return n;
+  });
   const hoy = todayISO();
   const accion = async (nombre, fn) => {
     setOcupado(nombre);
@@ -10079,7 +10102,7 @@ function ListadoProductosPanel({ productos, onCerrar }) {
         <div>
           <p className="text-base font-bold" style={{ color: INK }}>Listado de productos (sin precio)</p>
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>
-            Solo código y capacidad, agrupado igual que la Lista de precios, pero sin mostrar ningún valor. No es el Catálogo institucional (el PDF con fotos y descripciones) — es un listado simple de modelos.
+            Solo código y capacidad, agrupado igual que la Lista de precios, pero sin mostrar ningún valor. No es el Catálogo institucional (el PDF con fotos y descripciones) — es un listado simple de modelos. Arranca sin nada tildado — elegí lo que querés mandar, de a uno o con el tick de cada rubro.
           </p>
         </div>
         <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
@@ -10099,10 +10122,10 @@ function ListadoProductosPanel({ productos, onCerrar }) {
         })}
       </div>
       <PanelSeleccionCatalogo
-        secciones={secciones} excluidos={excluidos}
-        onToggleItem={toggleItem}
-        onSeleccionarTodos={() => setExcluidos(new Set())}
-        onDeseleccionarTodos={() => setExcluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
+        secciones={secciones} incluidos={incluidos}
+        onToggleItem={toggleItem} onToggleCategoria={toggleCategoria}
+        onSeleccionarTodos={() => setIncluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
+        onDeseleccionarTodos={() => setIncluidos(new Set())}
         mostrarPrecio={false}
       />
       <label className="flex items-center gap-1.5 text-xs mb-3" style={{ color: INK }}>
@@ -10225,17 +10248,22 @@ function PreciosSegunMetricasPanel({ productos, matrizCostos, onAplicar, onCerra
 
 function ListaPreciosPanel({ productos, onCerrar }) {
   const [elegidas, setElegidas] = useState(CATEGORIAS_LISTA_PRECIOS.map((c) => c.key));
-  const [excluidos, setExcluidos] = useState(() => new Set());
+  const [incluidos, setIncluidos] = useState(() => new Set());
   const [conFoto, setConFoto] = useState(false);
   const [ocupado, setOcupado] = useState("");
   const [msg, setMsg] = useState(null);
   const secciones = useMemo(() => construirListaPrecios(productos, elegidas), [productos, elegidas]);
-  const seccionesFiltradas = useMemo(() => filtrarSeccionesPorExcluidos(secciones, excluidos), [secciones, excluidos]);
+  const seccionesFiltradas = useMemo(() => filtrarSeccionesPorIncluidos(secciones, incluidos), [secciones, incluidos]);
   const cuentaPorCategoria = (key) => productos.filter((p) => entraEnListaPrecios(p, key)).length;
   const sinPrecio = productos.filter((p) => CATEGORIAS_LISTA_PRECIOS.some((c) => c.key === p.categoriaPrincipal) && !p.noDisponible && !esProductoUsado(p) && !(Number(p.precioLista) > 0));
   const totalSeleccionado = seccionesFiltradas.reduce((a, s) => a + s.grupos.reduce((b, g) => b + g.filas.length, 0), 0);
   const alternar = (key) => setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
-  const toggleItem = (codigo) => setExcluidos((prev) => { const n = new Set(prev); if (n.has(codigo)) n.delete(codigo); else n.add(codigo); return n; });
+  const toggleItem = (codigo) => setIncluidos((prev) => { const n = new Set(prev); if (n.has(codigo)) n.delete(codigo); else n.add(codigo); return n; });
+  const toggleCategoria = (codigos, incluir) => setIncluidos((prev) => {
+    const n = new Set(prev);
+    codigos.forEach((c) => (incluir ? n.add(c) : n.delete(c)));
+    return n;
+  });
   const hoy = todayISO();
   const accion = async (nombre, fn) => {
     setOcupado(nombre);
@@ -10248,7 +10276,7 @@ function ListaPreciosPanel({ productos, onCerrar }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <p className="text-base font-bold" style={{ color: INK }}>Lista de precios para clientes</p>
-          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Solo productos nuevos disponibles (equipos y accesorios): sin usados ni repuestos. Todo arranca tildado — destildá lo puntual que no quieras mandar en esta lista.</p>
+          <p className="text-xs mt-0.5" style={{ color: MUTED }}>Solo código, capacidad y precio de lista, agrupado por tipo dentro de cada categoría. Solo productos nuevos disponibles (equipos y accesorios): sin usados ni repuestos. Arranca sin nada tildado — elegí lo que querés mandar, de a uno o con el tick de cada rubro.</p>
         </div>
         <button type="button" onClick={onCerrar} className="p-1 rounded hover:bg-gray-100 shrink-0"><X size={16} style={{ color: MUTED }} /></button>
       </div>
@@ -10267,10 +10295,10 @@ function ListaPreciosPanel({ productos, onCerrar }) {
         })}
       </div>
       <PanelSeleccionCatalogo
-        secciones={secciones} excluidos={excluidos}
-        onToggleItem={toggleItem}
-        onSeleccionarTodos={() => setExcluidos(new Set())}
-        onDeseleccionarTodos={() => setExcluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
+        secciones={secciones} incluidos={incluidos}
+        onToggleItem={toggleItem} onToggleCategoria={toggleCategoria}
+        onSeleccionarTodos={() => setIncluidos(new Set(secciones.flatMap((s) => s.grupos.flatMap((g) => g.filas.map((f) => f.codigo)))))}
+        onDeseleccionarTodos={() => setIncluidos(new Set())}
         mostrarPrecio
       />
       {sinPrecio.length > 0 && (
@@ -10413,10 +10441,13 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
     return next;
   });
   const salirModoCompartir = () => { setModoCompartir(false); setSeleccionados(new Set()); };
-  const productosSeleccionados = useMemo(
-    () => (productosTodos || productos).filter((p) => seleccionados.has(p.id)),
-    [productosTodos, productos, seleccionados]
-  );
+  // El PDF combinado de fichas técnicas sale en el mismo orden del Catálogo (por tipo de
+  // producto y dentro de cada uno por capacidad ascendente) — no en el orden en que se fue
+  // tildando cada uno, que es arbitrario.
+  const productosSeleccionados = useMemo(() => {
+    const base = (productosTodos || productos).filter((p) => seleccionados.has(p.id));
+    return agruparProductosPorCategoria(base).flatMap((g) => g.items);
+  }, [productosTodos, productos, seleccionados]);
 
   // Stock vendible por modelo, para mostrarlo directo en la tarjeta del producto — misma
   // cuenta que usa Depósito (todo menos Vendido/Dado de baja, que ya salieron del circuito).

@@ -5273,13 +5273,13 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
     const resultado = await m.enviarPedidoPorMail(pFinal(), MAILS_ADMINISTRACION);
     if (resultado === "cancelado") return;
     const ok = await marcarEnviado();
-    if (ok) setMsg({ tipo: "ok", texto: resultado === "compartido" ? "Pedido compartido con PDF y Excel adjuntos." : "Se descargaron el PDF y el Excel y se abrió el mail: adjuntalos y enviá." });
+    if (ok) setMsg({ tipo: "ok", texto: resultado === "compartido" ? "Pedido compartido con PDF y Excel adjuntos." : "Se abrió el mail con el detalle completo en el texto — revisalo y enviá. El PDF/Excel son opcionales (botones de abajo)." });
   });
   const onOutlookWeb = () => accion("outlook", async () => {
     const m = await import("./pedidoFacturacion");
     await m.abrirPedidoEnOutlookWeb(pFinal(), MAILS_ADMINISTRACION);
     const ok = await marcarEnviado();
-    if (ok) setMsg({ tipo: "ok", texto: "Se descargaron el PDF y el Excel y se abrió Outlook web: adjuntalos y enviá." });
+    if (ok) setMsg({ tipo: "ok", texto: "Se abrió Outlook web con el detalle completo en el texto — revisalo y enviá. El PDF/Excel son opcionales (botones de abajo)." });
   });
 
   const inputChico = { borderColor: BORDER, color: INK };
@@ -5340,8 +5340,8 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
         <SecondaryButton onClick={onOutlookWeb} disabled={!!ocupado}>Abrir en Outlook web</SecondaryButton>
       </div>
       <p className="text-[11px] mb-4" style={{ color: MUTED }}>
-        Se envía desde el Outlook de tu usuario (ggibernau@aeon.com.py). Si tu dispositivo permite compartir archivos, el PDF y el Excel van adjuntos solos;
-        si no, se descargan y se abre el mail con el detalle ya escrito, para que los adjuntes.
+        Se envía desde el Outlook de tu usuario (ggibernau@aeon.com.py), con el detalle completo (código, producto, familia, cantidad y precio ya con descuento si corresponde) escrito en el cuerpo del mail — no hace falta abrir ningún adjunto para facturar.
+        El PDF y el Excel son opcionales: si tu dispositivo permite compartir archivos se ofrecen para adjuntar en el momento; si no, quedan solo un clic de distancia con los botones "PDF"/"Excel" de abajo, por si igual los querés mandar.
       </p>
 
       <div className="flex gap-2 flex-wrap">

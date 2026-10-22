@@ -114,6 +114,25 @@ function wrapText(font, text, size, maxWidth) {
   return lines;
 }
 
+// Como wrapText, pero para texto SIN espacios que igual puede no entrar en una línea — los
+// códigos comerciales (ej. "AE-AI210-A35E0-T0300-ON") no tienen dónde cortar por palabra, así que
+// wrapText los dejaría enteros en una sola línea que se sale de la celda. Corta en el último
+// guión que entre dentro del ancho disponible, o a la fuerza si ni así entra.
+function wrapCodigo(font, texto, size, maxWidth) {
+  const lineas = [];
+  let resto = String(texto || "");
+  while (resto && font.widthOfTextAtSize(resto, size) > maxWidth) {
+    let corte = resto.length - 1;
+    while (corte > 1 && font.widthOfTextAtSize(resto.slice(0, corte), size) > maxWidth) corte--;
+    const guion = resto.lastIndexOf("-", corte - 1);
+    if (guion > 2) corte = guion + 1;
+    lineas.push(resto.slice(0, corte));
+    resto = resto.slice(corte);
+  }
+  if (resto) lineas.push(resto);
+  return lineas.length ? lineas : [""];
+}
+
 export function dataUrlToBytes(dataUrl) {
   const base64 = dataUrl.split(",")[1] || "";
   const binary = atob(base64);
@@ -297,19 +316,28 @@ export async function generateCotizacionPdf(cotizacion, productos = []) {
     subtotal += total;
 
     const descLines = wrapText(font, linea.descripcion, 6.5, colDescripcion - 6);
+    // Un código comercial largo (ej. "AE-AI210-A35E0-T0300-ON") no entra en una sola línea dentro
+    // de la columna angosta de Producto — se corta en los guiones, igual que Descripción se corta
+    // por palabra, en vez de dejarlo salirse de la celda.
+    const codigoLines = wrapCodigo(font, linea.codigo || "", 6.5, colCodigo - 6);
     // Las líneas de una cotización nunca guardaron su propia foto — se resuelve acá contra el
     // Catálogo por código, igual que ya hacía la UI del Panel de simulación. `linea.foto` queda
     // como respaldo por si alguna línea manual la trae puesta directamente.
     const foto = productos.find((p) => p.nombre === linea.codigo)?.foto || linea.foto || "";
     const fotoH = foto ? 34 : 0;
-    const rowH2 = Math.max(descLines.length * 8 + 6, fotoH + 6, 22);
+    const rowH2 = Math.max(descLines.length * 8 + 6, codigoLines.length * 8 + 6, fotoH + 6, 22);
 
     ensureSpace(rowH2 + 20);
     if (y === PAGE_H - MARGIN) drawTableHeader(); // continued on new page
 
     let cx = MARGIN;
     rect(cx, y - rowH2, colCodigo, rowH2, { border: BORDER });
-    centerText(linea.codigo || "", cx, y, colCodigo, rowH2);
+    const codigoBlockH = codigoLines.length * 8;
+    const codigoTop = y - (rowH2 - codigoBlockH) / 2 - 6;
+    codigoLines.forEach((ln, i) => {
+      const w = font.widthOfTextAtSize(ln, 6.5);
+      text(ln, cx + colCodigo / 2 - w / 2, codigoTop - i * 8, { size: 6.5 });
+    });
     cx += colCodigo;
 
     rect(cx, y - rowH2, colFoto, rowH2, { border: BORDER });

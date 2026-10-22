@@ -3021,7 +3021,7 @@ export default function App() {
     setDescargandoId(cotizacion.id + ":pdf");
     setPdfError("");
     try {
-      await downloadCotizacionPdf(cotizacion);
+      await downloadCotizacionPdf(cotizacion, productos);
     } catch (e) {
       console.error("Error generando PDF", e);
       setPdfError("No se pudo generar el PDF de la cotización. Probá de nuevo.");
@@ -3147,9 +3147,9 @@ export default function App() {
     setDescargandoId(cotizacion.id + ":compartir");
     setPdfError("");
     try {
-      const bytes = await generateCotizacionPdf(cotizacion);
+      const bytes = await generateCotizacionPdf(cotizacion, productos);
       const ok = await compartirArchivo(bytes, nombreArchivoCotizacion(cotizacion), `Cotización — ${cotizacion.cliente}${cotizacion.obra ? " / " + cotizacion.obra : ""}`);
-      if (!ok) await downloadCotizacionPdf(cotizacion);
+      if (!ok) await downloadCotizacionPdf(cotizacion, productos);
     } catch (e) {
       console.error("Error compartiendo cotización", e);
       setPdfError("No se pudo compartir el PDF de la cotización. Probá de nuevo.");

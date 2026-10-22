@@ -161,7 +161,7 @@ const PAGE_H = 841.89;
 const MARGIN = 40;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
-export async function generateCotizacionPdf(cotizacion) {
+export async function generateCotizacionPdf(cotizacion, productos = []) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -297,7 +297,11 @@ export async function generateCotizacionPdf(cotizacion) {
     subtotal += total;
 
     const descLines = wrapText(font, linea.descripcion, 6.5, colDescripcion - 6);
-    const fotoH = linea.foto ? 34 : 0;
+    // Las líneas de una cotización nunca guardaron su propia foto — se resuelve acá contra el
+    // Catálogo por código, igual que ya hacía la UI del Panel de simulación. `linea.foto` queda
+    // como respaldo por si alguna línea manual la trae puesta directamente.
+    const foto = productos.find((p) => p.nombre === linea.codigo)?.foto || linea.foto || "";
+    const fotoH = foto ? 34 : 0;
     const rowH2 = Math.max(descLines.length * 8 + 6, fotoH + 6, 22);
 
     ensureSpace(rowH2 + 20);
@@ -309,9 +313,9 @@ export async function generateCotizacionPdf(cotizacion) {
     cx += colCodigo;
 
     rect(cx, y - rowH2, colFoto, rowH2, { border: BORDER });
-    if (linea.foto) {
+    if (foto) {
       try {
-        const img = await embedImagenDataUrl(pdf, linea.foto);
+        const img = await embedImagenDataUrl(pdf, foto);
         drawImageContained(img, cx, y, colFoto, rowH2, 4);
       } catch (e) { /* skip broken image */ }
     }
@@ -492,8 +496,8 @@ export function nombreArchivoCotizacion(cotizacion) {
   return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}${categoria ? `_${categoria}` : ""}.pdf`;
 }
 
-export async function downloadCotizacionPdf(cotizacion) {
-  const bytes = await generateCotizacionPdf(cotizacion);
+export async function downloadCotizacionPdf(cotizacion, productos = []) {
+  const bytes = await generateCotizacionPdf(cotizacion, productos);
   downloadBlob(bytes, nombreArchivoCotizacion(cotizacion), "application/pdf");
 }
 

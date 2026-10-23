@@ -13585,7 +13585,7 @@ const CUENTA_OBRA_BADGE = {
   suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
   historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
-function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
+function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
@@ -13595,8 +13595,10 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCost
   const marcar = (nueva) => onUpdate(hilo.activa.id, { cuentaObra: nueva, principal: nueva === "principal" });
   return (
     <div>
-      {hayVarios && (
-        <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+      {/* Siempre visible, aunque este rubro tenga una sola cotización: con una sola no se puede
+          confundir cuál suma, pero esa única igual puede estar en Historial (ej: quedó Sin efecto) —
+          sin este cartel no habría forma de verlo. */}
+      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: badge.bg, color: badge.color }}>
             {badge.label(hilo.rubro)}
           </span>
@@ -13617,8 +13619,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCost
               </button>
             )}
           </div>
-        </div>
-      )}
+      </div>
       <CotizacionCard
         c={hilo.activa} esActiva productos={productos} matrizCostos={matrizCostos}
         historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
@@ -13709,7 +13710,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
                     key={h.hiloId}
                     hilo={h}
                     cuentaObra={grupo.principales.includes(h) ? "principal" : grupo.sumandose.includes(h) ? "suma" : "historial"}
-                    hayVarios={hilosDelRubro.length > 1} productos={productos} matrizCostos={matrizCostos}
+                    productos={productos} matrizCostos={matrizCostos}
                     onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                     onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
                     onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}

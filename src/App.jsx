@@ -1164,7 +1164,12 @@ function agruparCotizaciones(cotizaciones) {
       // hiloId va aparte de categoria a propósito: dos hilos de la misma obra pueden compartir
       // categoría (ver el caso de "cotizaciones separadas, misma obra" en la nota de arriba) y
       // hacía falta algo único para usar de key en el render — la categoría sola colisionaba.
-      for (const [hiloKey, versiones] of porHilo) hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, rubro: rubroDeCotizacion(versiones[0]), versiones, activa: versiones[0] });
+      // Firestore no garantiza el orden de llegada — hay que ordenar cada hilo por createdAt antes
+      // de tomar la más nueva como "activa", si no la que se muestra como vigente puede ser cualquiera.
+      for (const [hiloKey, versionesSinOrdenar] of porHilo) {
+        const versiones = [...versionesSinOrdenar].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        hilos.push({ hiloId: hiloKey, categoria: versiones[0].categoria, rubro: rubroDeCotizacion(versiones[0]), versiones, activa: versiones[0] });
+      }
       // Por fecha (más nueva primero) antes de clasificar — clasificarHilosDeRubro, cuando nadie
       // marcó una principal a mano, usa "la primera que no sea historial" como fallback, y ese
       // fallback tiene que caer en la más reciente de cada rubro, no en cualquier orden.
@@ -2945,14 +2950,15 @@ export default function App() {
     return updateItem(COLLECTIONS.productos, producto.id, { fichaTecnicaNombre: "" });
   };
 
-  // Una sola cotización "principal" por obra y rubro: al marcar una, la que lo era pasa a "suma"
-  // (sigue contando para el total de la obra, pero deja de ser la referencia) — nunca se pierde
-  // sola; si corresponde que deje de contar del todo, el usuario la pasa a Historial a mano.
+  // Una sola cotización "principal" por obra y rubro: al marcar una como Principal, la que lo
+  // era pasa directo a Historial (deja de contar) — "Hacer Principal" reemplaza a la anterior,
+  // no la duplica. Si el usuario quiere que las dos sumen a propósito (ej: separó un producto
+  // para negociarlo aparte), existe la acción explícita "Sumar al total", que no pasa por acá.
   const demoverPrincipalDeObra = (ref, exceptoId) => {
     cotizaciones
       .filter((x) => x.id !== exceptoId && mismaObraYRubroCotizacion(x, ref))
       .filter((x) => (x.cuentaObra || (x.principal ? "principal" : null)) === "principal")
-      .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { cuentaObra: "suma", principal: false }));
+      .forEach((x) => updateItem(COLLECTIONS.cotizaciones, x.id, { cuentaObra: "historial", principal: false }));
   };
   const addCotizacion = (data) => {
     if (data.cuentaObra === "principal") demoverPrincipalDeObra(data);
@@ -12292,8 +12298,8 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
     setEligiendoPrincipal(true);
   };
 
-  // El viejo principal (si la nueva pasa a serlo) se demueve solo a "suma" en addCotizacion — acá
-  // solo hay que decidir qué es ESTA cotización nueva.
+  // El viejo principal (si la nueva pasa a serlo) se demueve solo a "historial" en addCotizacion —
+  // acá solo hay que decidir qué es ESTA cotización nueva.
   const guardarComoPrincipal = (cuentaObra) => {
     setEligiendoPrincipal(false);
     guardarFinal(randId(), { cuentaObra });
@@ -12503,8 +12509,8 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
           </div>
           <p className="text-xs mb-2" style={{ color: INK }}>Elegí qué hacer con <b>esta cotización nueva</b>:</p>
           <div className="flex flex-col gap-2 items-start">
-            <PrimaryButton onClick={() => guardarComoPrincipal("principal")}>Suma al total, y pasa a ser la Principal (la anterior sigue sumando, pero deja de ser la destacada)</PrimaryButton>
-            <SecondaryButton onClick={() => guardarComoPrincipal("suma")}>Suma al total, pero la anterior sigue siendo la Principal</SecondaryButton>
+            <PrimaryButton onClick={() => guardarComoPrincipal("principal")}>Esta reemplaza a la anterior — pasa a ser la Principal (la anterior deja de sumar, queda en Historial)</PrimaryButton>
+            <SecondaryButton onClick={() => guardarComoPrincipal("suma")}>Las dos suman al total — separé algo a propósito para negociarlo aparte (la anterior sigue siendo la Principal)</SecondaryButton>
             <SecondaryButton onClick={() => guardarComoPrincipal("historial")}>NO suma al total — queda guardada aparte, como Historial</SecondaryButton>
           </div>
         </div>
@@ -13583,8 +13589,9 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCost
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
-  // Al marcar esta como Principal, la que lo era pasa sola a "Suma" (demoverPrincipalDeObra en
-  // App) — nunca desaparece del total sin que el usuario lo pida a propósito (pasarla a Historial).
+  // Al marcar esta como Principal, la que lo era pasa sola a Historial (demoverPrincipalDeObra en
+  // App) — "Hacer Principal" reemplaza a la anterior. Si en cambio se quiere que las dos sumen a
+  // propósito (ej: se separó un producto para negociarlo aparte), se usa "Sumar al total".
   const marcar = (nueva) => onUpdate(hilo.activa.id, { cuentaObra: nueva, principal: nueva === "principal" });
   return (
     <div>
@@ -13595,7 +13602,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, hayVarios, productos, matrizCost
           </span>
           <div className="flex items-center gap-1">
             {cuentaObra !== "principal" && (
-              <button onClick={() => marcar("principal")} className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: ACCENT, color: ACCENT }}>
+              <button onClick={() => marcar("principal")} title="La que era Principal pasa a Historial y deja de sumar" className="text-[10px] px-2 py-0.5 rounded border font-medium" style={{ borderColor: ACCENT, color: ACCENT }}>
                 Hacer Principal
               </button>
             )}
@@ -13658,6 +13665,13 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
     return [...porRubro.entries()].sort(([a], [b]) => idxRubro(a) - idxRubro(b));
   }, [grupo.hilos]);
   const hayVariosRubros = seccionesPorRubro.length > 1;
+  // Si la cotización mezclada "Electrodomésticos" de la obra todavía suma AL MISMO TIEMPO que ya
+  // hay una principal de un rubro específico (Aires, Cocina, Termo), probablemente la mezclada
+  // quedó superada por esas y habría que pasarla a Historial a mano — se avisa en vez de ocultarla
+  // sola, para no tocar un total sin que el usuario lo decida.
+  const electrodomesticosPrincipal = grupo.principales.find((h) => h.rubro === "Electrodomésticos");
+  const hayRubroEspecificoPrincipal = grupo.principales.some((h) => h.rubro !== "Electrodomésticos" && h.rubro !== "Sin rubro");
+  const avisoElectrodomesticos = electrodomesticosPrincipal && hayRubroEspecificoPrincipal;
   return (
     <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
       <button onClick={() => setExpandido(!expandido)} className="w-full flex items-center justify-between gap-2 p-3 text-left">
@@ -13672,6 +13686,18 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
       </button>
       {abierto && (
         <div className="px-3 pb-3 space-y-4">
+          {avisoElectrodomesticos && (
+            <div className="p-2 rounded border text-xs" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB", color: INK }}>
+              Esta obra tiene "Electrodomésticos" (mezclada) sumando al total Y también una principal de un rubro específico. Si "Electrodomésticos" ya quedó superada por esas, pasala a Historial para que no sume de más.{" "}
+              <button
+                onClick={() => onUpdate(electrodomesticosPrincipal.activa.id, { cuentaObra: "historial", principal: false })}
+                className="underline font-medium"
+                style={{ color: "#B91C1C" }}
+              >
+                Pasar Electrodomésticos a Historial
+              </button>
+            </div>
+          )}
           {seccionesPorRubro.map(([rubro, hilosDelRubro]) => (
             <div key={rubro}>
               {hayVariosRubros && (

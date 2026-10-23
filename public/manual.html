@@ -315,7 +315,18 @@
         <div class="tip gray"><b>No reemplaza Banco de recuperables.</b> Son dos herramientas separadas: Banco de recuperables es el stock físico de unidades en reparación; Historial de reclamos es la bitácora de qué le pasó a cada una — incluso a equipos que ni siquiera pasan por ahí, como uno que se le devolvió reparado al mismo cliente.</div>
       </section>
 
-      <section class="card"><h3>Cotizaciones</h3><p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por cliente y obra — volver a cotizar la misma obra crea una nueva versión con historial, no una cotización suelta. Cada línea muestra un indicador de color contra el Costo Real (ver Matriz de costos) para saber al toque si el descuento todavía deja margen.</p></section>
+      <section class="card" style="grid-column:1/-1"><h3>Cotizaciones</h3>
+        <p class="desc">Se arma eligiendo productos del catálogo y se descarga en PDF con firma. Se agrupan por Cliente y, adentro, por Obra. Cada línea muestra un indicador de color contra el Costo Real (ver Matriz de costos) para saber al toque si el descuento todavía deja margen.</p>
+        <p class="desc"><b>Dentro de una obra, cada Rubro (Electrodomésticos, Aire Acondicionado, Cocina, Termocalefón) cuenta aparte</b> — si una obra tiene cotizaciones de Aires y de Cocina, las dos suman al total de la obra. Dentro de CADA rubro puede haber varias cotizaciones a lo largo del tiempo (correcciones, negociaciones), y cada una de esas queda en uno de tres estados:</p>
+        <ol class="steps">
+          <li><span class="num">1</span><span><b>Principal</b> — la que cuenta como la vigente de ese rubro. Al apretar "Hacer Principal" en una, la que lo era antes pasa sola a Historial (deja de sumar) — Hacer Principal <i>reemplaza</i>, no se suma a la anterior.</span></li>
+          <li><span class="num">2</span><span><b>Suma</b> — cuenta además de la Principal, a propósito. Es para el caso puntual de separar un producto o una parte de la obra para negociarla aparte (ej: un split que se cotiza con otro descuento). Se activa a mano con "Sumar al total", nunca pasa sola a este estado.</span></li>
+          <li><span class="num">3</span><span><b>Historial</b> — no suma al total de la obra, queda guardada para consultar. Ahí van las versiones reemplazadas y las que ya no corresponden.</span></li>
+        </ol>
+        <p class="desc">Cuando llega la primera cotización de una obra todavía sin discriminar, se carga como rubro <b>Electrodomésticos</b>. Si más adelante se la termina dividiendo en cotizaciones específicas por rubro (Aires, Cocina, Termo), la de Electrodomésticos queda <i>separada</i> de esas — no se excluye sola. Si ya fue superada por las nuevas, hay que pasarla a Historial a mano para que no siga sumando en paralelo; la app avisa con un cartel cuando detecta esa combinación.</p>
+        <div class="tip"><b>Volver a cotizar la misma obra y rubro</b> pregunta si es una corrección de la que ya existe (se guarda como nueva versión del mismo hilo, con historial de versiones) o si es una cotización aparte para la misma obra (crea un hilo nuevo, y ahí se elige qué pasa con la anterior: Principal/Suma/Historial).</div>
+        <div class="tip gray"><b>Los botones Principal / Sumar al total / Pasar a Historial</b> de cada cotización solo deciden qué se suma en los totales de la obra — no tocan su Estado (Pendiente/Ganada/Perdida), que se sigue cambiando aparte en cada una.</div>
+      </section>
 
       <section class="card" style="grid-column:1/-1"><h3>Rentabilidad de una cotización</h3>
         <p class="desc">Botón "Rentabilidad" dentro de cada cotización (también tiene un ícono de info "i" adentro con el mismo detalle). Se recalcula al vuelo cada vez que se abre — no queda nada guardado, así que un cambio en el costo de un producto o en la Matriz de costos se refleja al toque en cotizaciones viejas también.</p>

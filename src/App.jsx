@@ -5132,7 +5132,7 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
             className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium"
             style={{ borderColor: pedido?.estado === "Enviado" ? "#15803D" : ACCENT, color: pedido?.estado === "Enviado" ? "#15803D" : ACCENT }}
           >
-            <FileText size={12} /> {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Facturación"}
+            <FileText size={12} /> {pedido ? (pedido.estado === "Enviado" ? "Pedido de facturación enviado" : "Pedido de facturación (borrador)") : "Pedido de facturación"}
           </span>
         );
         // Solo las salidas por Venta recorren la cadena Entregado → Facturada → Pagada — una
@@ -15596,7 +15596,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
                                         {facturasDelRemito.length > 0 && <span style={{ color: "#15803D" }}> · Facturado: {facturasDelRemito.map((f) => f.numero).join(", ")}</span>}
                                       </span>
                                       <button onClick={() => onPedido(g)} className="px-2 py-1 rounded border font-medium shrink-0" style={{ borderColor: pedido?.estado === "Enviado" ? "#15803D" : ACCENT, color: pedido?.estado === "Enviado" ? "#15803D" : ACCENT }}>
-                                        {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Preparar facturación"}
+                                        {pedido ? (pedido.estado === "Enviado" ? "Pedido de facturación enviado" : "Pedido de facturación (borrador)") : "Preparar pedido de facturación"}
                                       </button>
                                     </div>
                                   );

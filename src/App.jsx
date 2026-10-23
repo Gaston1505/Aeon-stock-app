@@ -138,14 +138,15 @@ const CATEGORIAS_ORIGEN = [
 const MOTIVOS_SALIDA = [
   { value: "Venta", estado: "Vendido", trackea: false },
   { value: "Muestra (préstamo)", estado: "En préstamo (muestra)", trackea: true },
-  { value: "Sustitución", estado: "En sustitución", trackea: true },
+  { value: "Reposición de equipo en reparación", estado: "En sustitución", trackea: true },
   { value: "Reparación", estado: "En reparación", trackea: true },
+  { value: "Otro", estado: "", trackea: false },
 ];
 const MOTIVO_DEFAULT = {
   muestras: "Muestra (préstamo)",
   vendible: "Venta",
   vendible_desc: "Venta",
-  recuperables: "Sustitución",
+  recuperables: "Reposición de equipo en reparación",
 };
 
 const MOTIVOS_BAJA = [
@@ -4299,10 +4300,12 @@ export default function App() {
             />
             <SalidasPorRemito
               movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion} ventas={ventas}
+              cotizaciones={cotizaciones} gruposEmpresas={gruposEmpresas} esAdmin={esAdmin}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
               onSubirFoto={subirFotoRemito}
               onAdjuntarFactura={(ventaId, file) => actualizarAdjuntoVenta(ventaId, file, "facturaData", "facturaNombre")}
               onPedido={esAdmin ? ((g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }) : undefined}
+              onGuardarPedido={esAdmin ? guardarPedidoFacturacion : undefined}
             />
           </Section>
         )}
@@ -5021,7 +5024,81 @@ function resumenRemito(g, unidadSingular, unidadPlural) {
   return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${g.unidades !== 1 ? unidadPlural : unidadSingular}${rubros ? " · " + rubros : ""}`;
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onAdjuntarFactura, onPedido }) {
+// Cadena Facturada → Pagada de un remito de Venta, a mano: cada paso lo marca quien corresponda
+// (administración), sin calcularlo solo a partir de la cuenta de la obra — un pago puede cubrir
+// varios remitos juntos o llegar antes que la salida, así que "pagado por remito" es una decisión,
+// no una cuenta. Vive en el mismo doc que el Pedido de facturación (uno por remito) para no sumar
+// una colección más; si todavía no hay pedido armado, se crea uno al marcar el primer paso.
+function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
+  const [editando, setEditando] = useState(null); // "factura" | "pago" | null
+  const [numero, setNumero] = useState("");
+  const [fecha, setFecha] = useState(todayISO());
+  const [comentario, setComentario] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const facturada = !!pedido?.facturaConfirmada;
+  const pagado = !!pedido?.pagado;
+  if (!esAdmin) return null;
+
+  const abrirFactura = () => { setEditando("factura"); setNumero(pedido?.facturaNumero || ""); setFecha(pedido?.facturaFecha || todayISO()); setMsg(null); };
+  const abrirPago = () => { setEditando("pago"); setFecha(pedido?.pagoFecha || todayISO()); setComentario(pedido?.pagoComentario || ""); setMsg(null); };
+
+  const confirmarFactura = async () => {
+    setOcupado(true);
+    try { await onMarcarFactura({ facturaNumero: numero.trim(), facturaFecha: fecha }); setEditando(null); }
+    catch (e) { setMsg(e?.message || String(e)); }
+    setOcupado(false);
+  };
+  const confirmarPago = async () => {
+    setOcupado(true);
+    try { await onMarcarPago({ pagoFecha: fecha, pagoComentario: comentario.trim() }); setEditando(null); }
+    catch (e) { setMsg(e?.message || String(e)); }
+    setOcupado(false);
+  };
+
+  return (
+    <div className="mb-3 p-2.5 rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: MUTED }}>Facturación y cobro de esta venta</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        {facturada ? (
+          <button onClick={abrirFactura} className="text-xs px-2 py-1 rounded border font-medium flex items-center gap-1" style={{ borderColor: "#15803D", color: "#15803D" }}>
+            Facturada{pedido.facturaNumero ? ` N° ${pedido.facturaNumero}` : ""}{pedido.facturaFecha ? ` · ${fmtDate(pedido.facturaFecha)}` : ""} <Pencil size={11} />
+          </button>
+        ) : (
+          <SecondaryButton onClick={abrirFactura}>Marcar facturada</SecondaryButton>
+        )}
+        {facturada && (pagado ? (
+          <button onClick={abrirPago} className="text-xs px-2 py-1 rounded border font-medium flex items-center gap-1" style={{ borderColor: "#15803D", color: "#15803D" }}>
+            Pagada{pedido.pagoFecha ? ` · ${fmtDate(pedido.pagoFecha)}` : ""} <Pencil size={11} />
+          </button>
+        ) : (
+          <SecondaryButton onClick={abrirPago}>Marcar pagada</SecondaryButton>
+        ))}
+        {!facturada && <span className="text-[11px]" style={{ color: MUTED }}>Primero hay que marcarla facturada para poder marcarla pagada.</span>}
+      </div>
+      {editando === "factura" && (
+        <div className="mt-2 flex gap-2 flex-wrap items-end">
+          <Field label="N° de factura"><TextInput value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ej: 001-001-0001234" /></Field>
+          <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+          <PrimaryButton onClick={confirmarFactura} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+          <SecondaryButton onClick={() => setEditando(null)}>Cancelar</SecondaryButton>
+        </div>
+      )}
+      {editando === "pago" && (
+        <div className="mt-2 flex gap-2 flex-wrap items-end">
+          <Field label="Fecha de pago"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+          <Field label="Comentario (opcional)"><TextInput value={comentario} onChange={(e) => setComentario(e.target.value)} placeholder="Ej: transferencia Itaú" /></Field>
+          <PrimaryButton onClick={confirmarPago} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+          <SecondaryButton onClick={() => setEditando(null)}>Cancelar</SecondaryButton>
+        </div>
+      )}
+      {msg && <p className="text-xs mt-1.5" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const [avisoFactura, setAvisoFactura] = useState("");
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -5058,6 +5135,21 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, fo
             <FileText size={12} /> {pedido ? (pedido.estado === "Enviado" ? "Facturación enviada" : "Facturación (borrador)") : "Facturación"}
           </span>
         );
+        // Solo las salidas por Venta recorren la cadena Entregado → Facturada → Pagada — una
+        // muestra, una reposición en reparación o un "Otro" no se facturan ni se cobran.
+        const esVenta = m0.motivo === "Venta";
+        const facturada = !!pedido?.facturaConfirmada;
+        const pagado = !!pedido?.pagado;
+        const badgesVenta = esVenta && (
+          <>
+            <span className="text-[11px] px-2 py-1 rounded-full font-medium" style={{ backgroundColor: facturada ? "#E9F7EF" : "#FBEAEA", color: facturada ? "#15803D" : "#B91C1C" }}>
+              {facturada ? "Facturada" : "Sin facturar"}
+            </span>
+            <span className="text-[11px] px-2 py-1 rounded-full font-medium" style={{ backgroundColor: pagado ? "#E9F7EF" : "#FDF1E0", color: pagado ? "#15803D" : "#B45309" }}>
+              {pagado ? "Pagada" : "Sin pagar"}
+            </span>
+          </>
+        );
         return (
           <RemitoGrupoCard
             key={g.key}
@@ -5072,8 +5164,21 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, fo
               const { comprimido } = await onAdjuntarFactura(venta.id, file);
               setAvisoFactura(comprimido ? "La factura pesaba más de 650 KB — se comprimió para poder guardarla." : "");
             })}
-            acciones={accionPedido}
+            acciones={<>{accionPedido}{badgesVenta}</>}
           >
+            {esVenta && (
+              <EstadoVentaRemito
+                pedido={pedido} esAdmin={esAdmin}
+                onMarcarFactura={onGuardarPedido && ((cambios) => {
+                  const base = pedido || armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones: cotizaciones || [], pedidos: pedidos || [], grupos: gruposEmpresas || [] });
+                  return onGuardarPedido({ ...base, ...(pedido ? { id: pedido.id } : {}), facturaConfirmada: true, ...cambios });
+                })}
+                onMarcarPago={onGuardarPedido && ((cambios) => {
+                  const base = pedido || armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones: cotizaciones || [], pedidos: pedidos || [], grupos: gruposEmpresas || [] });
+                  return onGuardarPedido({ ...base, ...(pedido ? { id: pedido.id } : {}), pagado: true, ...cambios });
+                })}
+              />
+            )}
             <Table
               columns={[
                 { key: "codigo", label: "Código comercial" }, { key: "producto", label: "Producto" },
@@ -7737,6 +7842,10 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], grupos 
       setError("Elegí el motivo de la salida.");
       return;
     }
+    if (motivo === "Otro" && !observaciones.trim()) {
+      setError("Contá de qué se trata en Observaciones — es obligatorio cuando el motivo es Otro.");
+      return;
+    }
     if (decisionComp === "reserva" && motivo !== "Venta") {
       setError("Una salida para una venta comprometida tiene que ser por Venta.");
       return;
@@ -7970,7 +8079,9 @@ function MovimientoForm({ equipos, playa, productos, comprometidas = [], grupos 
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
       <FotoCargadaPreview src={fotoRemito} onQuitar={() => setFotoRemito("")} alt="Remito" />
 
-      <Field label="Observaciones"><TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} /></Field>
+      <Field label={motivo === "Otro" ? "Observaciones — contá de qué se trata (obligatorio)" : "Observaciones"}>
+        <TextInput value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
+      </Field>
       {!esAdmin && (
         <p className="text-xs mb-2 px-3 py-2 rounded-lg" style={{ color: "#8A3E06", backgroundColor: "#FDF1E4" }}>
           Esto queda pendiente de aprobación — no impacta el stock hasta que un admin lo confirme.
@@ -14764,8 +14875,9 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
     }
   }
 
-  // Solo cuentan las salidas por venta; préstamos de muestra, sustituciones y reparaciones no se facturan.
-  const esVenta = (m) => { const mot = MOTIVOS_SALIDA.find((x) => x.value === m.motivo); return !mot || !mot.trackea; };
+  // Solo cuentan las salidas por venta; préstamos de muestra, reposiciones en reparación y "Otro"
+  // no se facturan. Sin motivo (datos viejos, de antes de que existiera el campo) se asume venta.
+  const esVenta = (m) => !m.motivo || m.motivo === "Venta";
   let montoEntregado = 0;
   let unidadesEntregadas = 0;
   const montoPorMovimiento = new Map();

@@ -25,6 +25,12 @@ export default defineConfig({
     nodePolyfills(),
     VitePWA({
       registerType: "autoUpdate",
+      // El registro automático por defecto (<script src="registerSW.js">) solo llama a
+      // .register() una vez al cargar y nunca vuelve a chequear — en iOS Safari eso puede dejar
+      // el service worker viejo activo indefinidamente, sin detectar nunca un deploy nuevo. Se
+      // registra a mano en main.jsx con chequeos periódicos + recarga automática al activarse
+      // una versión nueva (ver registerSW() ahí).
+      injectRegister: null,
       includeAssets: ["icons/apple-touch-icon.png"],
       workbox: {
         // Por default el service worker de la PWA reescribe CUALQUIER navegación (click en un

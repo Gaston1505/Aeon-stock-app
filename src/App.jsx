@@ -1964,6 +1964,8 @@ function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion
                 {g.items.map((item) => (
                   <button
                     key={item.id}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); elegir(g.tab, item.filtro); }}
                     onClick={() => elegir(g.tab, item.filtro)}
                     className="w-full text-left text-sm px-3 py-1.5 hover:bg-gray-50"
                     style={{ color: INK }}
@@ -10800,7 +10802,9 @@ function RamaCodigoArbol({ label, nodo, nivel, onElegir }) {
           <div style={{ marginLeft: (nivel + 1) * 12 }}>
             {nodo.productos.map((p) => (
               <button
-                key={p.id} onClick={() => onElegir(p)}
+                key={p.id} type="button"
+                onMouseDown={(e) => { e.preventDefault(); onElegir(p); }}
+                onClick={() => onElegir(p)}
                 className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-100 flex items-center gap-2"
               >
                 <CodeTag>{p.nombre}</CodeTag>
@@ -10956,6 +10960,8 @@ function SelectorProducto({ productos, productosPorGrupo, value, onChange, place
                 {items.map((p) => (
                   <button
                     key={p.id}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); elegir(p); }}
                     onClick={() => elegir(p)}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left hover:bg-gray-50"
                   >
@@ -11171,6 +11177,7 @@ function SelectorCliente({ clientes, value, onChange, onSeleccionar, placeholder
               <button
                 key={c.id}
                 type="button"
+                onMouseDown={(e) => { e.preventDefault(); onSeleccionar(c); setAbierto(false); }}
                 onClick={() => { onSeleccionar(c); setAbierto(false); }}
                 className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 border-b last:border-0"
                 style={{ borderColor: BORDER }}

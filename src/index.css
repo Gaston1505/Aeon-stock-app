@@ -5,3 +5,13 @@
 html, body, #root {
   height: 100%;
 }
+
+/* iOS Safari hace zoom automático al enfocar un input con letra menor a 16px (Android Chrome no
+   tiene este comportamiento) — eso desalinea los taps justo al aparecer un dropdown debajo (ej:
+   el buscador de productos), aunque en Android funcione perfecto. Forzamos 16px mínimo en
+   pantallas chicas para que el enfoque no dispare el zoom. */
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}

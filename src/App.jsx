@@ -11214,12 +11214,16 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const esAA = producto === "Aire Acondicionado";
   const cant = Number(cantidad) || 1;
   const tierIdx = cant >= 50 ? 2 : cant >= 10 ? 1 : 0;
-  const costoLuisGs = costoLuisServicio(producto, tipo, tierIdx, esAA ? btuRango : undefined);
+  // La tabla de Luis es un precio POR UNIDAD (más barato por unidad cuanto más grande el lote) —
+  // la cantidad elige el tramo de precio, pero el costo real de este trabajo es ese precio
+  // multiplicado por cuántas unidades se van a instalar, no el precio de una sola.
+  const costoLuisUnitGs = costoLuisServicio(producto, tipo, tierIdx, esAA ? btuRango : undefined);
+  const costoLuisGs = costoLuisUnitGs != null ? costoLuisUnitGs * cant : null;
   const montoAeonGs = costoLuisGs != null ? redondearArriba5(costoLuisGs * multiplicador) : null;
   const tc = Number(tipoCambio) || 0;
   const montoAeonUsd = montoAeonGs != null && tc > 0 ? montoAeonGs / tc : null;
   const costoLuisUsd = costoLuisGs != null && tc > 0 ? costoLuisGs / tc : null;
-  const descripcionFinal = descripcion.trim() || `${tipo} de ${producto}${esAA ? ` (${btuRango})` : ""}`;
+  const descripcionFinal = descripcion.trim() || `${tipo} de ${cant > 1 ? `${cant} ` : ""}${producto}${esAA ? ` (${btuRango})` : ""}`;
 
   const agregar = () => {
     if (montoAeonUsd == null) return;
@@ -11281,14 +11285,14 @@ function SugeridorServicioTecnico({ onAgregar }) {
       ) : (
         <>
           <p className="text-xs mb-2" style={{ color: MUTED }}>
-            Costo Luis ₲ {costoLuisGs.toLocaleString("es-PY")} · Sugerido AEON ₲ {montoAeonGs.toLocaleString("es-PY")}
+            Precio de Luis ₲ {costoLuisUnitGs.toLocaleString("es-PY")} c/u{cant > 1 ? ` × ${cant} = ₲ ${costoLuisGs.toLocaleString("es-PY")}` : ""} · Sugerido AEON ₲ {montoAeonGs.toLocaleString("es-PY")} (total)
           </p>
           <Field label="Tipo de cambio hoy (₲ por U$S)">
             <TextInput type="number" value={tipoCambio} onChange={(e) => setTipoCambio(e.target.value)} placeholder="Ej: 7300" />
           </Field>
           {montoAeonUsd != null && (
             <p className="text-xs mb-2" style={{ color: ACCENT }}>
-              ≈ U$S {fmtN(montoAeonUsd)} al cliente · costo real U$S {fmtN(costoLuisUsd)}
+              ≈ U$S {fmtN(montoAeonUsd)} al cliente (total por las {cant} unidad{cant !== 1 ? "es" : ""}) · costo real U$S {fmtN(costoLuisUsd)}
             </p>
           )}
           <Field label="Descripción (opcional)"><TextInput value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder={descripcionFinal} /></Field>

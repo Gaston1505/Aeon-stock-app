@@ -13567,6 +13567,18 @@ function CotizacionDetalle({ c, productos }) {
         )}
         <p className="text-sm" style={{ color: ACCENT }}>Total: <b>U$S {d.total.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</b></p>
       </div>
+      {(c.serviciosAdicionales || []).length > 0 && (
+        <div className="mt-2 pt-2 space-y-1" style={{ borderTop: `0.5px solid ${BORDER}` }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Info interna — no aparece en el PDF</p>
+          {c.serviciosAdicionales.map((s) => (
+            <div key={s.id} className="text-xs" style={{ color: INK }}>
+              <span className="font-medium">{s.tipo}</span>
+              <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
+              {s.notaInterna && <span className="block" style={{ color: MUTED }}>{s.notaInterna}</span>}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mt-2 pt-2 space-y-0.5" style={{ borderTop: `0.5px solid ${BORDER}` }}>
         {filaInfo("Forma de pago", c.formaPago)}
         {filaInfo("Validez", c.diasValidez ? `${c.diasValidez} días` : "")}

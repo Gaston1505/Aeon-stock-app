@@ -11355,7 +11355,9 @@ function SelectorCliente({ clientes, value, onChange, onSeleccionar, placeholder
 // viáticos salen solos de cuánto lleva instalar cada uno (ver INSTALACION_POR_DIA), sumados uno
 // atrás del otro (primero se termina un producto, después el siguiente), partidos en viajes de
 // hasta 5 días laborales cada uno — cada tramo de más es otra ida y vuelta, otro combustible.
-function SugeridorServicioTecnico({ onAgregar }) {
+// `initial`, cuando viene (al editar un viaje ya cargado), precarga el modo Interior con los datos
+// guardados en viajeInputs de ese viaje — ver "Editar" en DescuentoInstalacionCampos.
+function SugeridorServicioTecnico({ onAgregar, initial }) {
   // Modo "Asunción / cerca": un solo producto, como siempre.
   const [tipo, setTipo] = useState(SERVICIO_TECNICO_TIPOS[0]);
   const [producto, setProducto] = useState(SERVICIO_TECNICO_PRODUCTOS[0]);
@@ -11364,18 +11366,18 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const [descripcion, setDescripcion] = useState("");
 
   // Modo "Interior": lista de productos de un mismo viaje + datos del viaje (ciudad, viáticos).
-  const [productosViaje, setProductosViaje] = useState([
-    { id: randId(), producto: SERVICIO_TECNICO_PRODUCTOS[0], cantidad: 1, btuRango: AA_BTU_RANGOS[0], diasManual: "" },
-  ]);
+  const [productosViaje, setProductosViaje] = useState(
+    initial?.productosViaje || [{ id: randId(), producto: SERVICIO_TECNICO_PRODUCTOS[0], cantidad: 1, btuRango: AA_BTU_RANGOS[0], diasManual: "" }]
+  );
   // Vacío = seguir el sugerido (suma de días por producto); con algo cargado, manda eso.
-  const [diasManualTotal, setDiasManualTotal] = useState("");
-  const [ciudad, setCiudad] = useState(CIUDADES_INTERIOR_KM[0].nombre);
-  const [kmManual, setKmManual] = useState("");
-  const [costoKm, setCostoKm] = useState(String(COSTO_KM_SUGERIDO_GS));
-  const [peaje, setPeaje] = useState(String((CIUDADES_INTERIOR_KM[0].peajeIdaGs || 0) * 2));
-  const [costoNoche, setCostoNoche] = useState(String(COSTO_NOCHE_SUGERIDO_GS));
-  const [costoComidaDia, setCostoComidaDia] = useState(String(COSTO_COMIDA_DIA_SUGERIDO_GS));
-  const [personas, setPersonas] = useState(PERSONAS_VIAJE_SUGERIDO);
+  const [diasManualTotal, setDiasManualTotal] = useState(initial?.diasManualTotal ?? "");
+  const [ciudad, setCiudad] = useState(initial?.ciudad || CIUDADES_INTERIOR_KM[0].nombre);
+  const [kmManual, setKmManual] = useState(initial?.kmManual ?? "");
+  const [costoKm, setCostoKm] = useState(initial?.costoKm ?? String(COSTO_KM_SUGERIDO_GS));
+  const [peaje, setPeaje] = useState(initial?.peaje ?? String((CIUDADES_INTERIOR_KM[0].peajeIdaGs || 0) * 2));
+  const [costoNoche, setCostoNoche] = useState(initial?.costoNoche ?? String(COSTO_NOCHE_SUGERIDO_GS));
+  const [costoComidaDia, setCostoComidaDia] = useState(initial?.costoComidaDia ?? String(COSTO_COMIDA_DIA_SUGERIDO_GS));
+  const [personas, setPersonas] = useState(initial?.personas ?? PERSONAS_VIAJE_SUGERIDO);
   // Al cambiar de ciudad se recarga el peaje sugerido (ida y vuelta) de esa ciudad — igual sigue
   // siendo editable después, por si cambió la tarifa o el viaje no usa la ruta de siempre.
   const cambiarCiudad = (nombre) => {
@@ -11385,9 +11387,9 @@ function SugeridorServicioTecnico({ onAgregar }) {
   };
 
   // Compartido entre los dos modos.
-  const [multiplicador, setMultiplicador] = useState(1.15);
+  const [multiplicador, setMultiplicador] = useState(initial?.multiplicador ?? 1.15);
   const [tipoCambio, setTipoCambio] = useState("");
-  const [ubicacion, setUbicacion] = useState("asuncion"); // "asuncion" | "interior"
+  const [ubicacion, setUbicacion] = useState(initial ? "interior" : "asuncion"); // "asuncion" | "interior"
   const esInterior = ubicacion === "interior";
   const tc = Number(tipoCambio) || 0;
 
@@ -11461,10 +11463,13 @@ function SugeridorServicioTecnico({ onAgregar }) {
 
   const agregarViaje = () => {
     if (tc <= 0) return;
+    // Un id compartido por todas las líneas de este viaje (instalación + viáticos) — así "Editar"
+    // (ver DescuentoInstalacionCampos) sabe cuáles borrar juntas para rearmar el viaje completo.
+    const grupoViajeId = randId();
     for (const f of filasViaje) {
       if (f.montoAeonGs == null) continue;
       onAgregar({
-        id: randId(), tipo: "Instalación",
+        id: randId(), tipo: "Instalación", grupoViajeId,
         monto: Math.round((f.montoAeonGs / tc) * 100) / 100,
         costoLuisUsd: Math.round((f.costoLuisGs / tc) * 100) / 100,
         descripcion: `Instalación de ${f.cant} ${f.producto}`,
@@ -11472,7 +11477,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
     }
     if (viaticosUsd != null) {
       onAgregar({
-        id: randId(), tipo: "Viáticos", monto: Math.round(viaticosUsd * 100) / 100, costoLuisUsd: Math.round(viaticosUsd * 100) / 100,
+        id: randId(), tipo: "Viáticos", grupoViajeId, monto: Math.round(viaticosUsd * 100) / 100, costoLuisUsd: Math.round(viaticosUsd * 100) / 100,
         descripcion: `Viáticos — ${ciudad}`,
         notaInterna: [
           `${totalDiasInstalacion} día(s) de instalación en total${diasManualTotal.trim() !== "" ? ` (ajustado a mano — el rendimiento cargado sugería ${diasSugeridos}d: ${filasViaje.map((f) => `${f.cant} ${f.producto} = ${f.dias}d`).join(", ")})` : ` (${filasViaje.map((f) => `${f.cant} ${f.producto} = ${f.dias}d`).join(", ")})`}`,
@@ -11482,6 +11487,9 @@ function SugeridorServicioTecnico({ onAgregar }) {
           `estadía: ${totalDiasInstalacion} noche(s) × ₲${(Number(costoNoche) || 0).toLocaleString("es-PY")} = ₲${estadiaGs.toLocaleString("es-PY")}`,
           `comidas: ${totalDiasInstalacion} día(s) × ${personas} persona(s) × ₲${(Number(costoComidaDia) || 0).toLocaleString("es-PY")} = ₲${comidasGs.toLocaleString("es-PY")}`,
         ].filter(Boolean).join(" · "),
+        // Snapshot de los datos cargados en este viaje, para poder reabrirlo con "Editar" en vez
+        // de tener que volver a tipear todo de cero.
+        viajeInputs: { productosViaje, diasManualTotal, ciudad, kmManual, costoKm, peaje, costoNoche, costoComidaDia, personas, multiplicador },
       });
     }
     setProductosViaje([{ id: randId(), producto: SERVICIO_TECNICO_PRODUCTOS[0], cantidad: 1, btuRango: AA_BTU_RANGOS[0], diasManual: "" }]);
@@ -12474,6 +12482,8 @@ function useDescuentoInstalacion(initial) {
   const [descuento, setDescuento] = useState(initial?.descuento ? String(initial.descuento) : "");
   const [incluirInstalacion, setIncluirInstalacion] = useState(initial?.incluirInstalacion || false);
   const [serviciosAdicionales, setServiciosAdicionales] = useState(initial?.serviciosAdicionales || []);
+  // false = cerrado; { editarViaje: viajeInputs | null } = abierto (con o sin datos de un viaje
+  // existente para editar — ver "Editar" en DescuentoInstalacionCampos).
   const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
 
   // instalacionDescripcion/instalacionMonto guardados ya vienen combinados con los servicios
@@ -12494,12 +12504,15 @@ function useDescuentoInstalacion(initial) {
 
   const agregarServicio = (s) => setServiciosAdicionales((prev) => [...prev, s]);
   const quitarServicio = (id) => setServiciosAdicionales((prev) => prev.filter((s) => s.id !== id));
+  // Borra TODAS las líneas de un mismo viaje (instalación + viáticos) de una — se usa antes de
+  // reabrirlo con "Editar", para que al volver a agregarlo no queden duplicadas las viejas.
+  const quitarGrupoServicio = (grupoViajeId) => setServiciosAdicionales((prev) => prev.filter((s) => s.grupoViajeId !== grupoViajeId));
   const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
 
   return {
     incluirDescuento, setIncluirDescuento, descuento, setDescuento,
     incluirInstalacion, setIncluirInstalacion, instalacionDescripcion, setInstalacionDescripcion,
-    instalacionMonto, setInstalacionMonto, serviciosAdicionales, agregarServicio, quitarServicio,
+    instalacionMonto, setInstalacionMonto, serviciosAdicionales, agregarServicio, quitarServicio, quitarGrupoServicio,
     totalServicios, mostrarSugeridor, setMostrarSugeridor,
   };
 }
@@ -12543,7 +12556,17 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
                 <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
                 {s.notaInterna && <span className="block" style={{ color: MUTED }}>Nota interna (no sale en el PDF): {s.notaInterna}</span>}
               </div>
-              <button onClick={() => dI.quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+              <span className="flex items-center gap-1 shrink-0">
+                {s.viajeInputs && (
+                  <button
+                    onClick={() => { dI.quitarGrupoServicio(s.grupoViajeId); dI.setMostrarSugeridor({ editarViaje: s.viajeInputs }); }}
+                    title="Editar este viaje (borra sus líneas y las vuelve a armar)"
+                  >
+                    <Pencil size={13} style={{ color: MUTED }} />
+                  </button>
+                )}
+                <button onClick={() => dI.quitarServicio(s.id)}><X size={13} style={{ color: MUTED }} /></button>
+              </span>
             </div>
           ))}
           <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
@@ -12552,9 +12575,12 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
         </div>
       )}
       {dI.mostrarSugeridor ? (
-        <SugeridorServicioTecnico onAgregar={(s) => { dI.agregarServicio(s); dI.setMostrarSugeridor(false); }} />
+        <SugeridorServicioTecnico
+          initial={dI.mostrarSugeridor.editarViaje}
+          onAgregar={(s) => { dI.agregarServicio(s); dI.setMostrarSugeridor(false); }}
+        />
       ) : (
-        <SecondaryButton onClick={() => dI.setMostrarSugeridor(true)}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
+        <SecondaryButton onClick={() => dI.setMostrarSugeridor({ editarViaje: null })}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
       )}
 
       {subtotal > 0 && (
@@ -14814,7 +14840,8 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
 
   const agregarServicio = (s) => setServiciosAdicionales((prev) => [...prev, s]);
-  const quitarServicio = (id) => setServiciosAdicionales(serviciosAdicionales.filter((s) => s.id !== id));
+  const quitarServicio = (id) => setServiciosAdicionales((prev) => prev.filter((s) => s.id !== id));
+  const quitarGrupoServicio = (grupoViajeId) => setServiciosAdicionales((prev) => prev.filter((s) => s.grupoViajeId !== grupoViajeId));
   const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
 
   const [lineasMantenimiento, setLineasMantenimiento] = useState([]);
@@ -15087,7 +15114,17 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
                     <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
                     {s.notaInterna && <span className="block" style={{ color: MUTED }}>Nota interna (no sale en el PDF): {s.notaInterna}</span>}
                   </div>
-                  <button onClick={() => quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {s.viajeInputs && (
+                      <button
+                        onClick={() => { quitarGrupoServicio(s.grupoViajeId); setMostrarSugeridor({ editarViaje: s.viajeInputs }); }}
+                        title="Editar este viaje (borra sus líneas y las vuelve a armar)"
+                      >
+                        <Pencil size={13} style={{ color: MUTED }} />
+                      </button>
+                    )}
+                    <button onClick={() => quitarServicio(s.id)}><X size={13} style={{ color: MUTED }} /></button>
+                  </span>
                 </div>
               ))}
               <div className="px-2.5 py-1.5 text-xs font-semibold flex justify-between" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
@@ -15096,9 +15133,12 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
             </div>
           )}
           {mostrarSugeridor ? (
-            <SugeridorServicioTecnico onAgregar={(s) => { agregarServicio(s); setMostrarSugeridor(false); }} />
+            <SugeridorServicioTecnico
+              initial={mostrarSugeridor.editarViaje}
+              onAgregar={(s) => { agregarServicio(s); setMostrarSugeridor(false); }}
+            />
           ) : (
-            <SecondaryButton onClick={() => setMostrarSugeridor(true)}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
+            <SecondaryButton onClick={() => setMostrarSugeridor({ editarViaje: null })}><Plus size={14} /> Agregar servicio con sugerencia de Luis</SecondaryButton>
           )}
 
           {lineas.length > 0 && (

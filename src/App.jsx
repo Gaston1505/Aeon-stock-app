@@ -449,17 +449,25 @@ function costoLuisServicio(producto, tipo, tierIdx, btuRango) {
 // fuentes oficiales no coinciden entre sí (varían ±10-15 km según el trazado) — corregir acá si
 // se tiene el kilometraje real de un viaje. "Otra ciudad" deja cargar el km a mano para cualquier
 // destino que no esté en la lista.
+//
+// peajeIdaGs es el costo de ida (se dobla para ida y vuelta, igual que el km) de los peajes que
+// hay en el camino — para categoría "liviano", sumando los puestos entre Asunción y cada ciudad:
+// Ypacaraí km 42,5 (Rutas del Este, ₲15.000) y Nueva Londres km 160 (Rutas del Este, ₲15.000) para
+// las que están después de ese punto; Pastoreo km ~202 y Minga Guazú km ~306 (Tape Porã, ₲19.000
+// cada uno) solo para Ciudad del Este/Hernandarias, que pasan los 4. Encarnación (Ruta 1) tiene 3
+// puestos propios (Itá, Caapucú, Coronel Bogado) pero no encontré su tarifa actual — igual que
+// Concepción y Pedro Juan Caballero (sin dato), quedan en null: se cargan a mano.
 const CIUDADES_INTERIOR_KM = [
-  { nombre: "San Bernardino", km: 50 },
-  { nombre: "Coronel Oviedo", km: 132 },
-  { nombre: "Caaguazú", km: 180 },
-  { nombre: "Villarrica", km: 153 },
-  { nombre: "Ciudad del Este", km: 335 },
-  { nombre: "Hernandarias", km: 349 },
-  { nombre: "Encarnación", km: 376 },
-  { nombre: "Concepción", km: 460 },
-  { nombre: "Pedro Juan Caballero", km: 534 },
-  { nombre: "Otra ciudad (cargar km a mano)", km: null },
+  { nombre: "San Bernardino", km: 50, peajeIdaGs: 15000 },
+  { nombre: "Coronel Oviedo", km: 132, peajeIdaGs: 15000 },
+  { nombre: "Caaguazú", km: 180, peajeIdaGs: 30000 },
+  { nombre: "Villarrica", km: 153, peajeIdaGs: 15000 },
+  { nombre: "Ciudad del Este", km: 335, peajeIdaGs: 68000 },
+  { nombre: "Hernandarias", km: 349, peajeIdaGs: 68000 },
+  { nombre: "Encarnación", km: 376, peajeIdaGs: null },
+  { nombre: "Concepción", km: 460, peajeIdaGs: null },
+  { nombre: "Pedro Juan Caballero", km: 534, peajeIdaGs: null },
+  { nombre: "Otra ciudad (cargar km a mano)", km: null, peajeIdaGs: null },
 ];
 // Estimados propios (no hay una tabla oficial de referencia en Paraguay para estos tres números) —
 // hay que actualizarlos de tanto en tanto, por eso quedan sugeridos y editables, nunca fijos. El
@@ -11362,9 +11370,17 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const [ciudad, setCiudad] = useState(CIUDADES_INTERIOR_KM[0].nombre);
   const [kmManual, setKmManual] = useState("");
   const [costoKm, setCostoKm] = useState(String(COSTO_KM_SUGERIDO_GS));
+  const [peaje, setPeaje] = useState(String((CIUDADES_INTERIOR_KM[0].peajeIdaGs || 0) * 2));
   const [costoNoche, setCostoNoche] = useState(String(COSTO_NOCHE_SUGERIDO_GS));
   const [costoComidaDia, setCostoComidaDia] = useState(String(COSTO_COMIDA_DIA_SUGERIDO_GS));
   const [personas, setPersonas] = useState(PERSONAS_VIAJE_SUGERIDO);
+  // Al cambiar de ciudad se recarga el peaje sugerido (ida y vuelta) de esa ciudad — igual sigue
+  // siendo editable después, por si cambió la tarifa o el viaje no usa la ruta de siempre.
+  const cambiarCiudad = (nombre) => {
+    setCiudad(nombre);
+    const c = CIUDADES_INTERIOR_KM.find((x) => x.nombre === nombre);
+    setPeaje(String((c?.peajeIdaGs || 0) * 2));
+  };
 
   // Compartido entre los dos modos.
   const [multiplicador, setMultiplicador] = useState(1.15);
@@ -11430,7 +11446,9 @@ function SugeridorServicioTecnico({ onAgregar }) {
   // cada uno come lo suyo.
   const estadiaGs = totalDiasInstalacion * (Number(costoNoche) || 0);
   const comidasGs = totalDiasInstalacion * (Number(costoComidaDia) || 0) * (Number(personas) || 1);
-  const viaticosGs = combustibleGs + estadiaGs + comidasGs;
+  // Peajes: uno por cada viaje (ida y vuelta), igual que el combustible — no por día.
+  const peajesGs = numViajes * (Number(peaje) || 0);
+  const viaticosGs = combustibleGs + peajesGs + estadiaGs + comidasGs;
   const viaticosUsd = viaticosGs > 0 && tc > 0 ? viaticosGs / tc : null;
   const totalInstalacionUsd = tc > 0 ? totalInstalacionGs / tc : null;
 
@@ -11453,6 +11471,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
           `${totalDiasInstalacion} día(s) de instalación en total (${filasViaje.map((f) => `${f.cant} ${f.producto} = ${f.dias}d`).join(", ")})`,
           numViajes > 1 ? `repartidos en ${numViajes} viajes de hasta 5 días laborales cada uno` : null,
           `combustible: ${kmIdaYVuelta} km ida y vuelta × ${numViajes} viaje(s) × ₲${(Number(costoKm) || 0).toLocaleString("es-PY")}/km = ₲${combustibleGs.toLocaleString("es-PY")}`,
+          peajesGs > 0 ? `peajes: ₲${(Number(peaje) || 0).toLocaleString("es-PY")} ida y vuelta × ${numViajes} viaje(s) = ₲${peajesGs.toLocaleString("es-PY")}` : null,
           `estadía: ${totalDiasInstalacion} noche(s) × ₲${(Number(costoNoche) || 0).toLocaleString("es-PY")} = ₲${estadiaGs.toLocaleString("es-PY")}`,
           `comidas: ${totalDiasInstalacion} día(s) × ${personas} persona(s) × ₲${(Number(costoComidaDia) || 0).toLocaleString("es-PY")} = ₲${comidasGs.toLocaleString("es-PY")}`,
         ].filter(Boolean).join(" · "),
@@ -11596,12 +11615,12 @@ function SugeridorServicioTecnico({ onAgregar }) {
           </p>
 
           <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>
-            Viáticos (combustible + estadía + comidas) — desglose interno, al cliente se le muestra un solo total
+            Viáticos (combustible + peajes + estadía + comidas) — desglose interno, al cliente se le muestra un solo total
           </p>
           <div className="flex gap-2 flex-wrap mb-2">
             <div style={{ minWidth: 190 }}>
               <Field label="Ciudad">
-                <select value={ciudad} onChange={(e) => setCiudad(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+                <select value={ciudad} onChange={(e) => cambiarCiudad(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
                   {CIUDADES_INTERIOR_KM.map((c) => <option key={c.nombre} value={c.nombre}>{c.nombre}{c.km != null ? ` (${c.km} km)` : ""}</option>)}
                 </select>
               </Field>
@@ -11614,7 +11633,15 @@ function SugeridorServicioTecnico({ onAgregar }) {
             <div style={{ width: 130 }}>
               <Field label="Costo por km (₲)"><TextInput type="number" value={costoKm} onChange={(e) => setCostoKm(e.target.value)} /></Field>
             </div>
+            <div style={{ width: 150 }}>
+              <Field label="Peajes ida y vuelta (₲)"><TextInput type="number" value={peaje} onChange={(e) => setPeaje(e.target.value)} placeholder={ciudadSel?.peajeIdaGs == null ? "Sin dato — cargar a mano" : undefined} /></Field>
+            </div>
           </div>
+          {ciudadSel?.peajeIdaGs == null && (
+            <p className="text-[11px] mb-2" style={{ color: "#B45309" }}>
+              No tengo tarifa de peaje confirmada para esta ciudad — cargalo a mano si corresponde (0 si la ruta no tiene peaje).
+            </p>
+          )}
           <div className="flex gap-2 flex-wrap mb-2">
             <div style={{ width: 110 }}>
               <Field label="Personas"><TextInput type="number" min="1" value={personas} onChange={(e) => setPersonas(e.target.value)} /></Field>
@@ -11627,7 +11654,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
             </div>
           </div>
           <p className="text-[11px] mb-2" style={{ color: MUTED }}>
-            Noches = días de instalación (duermen la noche anterior a cada día de obra). Viaje estándar de 2 personas: la estadía es por habitación (dos camas separadas, no se multiplica por persona) y la comida sí se multiplica por la cantidad de gente. Costo por km, estadía y comida vienen con un sugerido propio — el de estadía es el que menos certeza tiene de los tres — ajustalos con el precio real del lugar.
+            Noches = días de instalación (duermen la noche anterior a cada día de obra). Viaje estándar de 2 personas: la estadía es por habitación (dos camas separadas, no se multiplica por persona) y la comida sí se multiplica por la cantidad de gente. El peaje sugerido suma los puestos de la ruta a esa ciudad (Ypacaraí, Nueva Londres, Pastoreo, Minga Guazú según corresponda) — se dobla solo por viaje, no por día. Costo por km, peaje, estadía y comida vienen con un sugerido propio — el de estadía es el que menos certeza tiene de los cuatro — ajustalos con el precio real del momento.
           </p>
           {viaticosGs > 0 && (
             <p className="text-xs mb-2" style={{ color: ACCENT }}>

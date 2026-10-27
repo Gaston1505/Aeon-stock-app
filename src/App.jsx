@@ -11367,6 +11367,8 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const [productosViaje, setProductosViaje] = useState([
     { id: randId(), producto: SERVICIO_TECNICO_PRODUCTOS[0], cantidad: 1, btuRango: AA_BTU_RANGOS[0], diasManual: "" },
   ]);
+  // Vacío = seguir el sugerido (suma de días por producto); con algo cargado, manda eso.
+  const [diasManualTotal, setDiasManualTotal] = useState("");
   const [ciudad, setCiudad] = useState(CIUDADES_INTERIOR_KM[0].nombre);
   const [kmManual, setKmManual] = useState("");
   const [costoKm, setCostoKm] = useState(String(COSTO_KM_SUGERIDO_GS));
@@ -11429,7 +11431,12 @@ function SugeridorServicioTecnico({ onAgregar }) {
     const dias = tasaDia ? Math.ceil(cantf / tasaDia) : (Number(f.diasManual) || 0);
     return { ...f, cant: cantf, costoLuisUnitGs: costoLuisUnitGsF, costoLuisGs: costoLuisGsF, montoAeonGs: montoAeonGsF, tasaDia, dias };
   });
-  const totalDiasInstalacion = filasViaje.reduce((acc, f) => acc + f.dias, 0);
+  // El rendimiento por producto es solo un PUNTO DE PARTIDA — la obra real puede organizarse
+  // distinto (ej: 3 semanas completas + 1 día suelto la 4ta semana, en vez de como caería el
+  // cálculo puro), así que el total de días queda editable: se usa diasManualTotal si se cargó
+  // algo, si no se sigue la suma del rendimiento de cada producto.
+  const diasSugeridos = filasViaje.reduce((acc, f) => acc + f.dias, 0);
+  const totalDiasInstalacion = diasManualTotal.trim() !== "" ? (Number(diasManualTotal) || 0) : diasSugeridos;
   // Cada tramo de 5 días laborales es un viaje aparte (ida y vuelta propia) — no hace falta saber
   // qué producto cae en qué viaje para el costo total, solo cuántos viajes hacen falta en total.
   const numViajes = totalDiasInstalacion > 0 ? Math.ceil(totalDiasInstalacion / 5) : 0;
@@ -11468,7 +11475,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
         id: randId(), tipo: "Viáticos", monto: Math.round(viaticosUsd * 100) / 100, costoLuisUsd: Math.round(viaticosUsd * 100) / 100,
         descripcion: `Viáticos — ${ciudad}`,
         notaInterna: [
-          `${totalDiasInstalacion} día(s) de instalación en total (${filasViaje.map((f) => `${f.cant} ${f.producto} = ${f.dias}d`).join(", ")})`,
+          `${totalDiasInstalacion} día(s) de instalación en total${diasManualTotal.trim() !== "" ? ` (ajustado a mano — el rendimiento cargado sugería ${diasSugeridos}d: ${filasViaje.map((f) => `${f.cant} ${f.producto} = ${f.dias}d`).join(", ")})` : ` (${filasViaje.map((f) => `${f.cant} ${f.producto} = ${f.dias}d`).join(", ")})`}`,
           numViajes > 1 ? `repartidos en ${numViajes} viajes de hasta 5 días laborales cada uno` : null,
           `combustible: ${kmIdaYVuelta} km ida y vuelta × ${numViajes} viaje(s) × ₲${(Number(costoKm) || 0).toLocaleString("es-PY")}/km = ₲${combustibleGs.toLocaleString("es-PY")}`,
           peajesGs > 0 ? `peajes: ₲${(Number(peaje) || 0).toLocaleString("es-PY")} ida y vuelta × ${numViajes} viaje(s) = ₲${peajesGs.toLocaleString("es-PY")}` : null,
@@ -11478,6 +11485,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
       });
     }
     setProductosViaje([{ id: randId(), producto: SERVICIO_TECNICO_PRODUCTOS[0], cantidad: 1, btuRango: AA_BTU_RANGOS[0], diasManual: "" }]);
+    setDiasManualTotal("");
     setTipoCambio("");
   };
 
@@ -11610,8 +11618,23 @@ function SugeridorServicioTecnico({ onAgregar }) {
           </div>
           <SecondaryButton onClick={agregarFilaViaje}><Plus size={14} /> Agregar otro producto a este viaje</SecondaryButton>
 
-          <p className="text-xs font-semibold mt-3 mb-2" style={{ color: MUTED }}>
-            {totalDiasInstalacion} día(s) de instalación en total{numViajes > 1 ? ` — se reparte en ${numViajes} viajes de hasta 5 días (combustible ×${numViajes})` : ""}
+          <div className="mt-3 flex items-end gap-2 flex-wrap">
+            <div style={{ width: 170 }}>
+              <Field label="Días de trabajo en total">
+                <TextInput
+                  type="number" min="0"
+                  value={diasManualTotal.trim() !== "" ? diasManualTotal : String(diasSugeridos)}
+                  onChange={(e) => setDiasManualTotal(e.target.value)}
+                />
+              </Field>
+            </div>
+            {diasManualTotal.trim() !== "" && diasManualTotal !== String(diasSugeridos) && (
+              <SecondaryButton onClick={() => setDiasManualTotal("")}>Volver al sugerido ({diasSugeridos}d)</SecondaryButton>
+            )}
+          </div>
+          <p className="text-[11px] mb-2" style={{ color: MUTED }}>
+            Sugerido según el rendimiento cargado arriba: {diasSugeridos} día(s). Es solo un punto de partida — corregilo si la obra se organiza distinto (ej: semanas completas + un día suelto para terminar).
+            {numViajes > 0 && ` Con ${totalDiasInstalacion} día(s), se reparte en ${numViajes} viaje${numViajes !== 1 ? "s" : ""} de hasta 5 días laborales cada uno${numViajes > 1 ? ` (combustible y peajes ×${numViajes})` : ""}.`}
           </p>
 
           <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>

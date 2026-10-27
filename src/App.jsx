@@ -2372,6 +2372,7 @@ export default function App() {
   const [fichasObras, setFichasObras] = useState([]);
   const [facturasObra, setFacturasObra] = useState([]);
   const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
+  const [pedidoAnticipoTarget, setPedidoAnticipoTarget] = useState(null); // cotización sobre la que se pide un anticipo (sin remito)
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
@@ -4448,6 +4449,7 @@ export default function App() {
             onCompartir={handleCompartirCotizacion}
             onCompartirFichas={handleCompartirFichas}
             onDescargarRentabilidadPdf={handleDescargarRentabilidadPdf}
+            onPedidoAnticipo={esAdmin ? ((c) => { setPedidoAnticipoTarget(c); setDrawer("pedido-facturacion"); }) : undefined}
             descargandoId={descargandoId}
             pdfError={pdfError}
           />
@@ -4759,12 +4761,21 @@ export default function App() {
           }}
         />
       </Drawer>
-      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); }} title="Pedido de facturación">
+      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); setPedidoAnticipoTarget(null); }} title={pedidoAnticipoTarget ? "Pedido de facturación — anticipo" : "Pedido de facturación"}>
         {pedidoTarget && (
           <PedidoFacturacionForm
             key={pedidoTarget.key}
             grupo={pedidoTarget}
             pedidoExistente={pedidosFacturacion.find((p) => p.remitoKey === pedidoTarget.key)}
+            pedidos={pedidosFacturacion}
+            productos={productos} equipos={equipos} cotizaciones={cotizaciones} grupos={gruposEmpresas}
+            onGuardar={guardarPedidoFacturacion}
+          />
+        )}
+        {pedidoAnticipoTarget && (
+          <PedidoFacturacionForm
+            key={pedidoAnticipoTarget.id}
+            cotizacionAnticipo={pedidoAnticipoTarget}
             pedidos={pedidosFacturacion}
             productos={productos} equipos={equipos} cotizaciones={cotizaciones} grupos={gruposEmpresas}
             onGuardar={guardarPedidoFacturacion}
@@ -5340,6 +5351,10 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
   const centro = centroCostoPorCodigo(centroCostoSugerido(m0.obra));
   return {
     remitoKey: g.key, remito: g.remito || "", fecha: m0.fecha || todayISO(),
+    // Si el remito viene de una cotización (m0.cotizacionId), queda guardado para poder sumar,
+    // junto con los pedidos de anticipo de esa misma cotización, cuánto se pidió facturar en
+    // total y compararlo contra el total de la cotización (ver montoYaPedidoDeCotizacion).
+    cotizacionId: m0.cotizacionId || "",
     cliente, ruc: (m0.rucCliente || rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
     condicion: previo?.condicion || "Crédito", termino: "",
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
@@ -5352,18 +5367,60 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
   };
 }
 
+// Arma el Pedido de Facturación de un ANTICIPO: a diferencia de un remito real, todavía no hay
+// mercadería que itemizar (puede pedirse con 0 unidades retiradas) — una sola línea "Anticipo" por
+// el monto fijo o el % de la cotización que se elija en el formulario (ver PedidoFacturacionForm),
+// en vez de inventar un desglose de productos que todavía no se sabe qué se va a retirar primero.
+function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos }) {
+  const cliente = (cot.cliente || "").trim();
+  const previo = [...(pedidos || [])]
+    .filter((p) => p.cliente && p.cliente.trim().toLowerCase() === cliente.toLowerCase())
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const centro = centroCostoPorCodigo(centroCostoSugerido(cot.obra));
+  return {
+    tipoPedido: "anticipo", cotizacionId: cot.id, remitoKey: "", remito: "",
+    fecha: todayISO(),
+    cliente, ruc: (rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
+    condicion: previo?.condicion || "Crédito", termino: "",
+    centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
+    obra: (cot.obra || "").trim(),
+    lineas: [{ cantidad: 1, marca: "AEON", codigo: "", producto: "Anticipo", familia: "Anticipo", precioUnit: 0 }],
+    origenPrecios: `Anticipo de la cotización "${cot.nombre || cot.categoria || "Cotización"}" (${fmtDate(cot.fecha)}) — sin mercadería entregada todavía. Definí el monto abajo.`,
+    estado: "Borrador",
+  };
+}
+
+// Cuánto se pidió facturar en total de una cotización hasta ahora, sumando todos sus pedidos
+// (anticipos + los que salieron de remitos reales) — para no perder la cuenta y pasarse del total
+// de la cotización al pedir otro anticipo. `excluirId` deja afuera el pedido que se está editando
+// en este momento (si no, se contaría dos veces mientras se lo retoca).
+function montoYaPedidoDeCotizacion(cotizacionId, pedidos, excluirId) {
+  if (!cotizacionId) return 0;
+  return (pedidos || [])
+    .filter((p) => p.cotizacionId === cotizacionId && p.id !== excluirId)
+    .reduce((acc, p) => acc + totalPedido(p), 0);
+}
+
 // Destinatarios fijos del pedido de facturación (Administración).
 const MAILS_ADMINISTRACION = ["administrativo@qi.com.py", "acibils@qi.com.py"];
 
-function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equipos, cotizaciones, grupos, onGuardar }) {
+function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, pedidos, productos, equipos, cotizaciones, grupos, onGuardar }) {
   const inicial = useMemo(
-    () => pedidoExistente || armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos, grupos }),
+    () => pedidoExistente || (
+      grupo
+        ? armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos, grupos })
+        : armarPedidoAnticipoDesdeCotizacion(cotizacionAnticipo, { pedidos, grupos })
+    ),
     [] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const [p, setP] = useState(inicial);
   const [idDoc, setIdDoc] = useState(pedidoExistente?.id || null);
   const [msg, setMsg] = useState(null); // { tipo: "ok" | "error", texto }
   const [ocupado, setOcupado] = useState("");
+  // Solo aplica en modo anticipo (cotizacionAnticipo viene seteado): "monto fijo" carga directo el
+  // precioUnit de la línea de Anticipo; "porcentaje" lo calcula a partir del total de la cotización.
+  const [modoAnticipo, setModoAnticipo] = useState("porcentaje");
+  const [pctAnticipo, setPctAnticipo] = useState("");
 
   const set = (campo, valor) => setP((prev) => ({ ...prev, [campo]: valor }));
   const setLinea = (i, campo, valor) => setP((prev) => ({ ...prev, lineas: prev.lineas.map((l, j) => (j === i ? { ...l, [campo]: valor } : l)) }));
@@ -5374,6 +5431,13 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
     setP((prev) => ({ ...prev, centroCostoCodigo: codigo, centroCostoNombre: c?.nombre || "" }));
   };
   const total = totalPedido(p);
+  const totalCotizacionAnticipo = cotizacionAnticipo ? calcularTotalCotizacion(cotizacionAnticipo) : 0;
+  const yaPedidoCotizacion = cotizacionAnticipo ? montoYaPedidoDeCotizacion(cotizacionAnticipo.id, pedidos, idDoc) : 0;
+  const aplicarPorcentaje = (valor) => {
+    setPctAnticipo(valor);
+    const monto = totalCotizacionAnticipo > 0 ? Math.round(totalCotizacionAnticipo * ((Number(valor) || 0) / 100) * 100) / 100 : 0;
+    setLinea(0, "precioUnit", monto);
+  };
   // El nombre de la empresa sale siempre normalizado (Octagon SA, CCI SA) en PDF, Excel y mail,
   // aunque se haya escrito a mano de otra forma.
   const pFinal = () => normalizarCamposEmpresa(p);
@@ -5427,6 +5491,35 @@ function PedidoFacturacionForm({ grupo, pedidoExistente, pedidos, productos, equ
         {p.remito ? `Remito N° ${p.remito}. ` : ""}{p.origenPrecios} Todo se puede editar antes de guardar o enviar.
         {p.estado === "Enviado" && pedidoExistente?.enviadoEn ? ` Enviado el ${new Date(pedidoExistente.enviadoEn).toLocaleDateString("es-PY")}.` : ""}
       </p>
+
+      {cotizacionAnticipo && (
+        <div className="p-2.5 rounded-lg border mb-3" style={{ borderColor: "#F59E0B", backgroundColor: "#FFFBEB" }}>
+          <p className="text-xs mb-2" style={{ color: INK }}>
+            Total de la cotización: <b>U$S {fmtN(totalCotizacionAnticipo)}</b> · Ya se pidió facturar: <b>U$S {fmtN(yaPedidoCotizacion)}</b>
+            {totalCotizacionAnticipo > 0 ? ` (${fmtN((yaPedidoCotizacion / totalCotizacionAnticipo) * 100, 1)}%)` : ""} · Quedaría sin pedir: <b>U$S {fmtN(Math.max(0, totalCotizacionAnticipo - yaPedidoCotizacion - total))}</b>
+          </p>
+          <div className="flex items-center gap-2 mb-2">
+            {[{ v: "porcentaje", label: "% del total" }, { v: "fijo", label: "Monto fijo" }].map((o) => (
+              <button
+                key={o.v} type="button" onClick={() => setModoAnticipo(o.v)}
+                className="text-xs px-2.5 py-1 rounded-full"
+                style={modoAnticipo === o.v ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          {modoAnticipo === "porcentaje" ? (
+            <Field label="% del total de la cotización">
+              <TextInput type="number" value={pctAnticipo} onChange={(e) => aplicarPorcentaje(e.target.value)} placeholder="Ej: 30" />
+            </Field>
+          ) : (
+            <Field label="Monto fijo del anticipo (U$S)">
+              <TextInput type="number" value={p.lineas[0]?.precioUnit ?? ""} onChange={(e) => setLinea(0, "precioUnit", Number(e.target.value) || 0)} placeholder="Ej: 5000" />
+            </Field>
+          )}
+        </div>
+      )}
 
       <Field label="Cliente (empresa que compró)"><TextInput value={p.cliente} onChange={(e) => set("cliente", e.target.value)} onBlur={(e) => set("cliente", normalizarEmpresa(e.target.value))} /></Field>
       <Field label="RUC"><TextInput value={p.ruc} onChange={(e) => set("ruc", e.target.value)} /></Field>
@@ -13638,7 +13731,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
+function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
   // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
@@ -13808,6 +13901,16 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
         >
           <Pencil size={13} /> Editar
         </button>
+        {onPedidoAnticipo && (
+          <button
+            onClick={() => onPedidoAnticipo(c)}
+            title="Pedido de facturación por un anticipo, sin esperar a que se retire mercadería"
+            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+            style={{ borderColor: BORDER, color: INK }}
+          >
+            <FileText size={13} /> Pedido de anticipo
+          </button>
+        )}
       </div>
       {verRentabilidad && (
         <RentabilidadCotizacionView
@@ -13828,7 +13931,7 @@ const CUENTA_OBRA_BADGE = {
   suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
   historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
-function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId }) {
+function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
@@ -13869,6 +13972,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
         onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+        onPedidoAnticipo={onPedidoAnticipo}
         descargandoId={descargandoId}
       />
       {expandido && (
@@ -13891,7 +13995,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
 // Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
 // todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
 // una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
-function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId, forzarExpandido }) {
+function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
@@ -13957,6 +14061,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
                     onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                     onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
                     onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+                    onPedidoAnticipo={onPedidoAnticipo}
                     descargandoId={descargandoId}
                   />
                 ))}
@@ -13972,7 +14077,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
 // Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
 // el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
 // minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
-function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId, forzarExpandido }) {
+function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
@@ -14002,6 +14107,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+              onPedidoAnticipo={onPedidoAnticipo}
               descargandoId={descargandoId} forzarExpandido={forzarExpandido}
             />
           ))}
@@ -14011,7 +14117,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, pdfError }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
@@ -14048,6 +14154,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
                 onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+        onPedidoAnticipo={onPedidoAnticipo}
         descargandoId={descargandoId} forzarExpandido={forzarExpandido}
               />
             ))}

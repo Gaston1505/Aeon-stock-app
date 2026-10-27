@@ -431,6 +431,31 @@ function costoLuisServicio(producto, tipo, tierIdx, btuRango) {
   return arr ? arr[tierIdx] : null;
 }
 
+// Km (ida, una sola vía) desde Asunción a las ciudades del interior más comunes para instalaciones
+// — son una referencia aproximada por ruta (no en línea recta), para no tener que tipear la
+// distancia cada vez. "Otra ciudad" deja cargar el km a mano para cualquier destino que no esté acá.
+const CIUDADES_INTERIOR_KM = [
+  { nombre: "Caacupé", km: 55 },
+  { nombre: "Paraguarí", km: 69 },
+  { nombre: "Coronel Oviedo", km: 132 },
+  { nombre: "Villarrica", km: 153 },
+  { nombre: "San Estanislao", km: 151 },
+  { nombre: "Curuguaty", km: 245 },
+  { nombre: "Ciudad del Este", km: 330 },
+  { nombre: "Encarnación", km: 370 },
+  { nombre: "Pilar", km: 320 },
+  { nombre: "Concepción", km: 460 },
+  { nombre: "Salto del Guairá", km: 413 },
+  { nombre: "Pedro Juan Caballero", km: 534 },
+  { nombre: "Otra ciudad (cargar km a mano)", km: null },
+];
+// Estimado propio (no hay una tabla oficial de referencia en Paraguay para esto): nafta común
+// ≈ ₲7.000/litro (promedio Kape 88 / Oikoite 93 entre los emblemas, ago-oct 2026) ÷ 13 km/litro de
+// rendimiento de un auto económico, + ~30% para desgaste de aceite y cubiertas (no cubre
+// depreciación del vehículo). Hay que actualizarlo de tanto en tanto si cambia el precio del
+// combustible — por eso queda como sugerido y editable, no fijo.
+const COSTO_KM_SUGERIDO_GS = 700;
+
 // "El número final... lo redondees a 0 o 5, siempre para arriba" — para que quede presentable.
 function redondearArriba5(n) {
   return Math.ceil(n / 5) * 5;
@@ -5285,7 +5310,7 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
           for (const s of servicios) {
             lineasServicio.push({
               cantidad: 1, marca: "AEON", codigo: "",
-              producto: `${s.tipo || "Servicio"}${s.descripcion ? `: ${s.descripcion}` : ""}`,
+              producto: `${s.tipo || "Servicio"}${s.descripcion ? `: ${s.descripcion}` : ""}${s.notaInterna ? ` (${s.notaInterna})` : ""}`,
               familia: "Servicios", precioUnit: Math.round((Number(s.monto) || 0) * 100) / 100,
             });
           }
@@ -11210,6 +11235,18 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const [multiplicador, setMultiplicador] = useState(1.15);
   const [tipoCambio, setTipoCambio] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  // Viáticos: solo aplica cuando la instalación es en el interior — combustible + estadía +
+  // comidas se calculan aparte y van como una segunda línea de servicio ("Viáticos"), a costo
+  // (sin margen), separada de la línea de Instalación. Para el cliente es un solo total en el PDF
+  // (ver instalacionDescripcion/instalacionMonto) — el desglose de abajo es solo para uso interno.
+  const [ubicacion, setUbicacion] = useState("asuncion"); // "asuncion" | "interior"
+  const [ciudad, setCiudad] = useState(CIUDADES_INTERIOR_KM[0].nombre);
+  const [kmManual, setKmManual] = useState("");
+  const [costoKm, setCostoKm] = useState(String(COSTO_KM_SUGERIDO_GS));
+  const [noches, setNoches] = useState(0);
+  const [costoNoche, setCostoNoche] = useState("");
+  const [diasComida, setDiasComida] = useState(0);
+  const [costoComidaDia, setCostoComidaDia] = useState("");
 
   const esAA = producto === "Aire Acondicionado";
   const cant = Number(cantidad) || 1;
@@ -11225,14 +11262,36 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const costoLuisUsd = costoLuisGs != null && tc > 0 ? costoLuisGs / tc : null;
   const descripcionFinal = descripcion.trim() || `${tipo} de ${cant > 1 ? `${cant} ` : ""}${producto}${esAA ? ` (${btuRango})` : ""}`;
 
+  const esInterior = ubicacion === "interior";
+  const ciudadSel = CIUDADES_INTERIOR_KM.find((c) => c.nombre === ciudad);
+  const kmUnaVia = ciudadSel?.km != null ? ciudadSel.km : Number(kmManual) || 0;
+  const kmIdaYVuelta = kmUnaVia * 2;
+  const combustibleGs = kmIdaYVuelta * (Number(costoKm) || 0);
+  const estadiaGs = (Number(noches) || 0) * (Number(costoNoche) || 0);
+  const comidasGs = (Number(diasComida) || 0) * (Number(costoComidaDia) || 0);
+  const viaticosGs = combustibleGs + estadiaGs + comidasGs;
+  const viaticosUsd = esInterior && viaticosGs > 0 && tc > 0 ? viaticosGs / tc : null;
+
   const agregar = () => {
     if (montoAeonUsd == null) return;
     onAgregar({
       id: randId(), tipo, monto: Math.round(montoAeonUsd * 100) / 100, costoLuisUsd: Math.round(costoLuisUsd * 100) / 100,
       descripcion: descripcionFinal,
     });
+    if (viaticosUsd != null) {
+      onAgregar({
+        id: randId(), tipo: "Viáticos", monto: Math.round(viaticosUsd * 100) / 100, costoLuisUsd: Math.round(viaticosUsd * 100) / 100,
+        descripcion: `Viáticos — ${ciudad}`,
+        notaInterna: [
+          `${kmIdaYVuelta} km ida y vuelta × ₲${(Number(costoKm) || 0).toLocaleString("es-PY")}/km = ₲${combustibleGs.toLocaleString("es-PY")} combustible`,
+          noches > 0 ? `${noches} noche(s) × ₲${(Number(costoNoche) || 0).toLocaleString("es-PY")} = ₲${estadiaGs.toLocaleString("es-PY")} estadía` : null,
+          diasComida > 0 ? `${diasComida} día(s) × ₲${(Number(costoComidaDia) || 0).toLocaleString("es-PY")} = ₲${comidasGs.toLocaleString("es-PY")} comidas (almuerzo y cena)` : null,
+        ].filter(Boolean).join(" · "),
+      });
+    }
     setDescripcion("");
     setTipoCambio("");
+    setNoches(0); setCostoNoche(""); setDiasComida(0); setCostoComidaDia("");
   };
 
   return (
@@ -11267,6 +11326,67 @@ function SugeridorServicioTecnico({ onAgregar }) {
         </div>
       </div>
 
+      <p className="text-xs mb-1" style={{ color: MUTED }}>¿Dónde es la instalación?</p>
+      <div className="flex items-center gap-2 mb-2">
+        {[{ v: "asuncion", label: "Asunción / cerca" }, { v: "interior", label: "Interior" }].map((o) => (
+          <button
+            key={o.v} type="button" onClick={() => setUbicacion(o.v)}
+            className="text-xs px-2.5 py-1 rounded-full"
+            style={ubicacion === o.v ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      {esInterior && (
+        <div className="p-2 rounded mb-2" style={{ backgroundColor: "#F7F8FA", border: `1px dashed ${BORDER}` }}>
+          <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>
+            Viáticos (combustible + estadía + comidas) — desglose interno, al cliente se le muestra un solo total
+          </p>
+          <div className="flex gap-2 flex-wrap mb-2">
+            <div style={{ minWidth: 190 }}>
+              <Field label="Ciudad">
+                <select value={ciudad} onChange={(e) => setCiudad(e.target.value)} className="w-full text-sm px-3 py-2 rounded-md border outline-none" style={inputStyle}>
+                  {CIUDADES_INTERIOR_KM.map((c) => <option key={c.nombre} value={c.nombre}>{c.nombre}{c.km != null ? ` (${c.km} km)` : ""}</option>)}
+                </select>
+              </Field>
+            </div>
+            {ciudadSel?.km == null && (
+              <div style={{ width: 110 }}>
+                <Field label="Km (una vía)"><TextInput type="number" value={kmManual} onChange={(e) => setKmManual(e.target.value)} placeholder="Ej: 200" /></Field>
+              </div>
+            )}
+            <div style={{ width: 130 }}>
+              <Field label="Costo por km (₲)"><TextInput type="number" value={costoKm} onChange={(e) => setCostoKm(e.target.value)} /></Field>
+            </div>
+          </div>
+          <p className="text-[11px] mb-2" style={{ color: MUTED }}>
+            {kmIdaYVuelta} km ida y vuelta × ₲{(Number(costoKm) || 0).toLocaleString("es-PY")}/km = ₲{combustibleGs.toLocaleString("es-PY")} combustible.
+            El costo por km es una estimación propia (nafta ≈ ₲7.000/l ÷ 13 km/l + desgaste de aceite/cubiertas) — ajustalo si cambió el precio del combustible.
+          </p>
+          <div className="flex gap-2 flex-wrap mb-2">
+            <div style={{ width: 90 }}>
+              <Field label="Noches"><TextInput type="number" min="0" value={noches} onChange={(e) => setNoches(e.target.value)} /></Field>
+            </div>
+            <div style={{ width: 140 }}>
+              <Field label="Costo estadía/noche (₲)"><TextInput type="number" value={costoNoche} onChange={(e) => setCostoNoche(e.target.value)} /></Field>
+            </div>
+            <div style={{ width: 90 }}>
+              <Field label="Días de comida"><TextInput type="number" min="0" value={diasComida} onChange={(e) => setDiasComida(e.target.value)} /></Field>
+            </div>
+            <div style={{ width: 160 }}>
+              <Field label="Costo comida/día (₲, almuerzo+cena)"><TextInput type="number" value={costoComidaDia} onChange={(e) => setCostoComidaDia(e.target.value)} /></Field>
+            </div>
+          </div>
+          {viaticosGs > 0 && (
+            <p className="text-xs" style={{ color: ACCENT }}>
+              Total viáticos ₲{viaticosGs.toLocaleString("es-PY")}{viaticosUsd != null ? ` ≈ U$S ${fmtN(viaticosUsd)}` : " (cargá el tipo de cambio abajo para verlo en U$S)"}
+            </p>
+          )}
+        </div>
+      )}
+
       <p className="text-xs mb-1" style={{ color: MUTED }}>Margen sobre el costo de Luis</p>
       <div className="flex items-center gap-2 mb-2">
         {[1.15, 1.2].map((m) => (
@@ -11297,7 +11417,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
           )}
           <Field label="Descripción (opcional)"><TextInput value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder={descripcionFinal} /></Field>
           <SecondaryButton onClick={agregar} disabled={montoAeonUsd == null}>
-            <Plus size={14} /> Agregar este servicio
+            <Plus size={14} /> {viaticosUsd != null ? "Agregar instalación + viáticos" : "Agregar este servicio"}
           </SecondaryButton>
         </>
       )}
@@ -12141,6 +12261,7 @@ function DescuentoInstalacionCampos({ dI, subtotal }) {
               <div className="min-w-0">
                 <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
                 <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
+                {s.notaInterna && <span className="block" style={{ color: MUTED }}>Nota interna (no sale en el PDF): {s.notaInterna}</span>}
               </div>
               <button onClick={() => dI.quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
             </div>
@@ -14386,7 +14507,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   const [serviciosAdicionales, setServiciosAdicionales] = useState([]);
   const [mostrarSugeridor, setMostrarSugeridor] = useState(false);
 
-  const agregarServicio = (s) => setServiciosAdicionales([...serviciosAdicionales, s]);
+  const agregarServicio = (s) => setServiciosAdicionales((prev) => [...prev, s]);
   const quitarServicio = (id) => setServiciosAdicionales(serviciosAdicionales.filter((s) => s.id !== id));
   const totalServicios = serviciosAdicionales.reduce((acc, s) => acc + s.monto, 0);
 
@@ -14658,6 +14779,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
                   <div className="min-w-0">
                     <span className="font-medium" style={{ color: INK }}>{s.tipo}</span>
                     <span style={{ color: MUTED }}> · {s.descripcion} · U$S {fmtN(s.monto)}</span>
+                    {s.notaInterna && <span className="block" style={{ color: MUTED }}>Nota interna (no sale en el PDF): {s.notaInterna}</span>}
                   </div>
                   <button onClick={() => quitarServicio(s.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
                 </div>

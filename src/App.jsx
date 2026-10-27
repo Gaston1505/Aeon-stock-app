@@ -431,30 +431,37 @@ function costoLuisServicio(producto, tipo, tierIdx, btuRango) {
   return arr ? arr[tierIdx] : null;
 }
 
-// Km (ida, una sola vía) desde Asunción a las ciudades del interior más comunes para instalaciones
-// — son una referencia aproximada por ruta (no en línea recta), para no tener que tipear la
-// distancia cada vez. "Otra ciudad" deja cargar el km a mano para cualquier destino que no esté acá.
+// Km (ida, una sola vía) centro de Asunción a centro de cada ciudad — estimado a partir de la
+// longitud oficial de las rutas nacionales (MOPC/Wikipedia) que llegan a cada una, no medido
+// punto a punto con un mapa en vivo. Para Ciudad del Este, Encarnación y Pedro Juan Caballero las
+// fuentes oficiales no coinciden entre sí (varían ±10-15 km según el trazado) — corregir acá si
+// se tiene el kilometraje real de un viaje. "Otra ciudad" deja cargar el km a mano para cualquier
+// destino que no esté en la lista.
 const CIUDADES_INTERIOR_KM = [
-  { nombre: "Caacupé", km: 55 },
-  { nombre: "Paraguarí", km: 69 },
+  { nombre: "San Bernardino", km: 50 },
   { nombre: "Coronel Oviedo", km: 132 },
+  { nombre: "Caaguazú", km: 180 },
   { nombre: "Villarrica", km: 153 },
-  { nombre: "San Estanislao", km: 151 },
-  { nombre: "Curuguaty", km: 245 },
-  { nombre: "Ciudad del Este", km: 330 },
-  { nombre: "Encarnación", km: 370 },
-  { nombre: "Pilar", km: 320 },
+  { nombre: "Ciudad del Este", km: 335 },
+  { nombre: "Hernandarias", km: 349 },
+  { nombre: "Encarnación", km: 376 },
   { nombre: "Concepción", km: 460 },
-  { nombre: "Salto del Guairá", km: 413 },
   { nombre: "Pedro Juan Caballero", km: 534 },
   { nombre: "Otra ciudad (cargar km a mano)", km: null },
 ];
-// Estimado propio (no hay una tabla oficial de referencia en Paraguay para esto): nafta común
-// ≈ ₲7.000/litro (promedio Kape 88 / Oikoite 93 entre los emblemas, ago-oct 2026) ÷ 13 km/litro de
-// rendimiento de un auto económico, + ~30% para desgaste de aceite y cubiertas (no cubre
-// depreciación del vehículo). Hay que actualizarlo de tanto en tanto si cambia el precio del
-// combustible — por eso queda como sugerido y editable, no fijo.
+// Estimados propios (no hay una tabla oficial de referencia en Paraguay para estos tres números) —
+// hay que actualizarlos de tanto en tanto, por eso quedan sugeridos y editables, nunca fijos:
+// - Combustible: nafta común ≈ ₲7.000/litro (promedio Kape 88 / Oikoite 93 entre los emblemas,
+//   ago-oct 2026) ÷ 13 km/litro de rendimiento de un auto económico, + ~30% para desgaste de
+//   aceite y cubiertas (no cubre depreciación del vehículo).
+// - Comida económica: ≈ ₲30.000 por comida (referencia de "comida económica" en Asunción) ×2
+//   (almuerzo y cena).
+// - Estadía económica: la data es floja — sitios de reserva turística muestran entre U$S 15 y
+//   100+/noche según la ciudad, pero esos precios apuntan a turistas, no a un hospedaje sencillo
+//   para un viaje de trabajo. Es el número con menos certeza de los tres.
 const COSTO_KM_SUGERIDO_GS = 700;
+const COSTO_COMIDA_DIA_SUGERIDO_GS = 60000;
+const COSTO_NOCHE_SUGERIDO_GS = 100000;
 
 // "El número final... lo redondees a 0 o 5, siempre para arriba" — para que quede presentable.
 function redondearArriba5(n) {
@@ -11337,9 +11344,9 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const [kmManual, setKmManual] = useState("");
   const [costoKm, setCostoKm] = useState(String(COSTO_KM_SUGERIDO_GS));
   const [noches, setNoches] = useState(0);
-  const [costoNoche, setCostoNoche] = useState("");
+  const [costoNoche, setCostoNoche] = useState(String(COSTO_NOCHE_SUGERIDO_GS));
   const [diasComida, setDiasComida] = useState(0);
-  const [costoComidaDia, setCostoComidaDia] = useState("");
+  const [costoComidaDia, setCostoComidaDia] = useState(String(COSTO_COMIDA_DIA_SUGERIDO_GS));
 
   const esAA = producto === "Aire Acondicionado";
   const cant = Number(cantidad) || 1;
@@ -11384,7 +11391,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
     }
     setDescripcion("");
     setTipoCambio("");
-    setNoches(0); setCostoNoche(""); setDiasComida(0); setCostoComidaDia("");
+    setNoches(0); setCostoNoche(String(COSTO_NOCHE_SUGERIDO_GS)); setDiasComida(0); setCostoComidaDia(String(COSTO_COMIDA_DIA_SUGERIDO_GS));
   };
 
   return (
@@ -11472,6 +11479,9 @@ function SugeridorServicioTecnico({ onAgregar }) {
               <Field label="Costo comida/día (₲, almuerzo+cena)"><TextInput type="number" value={costoComidaDia} onChange={(e) => setCostoComidaDia(e.target.value)} /></Field>
             </div>
           </div>
+          <p className="text-[11px] mb-2" style={{ color: MUTED }}>
+            Estadía y comida vienen con un sugerido económico (₲100.000/noche, ₲60.000/día) — son los números con menos certeza de los tres, ajustalos con el precio real del lugar.
+          </p>
           {viaticosGs > 0 && (
             <p className="text-xs" style={{ color: ACCENT }}>
               Total viáticos ₲{viaticosGs.toLocaleString("es-PY")}{viaticosUsd != null ? ` ≈ U$S ${fmtN(viaticosUsd)}` : " (cargá el tipo de cambio abajo para verlo en U$S)"}

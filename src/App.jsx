@@ -464,15 +464,15 @@ const CIUDADES_INTERIOR_KM = [
 // Estimados propios (no hay una tabla oficial de referencia en Paraguay para estos tres números) —
 // hay que actualizarlos de tanto en tanto, por eso quedan sugeridos y editables, nunca fijos. El
 // viaje estándar es de 2 personas (ver PERSONAS_VIAJE_SUGERIDO):
-// - Combustible: nafta común ≈ ₲7.000/litro (promedio Kape 88 / Oikoite 93 entre los emblemas,
-//   ago-oct 2026) ÷ 13 km/litro de rendimiento de un auto económico, + ~30% para desgaste de
-//   aceite y cubiertas (no cubre depreciación del vehículo).
+// - Combustible: ₲550/km, definido por el usuario (ajustado a la baja de un primer cálculo propio
+//   de ₲700/km — nafta común ≈ ₲7.000/litro ÷ 13 km/litro de rendimiento de un auto económico,
+//   + ~30% para desgaste de aceite y cubiertas).
 // - Comida económica: ≈ ₲30.000 por comida (referencia de "comida económica" en Asunción) ×2
 //   (almuerzo y cena) — es por persona, se multiplica por la cantidad de gente del viaje.
 // - Estadía: ₲140.000 por noche — una habitación de dos camas separadas para las 2 personas del
 //   viaje (no por persona), en base a precios de referencia de ₲100.000-150.000 el cuarto doble.
 //   Es el número con menos certeza de los tres.
-const COSTO_KM_SUGERIDO_GS = 700;
+const COSTO_KM_SUGERIDO_GS = 550;
 const COSTO_COMIDA_DIA_SUGERIDO_GS = 60000;
 const COSTO_NOCHE_SUGERIDO_GS = 140000;
 const PERSONAS_VIAJE_SUGERIDO = 2;

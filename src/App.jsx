@@ -11042,7 +11042,12 @@ function SelectorProducto({ productos, productosPorGrupo, value, onChange, place
   const gruposFiltrados = useMemo(() => {
     if (!q) return productosPorGrupo;
     return productosPorGrupo
-      .map((g) => ({ ...g, items: g.items.filter((p) => (p.nombre || "").toLowerCase().includes(q) || (p.descripcion || "").toLowerCase().includes(q)) }))
+      // Además de nombre/descripción, busca en la categoría del grupo (ej. "Anafe", "Campana")
+      // — el código/nombre real de muchos productos no repite esa palabra (se llaman
+      // "Vitrocerámica", "Inducción", etc.), así que antes "anafe" no encontraba ningún Anafe.
+      .map((g) => (g.key.toLowerCase().includes(q)
+        ? g
+        : { ...g, items: g.items.filter((p) => (p.nombre || "").toLowerCase().includes(q) || (p.descripcion || "").toLowerCase().includes(q)) }))
       .filter((g) => g.items.length > 0);
   }, [productosPorGrupo, q]);
 

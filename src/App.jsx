@@ -462,18 +462,20 @@ const CIUDADES_INTERIOR_KM = [
   { nombre: "Otra ciudad (cargar km a mano)", km: null },
 ];
 // Estimados propios (no hay una tabla oficial de referencia en Paraguay para estos tres números) —
-// hay que actualizarlos de tanto en tanto, por eso quedan sugeridos y editables, nunca fijos:
+// hay que actualizarlos de tanto en tanto, por eso quedan sugeridos y editables, nunca fijos. El
+// viaje estándar es de 2 personas (ver PERSONAS_VIAJE_SUGERIDO):
 // - Combustible: nafta común ≈ ₲7.000/litro (promedio Kape 88 / Oikoite 93 entre los emblemas,
 //   ago-oct 2026) ÷ 13 km/litro de rendimiento de un auto económico, + ~30% para desgaste de
 //   aceite y cubiertas (no cubre depreciación del vehículo).
 // - Comida económica: ≈ ₲30.000 por comida (referencia de "comida económica" en Asunción) ×2
-//   (almuerzo y cena).
-// - Estadía económica: la data es floja — sitios de reserva turística muestran entre U$S 15 y
-//   100+/noche según la ciudad, pero esos precios apuntan a turistas, no a un hospedaje sencillo
-//   para un viaje de trabajo. Es el número con menos certeza de los tres.
+//   (almuerzo y cena) — es por persona, se multiplica por la cantidad de gente del viaje.
+// - Estadía: ₲140.000 por noche — una habitación de dos camas separadas para las 2 personas del
+//   viaje (no por persona), en base a precios de referencia de ₲100.000-150.000 el cuarto doble.
+//   Es el número con menos certeza de los tres.
 const COSTO_KM_SUGERIDO_GS = 700;
 const COSTO_COMIDA_DIA_SUGERIDO_GS = 60000;
-const COSTO_NOCHE_SUGERIDO_GS = 100000;
+const COSTO_NOCHE_SUGERIDO_GS = 140000;
+const PERSONAS_VIAJE_SUGERIDO = 2;
 
 // "El número final... lo redondees a 0 o 5, siempre para arriba" — para que quede presentable.
 function redondearArriba5(n) {
@@ -11362,6 +11364,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const [costoKm, setCostoKm] = useState(String(COSTO_KM_SUGERIDO_GS));
   const [costoNoche, setCostoNoche] = useState(String(COSTO_NOCHE_SUGERIDO_GS));
   const [costoComidaDia, setCostoComidaDia] = useState(String(COSTO_COMIDA_DIA_SUGERIDO_GS));
+  const [personas, setPersonas] = useState(PERSONAS_VIAJE_SUGERIDO);
 
   // Compartido entre los dos modos.
   const [multiplicador, setMultiplicador] = useState(1.15);
@@ -11422,9 +11425,11 @@ function SugeridorServicioTecnico({ onAgregar }) {
   const kmIdaYVuelta = kmUnaVia * 2;
   const combustibleGs = numViajes * kmIdaYVuelta * (Number(costoKm) || 0);
   // Noches = días de instalación (duermen la noche anterior a cada día de obra, para amanecer ya
-  // en la ciudad) — no un número aparte a cargar a mano.
+  // en la ciudad) — no un número aparte a cargar a mano. La estadía es por habitación (dos camas
+  // separadas para las 2 personas del viaje), no se multiplica por persona — la comida sí, porque
+  // cada uno come lo suyo.
   const estadiaGs = totalDiasInstalacion * (Number(costoNoche) || 0);
-  const comidasGs = totalDiasInstalacion * (Number(costoComidaDia) || 0);
+  const comidasGs = totalDiasInstalacion * (Number(costoComidaDia) || 0) * (Number(personas) || 1);
   const viaticosGs = combustibleGs + estadiaGs + comidasGs;
   const viaticosUsd = viaticosGs > 0 && tc > 0 ? viaticosGs / tc : null;
   const totalInstalacionUsd = tc > 0 ? totalInstalacionGs / tc : null;
@@ -11449,7 +11454,7 @@ function SugeridorServicioTecnico({ onAgregar }) {
           numViajes > 1 ? `repartidos en ${numViajes} viajes de hasta 5 días laborales cada uno` : null,
           `combustible: ${kmIdaYVuelta} km ida y vuelta × ${numViajes} viaje(s) × ₲${(Number(costoKm) || 0).toLocaleString("es-PY")}/km = ₲${combustibleGs.toLocaleString("es-PY")}`,
           `estadía: ${totalDiasInstalacion} noche(s) × ₲${(Number(costoNoche) || 0).toLocaleString("es-PY")} = ₲${estadiaGs.toLocaleString("es-PY")}`,
-          `comidas: ${totalDiasInstalacion} día(s) × ₲${(Number(costoComidaDia) || 0).toLocaleString("es-PY")} = ₲${comidasGs.toLocaleString("es-PY")}`,
+          `comidas: ${totalDiasInstalacion} día(s) × ${personas} persona(s) × ₲${(Number(costoComidaDia) || 0).toLocaleString("es-PY")} = ₲${comidasGs.toLocaleString("es-PY")}`,
         ].filter(Boolean).join(" · "),
       });
     }
@@ -11611,15 +11616,18 @@ function SugeridorServicioTecnico({ onAgregar }) {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap mb-2">
+            <div style={{ width: 110 }}>
+              <Field label="Personas"><TextInput type="number" min="1" value={personas} onChange={(e) => setPersonas(e.target.value)} /></Field>
+            </div>
             <div style={{ width: 160 }}>
               <Field label="Costo estadía/noche (₲)"><TextInput type="number" value={costoNoche} onChange={(e) => setCostoNoche(e.target.value)} /></Field>
             </div>
             <div style={{ width: 160 }}>
-              <Field label="Costo comida/día (₲, almuerzo+cena)"><TextInput type="number" value={costoComidaDia} onChange={(e) => setCostoComidaDia(e.target.value)} /></Field>
+              <Field label="Costo comida/día por persona (₲)"><TextInput type="number" value={costoComidaDia} onChange={(e) => setCostoComidaDia(e.target.value)} /></Field>
             </div>
           </div>
           <p className="text-[11px] mb-2" style={{ color: MUTED }}>
-            Noches = días de instalación (duermen la noche anterior a cada día de obra). Costo por km, estadía y comida vienen con un sugerido propio — el de estadía es el que menos certeza tiene de los tres — ajustalos con el precio real del lugar.
+            Noches = días de instalación (duermen la noche anterior a cada día de obra). Viaje estándar de 2 personas: la estadía es por habitación (dos camas separadas, no se multiplica por persona) y la comida sí se multiplica por la cantidad de gente. Costo por km, estadía y comida vienen con un sugerido propio — el de estadía es el que menos certeza tiene de los tres — ajustalos con el precio real del lugar.
           </p>
           {viaticosGs > 0 && (
             <p className="text-xs mb-2" style={{ color: ACCENT }}>

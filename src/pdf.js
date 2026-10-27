@@ -411,17 +411,6 @@ export async function generateCotizacionPdf(cotizacion, productos = []) {
     y -= 16;
   }
 
-  // Comentarios
-  if (cotizacion.comentarios) {
-    const cLines = wrapText(font, cotizacion.comentarios, 7, CONTENT_W - 90);
-    const h = Math.max(cLines.length * 9 + 6, 16);
-    rect(MARGIN, y - h, 80, h, { border: BORDER });
-    text("Comentarios", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
-    rect(MARGIN + 80, y - h, CONTENT_W - 80, h, { border: BORDER });
-    cLines.forEach((line, i) => text(line, MARGIN + 84, y - 11 - i * 9, { size: 7 }));
-    y -= h;
-  }
-
   y -= 6;
 
   // Instalaciones — opcional: solo si se marcó "Incluir instalación". Misma
@@ -466,6 +455,19 @@ export async function generateCotizacionPdf(cotizacion, productos = []) {
   text("Fecha entrega estimada:", MARGIN + 4, y - 13, { bold: true, size: 8 });
   entregaLines.forEach((line, i) => text(line, MARGIN + 130, y - 13 - i * 10, { size: 8 }));
   y -= entregaH + 10;
+
+  // Comentarios — va acá, junto con forma de pago y OBS, no entre los costos de productos e
+  // instalación (eran números/totales en secuencia; un comentario de texto suelto ahí cortaba
+  // esa lectura).
+  if (cotizacion.comentarios) {
+    const cLines = wrapText(font, cotizacion.comentarios, 7, CONTENT_W - 90);
+    const h = Math.max(cLines.length * 9 + 6, 16);
+    rect(MARGIN, y - h, 80, h, { border: BORDER });
+    text("Comentarios", MARGIN + 4, y - 11, { bold: true, size: 7.5 });
+    rect(MARGIN + 80, y - h, CONTENT_W - 80, h, { border: BORDER });
+    cLines.forEach((line, i) => text(line, MARGIN + 84, y - 11 - i * 9, { size: 7 }));
+    y -= h + 10;
+  }
 
   // Legal terms
   ensureSpace(70);

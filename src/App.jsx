@@ -1267,22 +1267,42 @@ const ESTADOS_RESUMEN = ["Pendiente", "Ganada", "Perdida"];
 const ESTADO_COTIZACION_BADGE = {
   Pendiente: { color: "#B45309", bg: "#FDF1E0" },
   Ganada: { color: "#15803D", bg: "#E9F7EF" },
+  Cobrada: { color: "#1D4ED8", bg: "#E8EEFB" },
   Perdida: { color: "#B91C1C", bg: "#FBEAEA" },
   "Sin efecto": { color: "#686D73", bg: "#F2F3F4" },
 };
+// Una Ganada pasa a "Cobrada" cuando ya se cobró lo que le corresponde, según la cuenta de su obra
+// (ver calcularCuentaObra, que ya suma pagos de la ficha de obra + Ventas comprometidas). "Cobrada"
+// no es un valor de estado propio — c.estado sigue siendo "Ganada" en la base — es una clasificación
+// derivada solo para mostrar, para no mezclar "ya está definida" (estado) con "ya entró la plata".
+// Si la obra tiene un solo rubro Ganado, alcanza con mirar el cobrado de la obra entera: es lo mismo
+// que el cobrado de esa cotización. Si tiene varios rubros, los pagos no vienen separados por
+// rubro — ahí no se puede inferir sola, así que depende de que el usuario la marque a mano
+// (c.cobradaManual, ver botón "Marcar como cobrada" en CotizacionCard y necesitaCobradaManual).
+function cotizacionEsCobrada(c, cuenta) {
+  if (!c || c.estado !== "Ganada" || !cuenta || !(cuenta.contrato > 0)) return false;
+  if (cuenta.ganadas.length === 1) return cuenta.restanteCobro <= 0;
+  return !!c.cobradaManual;
+}
+function necesitaCobradaManual(cuenta) {
+  return !!cuenta && cuenta.ganadas.length > 1;
+}
 // Una cotización por obra y por rubro (la principal, ver clasificarHilosDeRubro), en su versión
 // activa, más las que el usuario marcó explícitamente "se suma a la principal".
 function cotizacionesQueCuentan(clientes) {
   return clientes.flatMap((g) => g.obras.flatMap((o) => [...o.principales, ...(o.sumandose || [])].map((h) => h.activa)));
 }
-// Resume Total cotizado / Ganadas / Perdidas / Pendientes contando una sola cotización por obra y
-// rubro (la principal), dentro de la lista de grupos de cliente que se le pase.
-function resumirCotizaciones(clientes) {
+// Resume Total cotizado / Ganadas / Cobradas / Perdidas / Pendientes contando una sola cotización
+// por obra y rubro (la principal), dentro de la lista de grupos de cliente que se le pase.
+// `cuentaPorCotizacionId` es opcional: sin él, una Cobrada sigue contando como Ganada (compatible
+// con las pantallas que todavía no separan esa distinción).
+function resumirCotizaciones(clientes, cuentaPorCotizacionId) {
   const activas = cotizacionesQueCuentan(clientes);
-  const resumen = { total: 0, Ganada: { n: 0, total: 0 }, Perdida: { n: 0, total: 0 }, Pendiente: { n: 0, total: 0 } };
+  const resumen = { total: 0, Ganada: { n: 0, total: 0 }, Cobrada: { n: 0, total: 0 }, Perdida: { n: 0, total: 0 }, Pendiente: { n: 0, total: 0 } };
   for (const c of activas) {
     const monto = calcularTotalCotizacion(c);
-    const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+    let estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+    if (estado === "Ganada" && cuentaPorCotizacionId && cotizacionEsCobrada(c, cuentaPorCotizacionId.get(c.id))) estado = "Cobrada";
     resumen.total += monto;
     resumen[estado].n += 1;
     resumen[estado].total += monto;
@@ -3045,6 +3065,16 @@ export default function App() {
     [empresasObras, fichasObras, facturasObra, comprometidas, productos, equipos, gruposEmpresas]
   );
   const listaObrasCuenta = useMemo(() => listaCuentasObras(empresasObras, cuentasObras), [empresasObras, cuentasObras]);
+  // Para poder preguntar "¿esta cotización puntual ya está cobrada?" sin tener que resolver de
+  // nuevo a qué empresa/obra pertenece — cada cuenta de obra ya trae sus propias Ganadas (.ganadas),
+  // así que solo hace falta invertir ese mapeo una vez. Ver cotizacionEsCobrada.
+  const cuentaPorCotizacionId = useMemo(() => {
+    const mapa = new Map();
+    for (const cuenta of cuentasObras.values()) {
+      for (const g of cuenta.ganadas) mapa.set(g.id, cuenta);
+    }
+    return mapa;
+  }, [cuentasObras]);
 
   // Ficha de obra (contrato y pagos): un documento por cliente+obra, con merge para ir sumando campos.
   // Los errores se propagan para poder avisar si falta la regla de Firestore.
@@ -4468,6 +4498,7 @@ export default function App() {
         {tab === "cotizaciones" && (
           <CotizacionesView
             cotizaciones={filteredCotizaciones} productos={productos} matrizCostos={matrizCostosEfectiva} query={query} onQuery={setQuery}
+            cuentaPorCotizacionId={cuentaPorCotizacionId}
             onNew={() => { setCotizacionEditando(null); setDrawer("cotizacion"); }}
             onDelete={deleteCotizacion}
             onUpdate={updateCotizacion}
@@ -13696,15 +13727,23 @@ function listarCotizacionesQueCuentan(grupos) {
 
 // Cada recuadro del resumen se puede tocar: despliega debajo qué cotizaciones lo componen, y tocar una
 // abre su detalle completo.
-function ResumenCotizaciones({ resumen, grupos, productos }) {
+const ESTADOS_RESUMEN_COTIZACIONES = ["Pendiente", "Ganada", "Cobrada", "Perdida"];
+function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId }) {
   const [sel, setSel] = useState(null); // "Total" | estado
   const [detalle, setDetalle] = useState(null);
+  // Mismo criterio que resumirCotizaciones: Ganada + cobro completo (según la cuenta de su obra) se
+  // muestra como Cobrada, aunque el estado guardado siga siendo "Ganada".
+  const estadoVisual = (c) => {
+    const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+    if (estado === "Ganada" && cuentaPorCotizacionId && cotizacionEsCobrada(c, cuentaPorCotizacionId.get(c.id))) return "Cobrada";
+    return estado;
+  };
   const lista = useMemo(() => {
     if (!sel) return [];
     return listarCotizacionesQueCuentan(grupos)
-      .filter((f) => sel === "Total" || (ESTADOS_COTIZACION.includes(f.c.estado) ? f.c.estado : "Pendiente") === sel)
+      .filter((f) => sel === "Total" || estadoVisual(f.c) === sel)
       .sort((a, b) => calcularTotalCotizacion(b.c) - calcularTotalCotizacion(a.c));
-  }, [sel, grupos]);
+  }, [sel, grupos, cuentaPorCotizacionId]);
   const tile = (key, label, n, total, color, bg) => {
     const activo = sel === key;
     return (
@@ -13720,9 +13759,9 @@ function ResumenCotizaciones({ resumen, grupos, productos }) {
   };
   return (
     <div className="mb-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {tile("Total", "Total cotizado", null, resumen.total, ACCENT, ACCENT_LIGHT)}
-        {ESTADOS_RESUMEN.map((estado) => tile(estado, estado, resumen[estado].n, resumen[estado].total, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg))}
+        {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => tile(estado, estado, resumen[estado].n, resumen[estado].total, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg))}
       </div>
       {sel && (
         <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -13734,7 +13773,7 @@ function ResumenCotizaciones({ resumen, grupos, productos }) {
           ) : (
             <div className="space-y-1">
               {lista.map((f) => {
-                const est = ESTADOS_COTIZACION.includes(f.c.estado) ? f.c.estado : "Pendiente";
+                const est = estadoVisual(f.c);
                 return (
                   <button
                     key={f.c.id} type="button" onClick={() => setDetalle(f.c)}
@@ -13982,7 +14021,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, historialCount, expandidoHistorial, onToggleHistorial }) {
+function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
   // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
@@ -13992,6 +14031,11 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
   const estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
   const estadoSalida = estadoSalidaCotizacion(c);
   const badgeSalida = estadoSalida ? SALIDA_COTIZACION_BADGE[estadoSalida] : null;
+  // Cobrada es una lectura, no el estado guardado — sigue siendo "Ganada" en la base (ver
+  // cotizacionEsCobrada). Con un solo rubro Ganado en la obra se sabe sola del cobro de la obra;
+  // con varios, no hay forma de saber cuál se cobró, así que ahí se marca a mano.
+  const cobrada = estado === "Ganada" && cotizacionEsCobrada(c, cuenta);
+  const requiereCobradaManual = estado === "Ganada" && necesitaCobradaManual(cuenta);
   const [verRentabilidad, setVerRentabilidad] = useState(false);
   const [verDetalle, setVerDetalle] = useState(false);
   const [dialogoEstado, setDialogoEstado] = useState(null); // estado elegido que espera su motivo
@@ -14020,6 +14064,11 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
       </div>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         <p className="text-sm" style={{ color: INK }}>{(c.lineas || []).length} producto(s) · U$S {total.toLocaleString("es-PY")}</p>
+        {cobrada && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: ESTADO_COTIZACION_BADGE.Cobrada.bg, color: ESTADO_COTIZACION_BADGE.Cobrada.color }}>
+            Cobrada
+          </span>
+        )}
         {badgeSalida && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: badgeSalida.bg, color: badgeSalida.color }}>
             {badgeSalida.label}
@@ -14064,6 +14113,27 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
                 {ESTADOS_COTIZACION.map((op) => <option key={op} value={op}>{op}</option>)}
               </Select>
             </div>
+            {requiereCobradaManual && (
+              c.cobradaManual ? (
+                <button
+                  type="button" onClick={() => onUpdate(c.id, { cobradaManual: false })}
+                  title="Esta obra tiene varios rubros Ganados — el cobro no se puede separar por rubro solo, así que se marcó a mano"
+                  className="text-[10px] px-2 py-1 rounded-full font-medium"
+                  style={{ backgroundColor: ESTADO_COTIZACION_BADGE.Cobrada.bg, color: ESTADO_COTIZACION_BADGE.Cobrada.color }}
+                >
+                  Cobrada · desmarcar
+                </button>
+              ) : (
+                <button
+                  type="button" onClick={() => onUpdate(c.id, { cobradaManual: true })}
+                  title="Esta obra tiene varios rubros Ganados — el cobro no se puede separar por rubro solo"
+                  className="text-[10px] px-2 py-1 rounded-full border font-medium"
+                  style={{ borderColor: BORDER, color: MUTED }}
+                >
+                  Marcar como cobrada
+                </button>
+              )
+            )}
             <div className="flex-1 min-w-[140px]">
               <ComentarioEditor value={c.clienteReal} onSave={(v) => onUpdate(c.id, { clienteReal: v })} placeholder="Cliente real / inversor" />
             </div>
@@ -14182,7 +14252,7 @@ const CUENTA_OBRA_BADGE = {
   suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
   historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
-function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId }) {
+function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, cuentaPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
@@ -14224,7 +14294,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
         onPedidoAnticipo={onPedidoAnticipo}
-        descargandoId={descargandoId}
+        descargandoId={descargandoId} cuenta={cuentaPorCotizacionId?.get(hilo.activa.id)}
       />
       {expandido && (
         <div className="mt-2 pl-3 border-l-2 space-y-2" style={{ borderColor: BORDER }}>
@@ -14246,7 +14316,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
 // Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
 // todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
 // una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
-function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido }) {
+function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido, cuentaPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
@@ -14313,7 +14383,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
                     onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
                     onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
                     onPedidoAnticipo={onPedidoAnticipo}
-                    descargandoId={descargandoId}
+                    descargandoId={descargandoId} cuentaPorCotizacionId={cuentaPorCotizacionId}
                   />
                 ))}
               </div>
@@ -14328,10 +14398,10 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
 // Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
 // el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
 // minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
-function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido }) {
+function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido, cuentaPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
-  const resumen = useMemo(() => resumirCotizaciones([grupo]), [grupo]);
+  const resumen = useMemo(() => resumirCotizaciones([grupo], cuentaPorCotizacionId), [grupo, cuentaPorCotizacionId]);
   const nObras = grupo.obras.length;
   return (
     <div className="rounded-lg overflow-hidden" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -14342,7 +14412,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
         </div>
         <div className="flex items-center gap-3 text-xs flex-wrap shrink-0">
           <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString("es-PY")}</span>
-          {ESTADOS_RESUMEN.map((estado) => (
+          {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
               {estado}: {resumen[estado].n}
             </span>
@@ -14359,7 +14429,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
               onPedidoAnticipo={onPedidoAnticipo}
-              descargandoId={descargandoId} forzarExpandido={forzarExpandido}
+              descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId}
             />
           ))}
         </div>
@@ -14368,9 +14438,9 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, pdfError }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, pdfError, cuentaPorCotizacionId }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
-  const resumen = useMemo(() => resumirCotizaciones(grupos), [grupos]);
+  const resumen = useMemo(() => resumirCotizaciones(grupos, cuentaPorCotizacionId), [grupos, cuentaPorCotizacionId]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
   // forzar todo abierto evita que un cliente/obra que matchea quede escondido, minimizado.
   const forzarExpandido = query.trim().length > 0;
@@ -14396,7 +14466,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
         <EmptyState icon={FileSignature} title="Todavía no hay cotizaciones" subtitle="Usá el botón de arriba para armar la primera." />
       ) : (
         <>
-          <ResumenCotizaciones resumen={resumen} grupos={grupos} productos={productos} />
+          <ResumenCotizaciones resumen={resumen} grupos={grupos} productos={productos} cuentaPorCotizacionId={cuentaPorCotizacionId} />
           <ResumenMotivosCotizaciones grupos={grupos} />
           <div className="space-y-3">
             {grupos.map((g) => (
@@ -14406,7 +14476,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
         onPedidoAnticipo={onPedidoAnticipo}
-        descargandoId={descargandoId} forzarExpandido={forzarExpandido}
+        descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId}
               />
             ))}
           </div>

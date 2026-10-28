@@ -9956,7 +9956,7 @@ function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
   );
 }
 
-function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizCostos, seleccionable, seleccionado, onToggleSeleccion }) {
+function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, comprometidoEquipo, matrizCostos, seleccionable, seleccionado, onToggleSeleccion }) {
   const tieneCosto = p.costoOrigen || p.costoPy;
   const costosVivos = useMemo(() => calcularCostosProducto(p, matrizCostos || MATRIZ_COSTOS_DEFAULT), [p, matrizCostos]);
   return (
@@ -10003,6 +10003,14 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, matrizC
         {p.categoriaPrincipal !== "Repuestos" && (
           <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: stockEquipo > 0 ? "#E9F7EF" : "#FBEAEA", color: stockEquipo > 0 ? "#15803D" : "#B91C1C" }}>
             Stock: {stockEquipo || 0}
+          </span>
+        )}
+        {/* Si hay Ventas comprometidas sobre este modelo, el stock de arriba no es lo que
+            realmente se puede ofrecer — se aclara acá para no tener que ir a revisarlo aparte
+            en Maestro de equipos cada vez (ver conversación: caso Delgado Arquitectos). */}
+        {p.categoriaPrincipal !== "Repuestos" && comprometidoEquipo > 0 && (
+          <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: "#FEF3E2", color: "#92400E" }} title={`${comprometidoEquipo} ya tiene Venta comprometida — no ofrecer de nuevo`}>
+            Disponible: {Math.max(0, (stockEquipo || 0) - comprometidoEquipo)}
           </span>
         )}
       </div>
@@ -10633,14 +10641,14 @@ function ListaPreciosPanel({ productos, onCerrar }) {
 
 const CATEGORIA_TITULO_CLASE = ["text-xl font-bold", "text-lg font-bold", "text-base font-bold", "text-base font-bold"];
 
-function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo, matrizCostos, seleccionable, seleccionados, onToggleSeleccion }) {
+function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorModelo, comprometidoPorModelo, matrizCostos, seleccionable, seleccionados, onToggleSeleccion }) {
   if (nodo.productos) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {nodo.productos.map((p) => (
           <ProductoCard
             key={p.id} p={p} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha}
-            stockEquipo={stockPorModelo.get(p.nombre)} matrizCostos={matrizCostos}
+            stockEquipo={stockPorModelo.get(p.nombre)} comprometidoEquipo={comprometidoPorModelo.get(p.nombre)} matrizCostos={matrizCostos}
             seleccionable={seleccionable} seleccionado={seleccionados?.has(p.id)} onToggleSeleccion={onToggleSeleccion}
           />
         ))}
@@ -10655,7 +10663,7 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorM
           <div className="mt-2">
             <CategoriaNodo
               nodo={hijo} nivel={nivel + 1} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha}
-              stockPorModelo={stockPorModelo} matrizCostos={matrizCostos}
+              stockPorModelo={stockPorModelo} comprometidoPorModelo={comprometidoPorModelo} matrizCostos={matrizCostos}
               seleccionable={seleccionable} seleccionados={seleccionados} onToggleSeleccion={onToggleSeleccion}
             />
           </div>
@@ -10756,6 +10764,19 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
     for (const e of equipos) {
       if (e.estado === "Vendido" || e.estado === "Dado de baja") continue;
       mapa.set(e.modelo, (mapa.get(e.modelo) || 0) + (Number(e.cantidad) || 1));
+    }
+    return mapa;
+  }, [equipos]);
+
+  // De ese stock, cuánto ya tiene una Venta comprometida encima (reservado para un cliente/obra
+  // puntual, aunque siga físicamente en depósito) — para poder mostrar "disponible" de verdad al
+  // lado del stock total, sin que el usuario tenga que ir a revisarlo aparte en Maestro de equipos.
+  const comprometidoPorModelo = useMemo(() => {
+    const mapa = new Map();
+    for (const e of equipos) {
+      if (e.estado === "Vendido" || e.estado === "Dado de baja") continue;
+      const comp = Number(e.comprometido) || 0;
+      if (comp > 0) mapa.set(e.modelo, (mapa.get(e.modelo) || 0) + comp);
     }
     return mapa;
   }, [equipos]);
@@ -10900,7 +10921,7 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
       ) : (
         <CategoriaNodo
           nodo={arbol} nivel={0} onEdit={onEdit} onDelete={onDelete} onQuitarFicha={onQuitarFicha}
-          stockPorModelo={stockPorModelo} matrizCostos={matrizCostos}
+          stockPorModelo={stockPorModelo} comprometidoPorModelo={comprometidoPorModelo} matrizCostos={matrizCostos}
           seleccionable={modoCompartir} seleccionados={seleccionados} onToggleSeleccion={toggleSeleccion}
         />
       )}

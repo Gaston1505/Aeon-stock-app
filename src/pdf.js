@@ -521,9 +521,29 @@ export function fmtFecha(iso) {
   return `${d}/${m}/${y}`;
 }
 
+// Nombre de archivo a prueba de WhatsApp/Android: sin tildes ni eñes, porque viajan rotos (ej.
+// "Electrodomésticos" llegaba como "ElectrodomÃ©sticos") en algunos de los pasos que atraviesa un
+// nombre de archivo compartido por Web Share — normaliza a la letra base (é→e, ñ→n) en vez de
+// simplemente borrar el caracter, para que siga siendo legible.
+const RANGO_MARCAS_COMBINANTES = new RegExp("[" + String.fromCharCode(0x0300) + "-" + String.fromCharCode(0x036f) + "]", "g");
+export function limpiarNombreArchivo(s) {
+  return (s || "")
+    .toString()
+    .normalize("NFD").replace(RANGO_MARCAS_COMBINANTES, "")
+    .trim().replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+}
+// Orden pedido: Fecha, Empresa, Obra, Categoría — así, de paso, los archivos quedan ordenados
+// cronológicamente si se listan por nombre, no por empresa.
 export function nombreArchivoCotizacion(cotizacion) {
-  const categoria = (cotizacion.categoria || "").trim().replace(/\s+/g, "_");
-  return `Cotizacion_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}_${cotizacion.fecha || ""}${categoria ? `_${categoria}` : ""}.pdf`;
+  const partes = [
+    "Cotizacion",
+    cotizacion.fecha || "",
+    limpiarNombreArchivo(cotizacion.cliente) || "cliente",
+    limpiarNombreArchivo(cotizacion.obra),
+    limpiarNombreArchivo(cotizacion.categoria),
+  ].filter(Boolean);
+  return `${partes.join("_")}.pdf`;
 }
 
 export async function downloadCotizacionPdf(cotizacion, productos = []) {
@@ -567,7 +587,14 @@ export async function generateFichasTecnicasPdf(cotizacion) {
 }
 
 export function nombreArchivoFichasTecnicas(cotizacion) {
-  return `Fichas_tecnicas_${(cotizacion.cliente || "cliente").replace(/\s+/g, "_")}.pdf`;
+  const partes = [
+    "Fichas_tecnicas",
+    cotizacion.fecha || "",
+    limpiarNombreArchivo(cotizacion.cliente) || "cliente",
+    limpiarNombreArchivo(cotizacion.obra),
+    limpiarNombreArchivo(cotizacion.categoria),
+  ].filter(Boolean);
+  return `${partes.join("_")}.pdf`;
 }
 
 export async function downloadFichasTecnicasPdf(cotizacion) {
@@ -927,7 +954,8 @@ export async function generatePresupuestoReparacionPdf(presupuesto) {
 
 export function nombreArchivoPresupuesto(presupuesto) {
   const prefijo = presupuesto.tipo === "mantenimiento" ? "Presupuesto_Mantenimiento" : "Presupuesto_Reparacion";
-  return `${prefijo}_${(presupuesto.cliente || "cliente").replace(/\s+/g, "_")}_${presupuesto.fecha || ""}.pdf`;
+  const partes = [prefijo, presupuesto.fecha || "", limpiarNombreArchivo(presupuesto.cliente) || "cliente", limpiarNombreArchivo(presupuesto.obra)].filter(Boolean);
+  return `${partes.join("_")}.pdf`;
 }
 
 export async function downloadPresupuestoReparacionPdf(presupuesto) {
@@ -1090,7 +1118,8 @@ export async function generateGarantiaPdf(venta) {
 }
 
 export function nombreArchivoGarantia(venta) {
-  return `Garantia_${(venta.cliente || "cliente").replace(/\s+/g, "_")}_${(venta.obra || "").replace(/\s+/g, "_")}.pdf`;
+  const partes = ["Garantia", venta.fechaVenta || "", limpiarNombreArchivo(venta.cliente) || "cliente", limpiarNombreArchivo(venta.obra)].filter(Boolean);
+  return `${partes.join("_")}.pdf`;
 }
 
 export async function downloadGarantiaPdf(venta) {
@@ -1401,7 +1430,8 @@ export async function generateGarantiaCompletaPdf(venta) {
 }
 
 export function nombreArchivoGarantiaCompleta(venta) {
-  return `Certificado_Garantia_${(venta.cliente || "cliente").replace(/\s+/g, "_")}_${(venta.obra || "").replace(/\s+/g, "_")}.pdf`;
+  const partes = ["Certificado_Garantia", venta.fechaVenta || "", limpiarNombreArchivo(venta.cliente) || "cliente", limpiarNombreArchivo(venta.obra)].filter(Boolean);
+  return `${partes.join("_")}.pdf`;
 }
 
 export async function downloadGarantiaCompletaPdf(venta) {
@@ -1871,8 +1901,7 @@ export async function generateArmadoCombinacionPdf(armado) {
 }
 
 export function nombreArchivoArmadoCombinacion(armado) {
-  const safe = (s) => (s || "").toString().trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
-  return `Armado_combinaciones_${safe(armado.cliente) || "cliente"}_${safe(armado.obra) || "obra"}_${safe(armado.categoria) || armado.fecha || ""}.pdf`;
+  return `Armado_combinaciones_${limpiarNombreArchivo(armado.cliente) || "cliente"}_${limpiarNombreArchivo(armado.obra) || "obra"}_${limpiarNombreArchivo(armado.categoria) || armado.fecha || ""}.pdf`;
 }
 
 export async function downloadArmadoCombinacionPdf(armado) {
@@ -2052,8 +2081,7 @@ function hexToRgb(hex) {
 }
 
 export function nombreArchivoRentabilidad(cotizacion) {
-  const safe = (s) => (s || "").toString().trim().replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
-  return `Rentabilidad_${safe(cotizacion.cliente) || "cliente"}_${safe(cotizacion.obra) || "obra"}_${safe(cotizacion.categoria) || cotizacion.fecha || ""}.pdf`;
+  return `Rentabilidad_${limpiarNombreArchivo(cotizacion.cliente) || "cliente"}_${limpiarNombreArchivo(cotizacion.obra) || "obra"}_${limpiarNombreArchivo(cotizacion.categoria) || cotizacion.fecha || ""}.pdf`;
 }
 
 export async function downloadRentabilidadPdf(cotizacion, r) {

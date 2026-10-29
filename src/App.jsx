@@ -3113,14 +3113,21 @@ export default function App() {
         (m) => Number(m.cantidad) || 1,
         () => ""
       );
-      const cobradoMovimientos = gruposRemitoCot.reduce((acc, g) => acc + (g.items[0]?.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
+      // Mismos dos caminos que calcularCuentaObra: pagos puntuales de Ventas cerradas, o el check
+      // "Pagado" del Pedido de facturación (sin monto propio — se completa hasta el del remito).
+      const cobradoMovimientos = gruposRemitoCot.reduce((acc, g) => {
+        const pagosPropios = (g.items[0]?.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0);
+        const montoRemito = g.items.reduce((a, m) => a + (Number(m.monto) || 0), 0);
+        const pedido = pedidosFacturacion.find((p) => p.remitoKey === g.key);
+        return acc + (pedido?.pagado ? Math.max(pagosPropios, montoRemito) : pagosPropios);
+      }, 0);
       const cobradoComprometidas = comprometidas
         .filter((x) => x.cotizacionId === c.id)
         .reduce((acc, x) => acc + (x.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
       mapa.set(c.id, { entregado, cobrado: cobradoComprometidas + cobradoMovimientos });
     }
     return mapa;
-  }, [cotizaciones, movimientos, comprometidas]);
+  }, [cotizaciones, movimientos, comprometidas, pedidosFacturacion]);
 
   // Ficha de obra (contrato y pagos): un documento por cliente+obra, con merge para ir sumando campos.
   // Los errores se propagan para poder avisar si falta la regla de Firestore.
@@ -15638,13 +15645,29 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   const pagosComprometidas = comprometidas.flatMap((c) => (c.pagos || []).map((p) => ({
     fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago", nota: p.formaPago ? `${p.formaPago} · registrado en Ventas comprometidas` : "Registrado en Ventas comprometidas", origen: "comprometida",
   })));
-  // Venta cerrada por remito directo (no pasó por Ventas comprometidas): el pago se carga en
-  // "Ventas cerradas" y queda guardado en la primera línea del grupo del remito, no por línea
-  // (ver agregarPagoVenta) — antes esta plata no entraba acá, así que una obra podía estar
-  // completamente cobrada y facturada y seguir figurando con saldo pendiente.
-  const pagosMovimientos = gruposRemito.flatMap((g) => (g.items[0]?.pagos || []).map((p) => ({
-    fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago", nota: p.formaPago ? `${p.formaPago} · registrado en Salidas/remito` : "Registrado en Salidas/remito", origen: "movimiento",
-  })));
+  // Venta cerrada por remito directo (no pasó por Ventas comprometidas): el cobro puede estar
+  // cargado de dos formas distintas, y antes ninguna de las dos entraba acá (una obra podía estar
+  // completamente facturada y pagada y seguir figurando con saldo pendiente):
+  // 1) Pagos puntuales de "Ventas cerradas", guardados en la primera línea del grupo del remito,
+  //    no por línea (ver agregarPagoVenta).
+  // 2) El check "Pagado" del Pedido de facturación (pedidosFacturacion) — un sí/no de
+  //    Administración sin monto propio; si está tildado, se completa hasta el monto del remito
+  //    (salvo que los pagos puntuales ya lo cubran, para no contarlo dos veces).
+  const pagosMovimientos = gruposRemito.flatMap((g) => {
+    const pagosPropios = (g.items[0]?.pagos || []).map((p) => ({
+      fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago",
+      nota: p.formaPago ? `${p.formaPago} · registrado en Salidas/remito` : "Registrado en Salidas/remito", origen: "movimiento",
+    }));
+    const pedido = pedidos.find((p) => p.remitoKey === g.key);
+    if (!pedido?.pagado) return pagosPropios;
+    const sumaPropia = pagosPropios.reduce((a, p) => a + p.monto, 0);
+    const montoRemito = Math.round(g.items.reduce((a, m) => a + (montoPorMovimiento.get(m.id) || 0), 0) * 100) / 100;
+    if (sumaPropia >= montoRemito) return pagosPropios;
+    return [...pagosPropios, {
+      fecha: g.items[0]?.fecha, monto: montoRemito - sumaPropia, tipo: "Pago",
+      nota: "Marcado como pagado en el Pedido de facturación", origen: "pedido",
+    }];
+  });
   const pagos = [...pagosFicha, ...pagosComprometidas, ...pagosMovimientos].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   const cobrado = pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0);
   const facturado = facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0);

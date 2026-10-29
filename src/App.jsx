@@ -13708,6 +13708,35 @@ function CotizacionDetalle({ c, productos }) {
         )}
         <p className="text-sm" style={{ color: ACCENT }}>Total: <b>U$S {d.total.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</b></p>
       </div>
+      {(() => {
+        // Cerrado / Entregado / Falta por entregar — en mercadería (unidades) y en plata, para
+        // cualquier cotización sea cual sea su estado (Pendiente, Ganada, Perdida, etc.): "cerrado"
+        // es lo pactado acá, "entregado" sale de lo ya retirado (c.lineasRetiradas, el mismo dato
+        // que ya muestra la columna Retirado de arriba), y lo que falta es la diferencia. El
+        // descuento se prorratea igual que en calcularCuentaObra, para que Cerrado = Entregado +
+        // Falta cierre exacto (la instalación, al no tener unidades propias, queda del lado de
+        // "falta" hasta que el resto de la cotización esté del todo entregada).
+        const cantidadCerrada = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0), 0);
+        if (cantidadCerrada === 0) return null;
+        const cantidadEntregada = lineas.reduce((acc, l) => acc + (Number(retiradas[l.codigo]) || 0), 0);
+        const cantidadFalta = Math.max(0, cantidadCerrada - cantidadEntregada);
+        const factorDescuento = d.subtotal > 0 ? (d.subtotal - d.descuentoMonto) / d.subtotal : 1;
+        const montoEntregado = lineas.reduce((acc, l) => acc + (Number(retiradas[l.codigo]) || 0) * (Number(l.precioUnit) || 0) * factorDescuento, 0);
+        const montoFalta = Math.max(0, d.total - montoEntregado);
+        const col = (label, color, unidades, monto) => (
+          <div>
+            <p className="font-medium" style={{ color }}>{label}</p>
+            <p style={{ color: INK }}>{unidades} u. · U$S {monto.toLocaleString("es-PY", { maximumFractionDigits: 2 })}</p>
+          </div>
+        );
+        return (
+          <div className="mt-2 pt-2 grid grid-cols-3 gap-2 text-xs text-left" style={{ borderTop: `0.5px solid ${BORDER}` }}>
+            {col("Cerrado", MUTED, cantidadCerrada, d.total)}
+            {col("Entregado", "#15803D", cantidadEntregada, montoEntregado)}
+            {col("Falta entregar", cantidadFalta > 0 ? "#B45309" : MUTED, cantidadFalta, montoFalta)}
+          </div>
+        );
+      })()}
       {(c.serviciosAdicionales || []).length > 0 && (
         <div className="mt-2 pt-2 space-y-1" style={{ borderTop: `0.5px solid ${BORDER}` }}>
           <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Info interna — no aparece en el PDF</p>

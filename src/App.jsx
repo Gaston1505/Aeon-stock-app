@@ -2701,6 +2701,21 @@ export default function App() {
     const dataUrl = await compressImage(file);
     updateMovimiento(grupo.items[0].id, { fotoRemito: dataUrl });
   };
+  // Acta de conformidad: comprobante firmado por el cliente de que recibió la mercadería conforme.
+  // Mismo lugar de guardado que la foto de remito (primera línea del grupo) y acepta foto o PDF
+  // escaneado, igual que la factura — no todo remito tiene cotización/venta asociada, así que no
+  // puede vivir en el doc de ventas como la factura.
+  const subirActaConformidad = async (grupo, file) => {
+    if (!file) return { comprimido: false };
+    if (file.type.startsWith("image/")) {
+      const dataUrl = await compressImage(file);
+      updateMovimiento(grupo.items[0].id, { actaConformidad: dataUrl });
+      return { comprimido: false };
+    }
+    const { dataUrl, comprimido } = await prepararPdfParaFirestore(file);
+    updateMovimiento(grupo.items[0].id, { actaConformidad: dataUrl });
+    return { comprimido };
+  };
 
   // Genera una o más salidas (una por cada lote de equipo usado) a partir de una cotización
   // Ganada. `lineas` viene de SalidaDesdeCotizacionForm ya resuelto contra stock disponible:
@@ -4445,6 +4460,7 @@ export default function App() {
               cotizaciones={cotizaciones} gruposEmpresas={gruposEmpresas} esAdmin={esAdmin}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
               onSubirFoto={subirFotoRemito}
+              onSubirActa={subirActaConformidad}
               onAdjuntarFactura={(ventaId, file) => actualizarAdjuntoVenta(ventaId, file, "facturaData", "facturaNombre")}
               onPedido={esAdmin ? ((g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }) : undefined}
               onGuardarPedido={esAdmin ? guardarPedidoFacturacion : undefined}
@@ -5075,27 +5091,59 @@ function CodigoComercialCell({ registro, equipos, productos }) {
   );
 }
 
-function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, onSubirFoto, factura, onSubirFactura, acciones, children }) {
-  const inputRef = useRef(null);
-  const inputFacturaRef = useRef(null);
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // permite volver a elegir el mismo archivo si hace falta reemplazar
-    if (file && onSubirFoto) onSubirFoto(file);
-  };
-  const handleFactura = async (e) => {
+// Una fila por tipo de documento (Remito / Factura / Acta de conformidad), cada una con sus
+// propias acciones (sacar foto o subir, cambiar, compartir) — antes todos los íconos de los tres
+// documentos se amontonaban sueltos en el encabezado y era imposible saber cuál era cuál.
+function DocumentoRenglon({ icon: Icon, label, valor, onVer, onCompartir, onSubir, soloImagen = true, accept }) {
+  const camRef = useRef(null);
+  const galRef = useRef(null);
+  const handleFile = (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (file && onSubirFactura) onSubirFactura(file);
+    if (file && onSubir) onSubir(file);
   };
-  // Un <a> real anidado adentro del <button> de arriba (como estaba) queda atrapado por ese botón
-  // en varios navegadores y nunca llega a abrir, y además navegar una pestaña nueva directo a una
-  // URL data: queda bloqueado por Chrome/Edge ("not allowed to navigate top frame to data URL") —
-  // abrirAdjunto resuelve ambas cosas (arma un blob: y lo abre con click programático).
-  const verFactura = (e) => {
-    e.stopPropagation();
-    abrirAdjunto({ data: factura, nombre: "Factura" });
-  };
+  if (!onSubir && !valor) return null;
+  return (
+    <div className="flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg flex-wrap" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+        <Icon size={14} style={{ color: valor ? ACCENT : MUTED }} />
+        <span className="text-xs font-semibold" style={{ color: INK }}>{label}</span>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {valor && onVer && (
+          <button type="button" onClick={() => onVer(valor)} className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium" style={{ borderColor: BORDER, color: ACCENT }}>
+            <Eye size={12} /> Ver
+          </button>
+        )}
+        {valor && onCompartir && (
+          <button type="button" onClick={() => onCompartir(valor)} className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium" style={{ borderColor: BORDER, color: ACCENT }}>
+            <Share2 size={12} /> Compartir
+          </button>
+        )}
+        {onSubir && valor && (
+          <button type="button" onClick={() => galRef.current?.click()} className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium" style={{ borderColor: BORDER, color: MUTED }}>
+            <Pencil size={12} /> Cambiar
+          </button>
+        )}
+        {onSubir && !valor && (
+          <>
+            <button type="button" onClick={() => camRef.current?.click()} className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium" style={{ borderColor: BORDER, color: ACCENT }}>
+              <Camera size={12} /> Sacar foto
+            </button>
+            <button type="button" onClick={() => galRef.current?.click()} className="text-[11px] px-2 py-1 rounded border flex items-center gap-1 font-medium" style={{ borderColor: BORDER, color: ACCENT }}>
+              <Upload size={12} /> {soloImagen ? "Subir foto" : "Subir archivo"}
+            </button>
+          </>
+        )}
+      </div>
+      {onSubir && <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />}
+      {onSubir && <input ref={galRef} type="file" accept={accept || (soloImagen ? "image/*" : "application/pdf,image/*")} className="hidden" onChange={handleFile} />}
+    </div>
+  );
+}
+
+function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVerFoto, onSubirFoto, factura, onSubirFactura, acta, onSubirActa, acciones, children }) {
+  const hayDocumentos = !!(foto || onSubirFoto || factura || onSubirFactura || acta || onSubirActa);
   return (
     <div className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <button onClick={onToggle} className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 p-4 text-left">
@@ -5106,50 +5154,36 @@ function RemitoGrupoCard({ titulo, linea, resumen, abierto, onToggle, foto, onVe
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:shrink-0">
           {acciones}
-          {foto && (
-            <span role="button" title="Ver foto del remito" onClick={(e) => { e.stopPropagation(); onVerFoto(foto); }}>
-              <Camera size={16} style={{ color: ACCENT }} />
-            </span>
-          )}
-          {foto && (
-            <span role="button" title="Compartir remito" onClick={(e) => { e.stopPropagation(); compartirAdjunto(foto, "Remito", "Remito"); }}>
-              <Share2 size={16} style={{ color: ACCENT }} />
-            </span>
-          )}
-          {onSubirFoto && (
-            <span
-              role="button" title={foto ? "Cambiar foto del remito" : "Subir foto del remito"}
-              onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
-            >
-              <Upload size={16} style={{ color: foto ? MUTED : ACCENT }} />
-            </span>
-          )}
-          {factura && (
-            <span role="button" title="Ver factura" onClick={verFactura}>
-              <FileText size={16} style={{ color: ACCENT }} />
-            </span>
-          )}
-          {factura && (
-            <span role="button" title="Compartir factura" onClick={(e) => { e.stopPropagation(); compartirAdjunto(factura, "Factura", "Factura"); }}>
-              <Share2 size={16} style={{ color: ACCENT }} />
-            </span>
-          )}
-          {onSubirFactura && (
-            <span
-              role="button" title={factura ? "Cambiar factura" : "Adjuntar factura"}
-              onClick={(e) => { e.stopPropagation(); inputFacturaRef.current?.click(); }}
-            >
-              <FileSignature size={16} style={{ color: factura ? MUTED : ACCENT }} />
-            </span>
-          )}
           <ChevronDown size={18} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
         </div>
       </button>
-      {/* Fuera del <button> de arriba a propósito: un <input type="file"> real no puede ir anidado
-          dentro de otro control interactivo sin volverse quisquilloso en algunos navegadores. */}
-      {onSubirFoto && <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />}
-      {onSubirFactura && <input ref={inputFacturaRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleFactura} />}
-      {abierto && <div className="px-4 pb-4">{children}</div>}
+      {abierto && (
+        <div className="px-4 pb-4">
+          {hayDocumentos && (
+            <div className="space-y-1.5 mb-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Documentos</p>
+              <DocumentoRenglon
+                icon={Camera} label="Remito" valor={foto}
+                onVer={onVerFoto} onCompartir={(v) => compartirAdjunto(v, "Remito", "Remito")}
+                onSubir={onSubirFoto} soloImagen
+              />
+              <DocumentoRenglon
+                icon={FileText} label="Factura" valor={factura}
+                onVer={(v) => abrirAdjunto({ data: v, nombre: "Factura" })}
+                onCompartir={(v) => compartirAdjunto(v, "Factura", "Factura")}
+                onSubir={onSubirFactura} soloImagen={false}
+              />
+              <DocumentoRenglon
+                icon={ClipboardList} label="Acta de conformidad" valor={acta}
+                onVer={(v) => abrirAdjunto({ data: v, nombre: "Acta de conformidad" })}
+                onCompartir={(v) => compartirAdjunto(v, "Acta de conformidad", "Acta de conformidad")}
+                onSubir={onSubirActa} soloImagen={false}
+              />
+            </div>
+          )}
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -5251,7 +5285,7 @@ function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
   );
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onSubirActa, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const [avisoFactura, setAvisoFactura] = useState("");
   const [historialAbierto, setHistorialAbierto] = useState(false);
@@ -5286,6 +5320,7 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
         const motivos = [...new Set(g.items.map((m) => m.motivo).filter(Boolean))].join(", ");
         const destino = [m0.cliente || m0.empresaCliente, m0.obra].filter(Boolean).join(" — ");
         const foto = g.items.find((m) => m.fotoRemito)?.fotoRemito;
+        const acta = g.items.find((m) => m.actaConformidad)?.actaConformidad;
         const pedido = (pedidos || []).find((p) => p.remitoKey === g.key);
         // La factura vive en la ficha de venta (Garantías), no acá — se busca por cotizacionId
         // para poder verla/cargarla desde Salidas también, sin duplicar el archivo guardado.
@@ -5328,6 +5363,11 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
             onSubirFactura={venta && onAdjuntarFactura && (async (file) => {
               const { comprimido } = await onAdjuntarFactura(venta.id, file);
               setAvisoFactura(comprimido ? "La factura pesaba más de 650 KB — se comprimió para poder guardarla." : "");
+            })}
+            acta={acta}
+            onSubirActa={onSubirActa && (async (file) => {
+              const { comprimido } = await onSubirActa(g, file);
+              setAvisoFactura(comprimido ? "El acta de conformidad pesaba más de 650 KB — se comprimió para poder guardarla." : "");
             })}
             acciones={<>{accionPedido}{badgesVenta}</>}
           >

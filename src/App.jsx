@@ -4458,6 +4458,7 @@ export default function App() {
             <SalidasPorRemito
               movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion} ventas={ventas}
               cotizaciones={cotizaciones} gruposEmpresas={gruposEmpresas} esAdmin={esAdmin}
+              facturasObra={facturasObra} onGuardarFactura={guardarFacturaObra}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
               onSubirFoto={subirFotoRemito}
               onSubirActa={subirActaConformidad}
@@ -5216,8 +5217,10 @@ function resumenRemito(g, unidadSingular, unidadPlural) {
 // varios remitos juntos o llegar antes que la salida, así que "pagado por remito" es una decisión,
 // no una cuenta. Vive en el mismo doc que el Pedido de facturación (uno por remito) para no sumar
 // una colección más; si todavía no hay pedido armado, se crea uno al marcar el primer paso.
-function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
+function EstadoVentaRemito({ pedido, esAdmin, facturasDisponibles, onMarcarFactura, onAsociarFactura, onMarcarPago }) {
   const [editando, setEditando] = useState(null); // "factura" | "pago" | null
+  const [modoFactura, setModoFactura] = useState("nueva"); // "nueva" | "existente"
+  const [facturaElegida, setFacturaElegida] = useState("");
   const [numero, setNumero] = useState("");
   const [fecha, setFecha] = useState(todayISO());
   const [comentario, setComentario] = useState("");
@@ -5228,12 +5231,21 @@ function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
   const pagado = !!pedido?.pagado;
   if (!esAdmin) return null;
 
-  const abrirFactura = () => { setEditando("factura"); setNumero(pedido?.facturaNumero || ""); setFecha(pedido?.facturaFecha || todayISO()); setMsg(null); };
+  const hayFacturasDisponibles = (facturasDisponibles || []).length > 0;
+  const abrirFactura = () => {
+    setEditando("factura"); setNumero(pedido?.facturaNumero || ""); setFecha(pedido?.facturaFecha || todayISO());
+    setModoFactura("nueva"); setFacturaElegida(""); setMsg(null);
+  };
   const abrirPago = () => { setEditando("pago"); setFecha(pedido?.pagoFecha || todayISO()); setComentario(pedido?.pagoComentario || ""); setMsg(null); };
 
   const confirmarFactura = async () => {
+    if (modoFactura === "existente" && !facturaElegida) { setMsg("Elegí una factura de la lista."); return; }
     setOcupado(true);
-    try { await onMarcarFactura({ facturaNumero: numero.trim(), facturaFecha: fecha }); setEditando(null); }
+    try {
+      if (modoFactura === "existente") await onAsociarFactura(facturasDisponibles.find((f) => f.id === facturaElegida));
+      else await onMarcarFactura({ facturaNumero: numero.trim(), facturaFecha: fecha });
+      setEditando(null);
+    }
     catch (e) { setMsg(e?.message || String(e)); }
     setOcupado(false);
   };
@@ -5265,11 +5277,32 @@ function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
         {!facturada && <span className="text-[11px]" style={{ color: MUTED }}>Primero hay que marcarla facturada para poder marcarla pagada.</span>}
       </div>
       {editando === "factura" && (
-        <div className="mt-2 flex gap-2 flex-wrap items-end">
-          <Field label="N° de factura"><TextInput value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ej: 001-001-0001234" /></Field>
-          <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-          <PrimaryButton onClick={confirmarFactura} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
-          <SecondaryButton onClick={() => setEditando(null)}>Cancelar</SecondaryButton>
+        <div className="mt-2">
+          {hayFacturasDisponibles && (
+            <div className="flex items-center gap-3 text-xs mb-2" style={{ color: INK }}>
+              <label className="flex items-center gap-1"><input type="radio" checked={modoFactura === "nueva"} onChange={() => setModoFactura("nueva")} /> Factura nueva</label>
+              <label className="flex items-center gap-1"><input type="radio" checked={modoFactura === "existente"} onChange={() => setModoFactura("existente")} /> Usar una factura ya cargada de esta obra</label>
+            </div>
+          )}
+          <div className="flex gap-2 flex-wrap items-end">
+            {modoFactura === "existente" ? (
+              <Field label="Factura">
+                <Select value={facturaElegida} onChange={(e) => setFacturaElegida(e.target.value)}>
+                  <option value="">Elegí una factura...</option>
+                  {facturasDisponibles.map((f) => (
+                    <option key={f.id} value={f.id}>Factura {f.numero} · {fmtDate(f.fecha)} · {usd(f.monto)}</option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <>
+                <Field label="N° de factura"><TextInput value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ej: 001-001-0001234" /></Field>
+                <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+              </>
+            )}
+            <PrimaryButton onClick={confirmarFactura} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+            <SecondaryButton onClick={() => setEditando(null)}>Cancelar</SecondaryButton>
+          </div>
         </div>
       )}
       {editando === "pago" && (
@@ -5285,7 +5318,7 @@ function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
   );
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onSubirActa, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, facturasObra, onGuardarFactura, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onSubirActa, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const [avisoFactura, setAvisoFactura] = useState("");
   const [historialAbierto, setHistorialAbierto] = useState(false);
@@ -5325,6 +5358,12 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
         // La factura vive en la ficha de venta (Garantías), no acá — se busca por cotizacionId
         // para poder verla/cargarla desde Salidas también, sin duplicar el archivo guardado.
         const venta = m0.cotizacionId ? (ventas || []).find((v) => v.cotizacionId === m0.cotizacionId) : null;
+        // Facturas ya cargadas para esta misma empresa+obra — para poder asociar este remito a una
+        // factura vieja (contrato grande ya facturado por adelantado, entregado en varias etapas)
+        // en vez de forzar siempre un N° de factura nuevo por remito.
+        const empresaR = resolverEmpresa(m0.empresaCliente || m0.cliente, gruposEmpresas || []);
+        const obraKeyG = normClave(m0.obra) || "(sin obra)";
+        const facturasDeEstaObra = empresaR ? (facturasObra || []).filter((f) => f.empresaKey === empresaR.key && f.obraKey === obraKeyG) : [];
         const accionPedido = onPedido && (
           <span
             role="button" title="Pedido de facturación para Administración"
@@ -5374,9 +5413,17 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
             {esVenta && (
               <EstadoVentaRemito
                 pedido={pedido} esAdmin={esAdmin}
+                facturasDisponibles={facturasDeEstaObra}
                 onMarcarFactura={onGuardarPedido && ((cambios) => {
                   const base = pedido || armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones: cotizaciones || [], pedidos: pedidos || [], grupos: gruposEmpresas || [] });
                   return onGuardarPedido({ ...base, ...(pedido ? { id: pedido.id } : {}), facturaConfirmada: true, ...cambios });
+                })}
+                onAsociarFactura={onGuardarPedido && onGuardarFactura && (async (factura) => {
+                  if (!(factura.remitoKeys || []).includes(g.key)) {
+                    await onGuardarFactura({ ...factura, remitoKeys: [...(factura.remitoKeys || []), g.key] });
+                  }
+                  const base = pedido || armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones: cotizaciones || [], pedidos: pedidos || [], grupos: gruposEmpresas || [] });
+                  return onGuardarPedido({ ...base, ...(pedido ? { id: pedido.id } : {}), facturaConfirmada: true, facturaNumero: factura.numero, facturaFecha: factura.fecha });
                 })}
                 onMarcarPago={onGuardarPedido && ((cambios) => {
                   const base = pedido || armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones: cotizaciones || [], pedidos: pedidos || [], grupos: gruposEmpresas || [] });

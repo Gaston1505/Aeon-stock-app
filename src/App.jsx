@@ -3102,11 +3102,22 @@ export default function App() {
     const mapa = new Map();
     for (const c of cotizaciones) {
       if (c.estado !== "Ganada") continue;
-      const entregado = movimientos.some((m) => m.cotizacionId === c.id && (Number(m.cantidad) || 0) > 0);
-      const cobrado = comprometidas
+      const movimientosDeCotizacion = movimientos.filter((m) => m.cotizacionId === c.id);
+      const entregado = movimientosDeCotizacion.some((m) => (Number(m.cantidad) || 0) > 0);
+      // Venta cerrada por remito directo: el pago se guarda en la primera línea del grupo del
+      // remito (ver agregarPagoVenta/calcularCuentaObra), no por línea — hay que agrupar igual
+      // acá o un remito de varias líneas cuenta su pago varias veces.
+      const gruposRemitoCot = agruparPorRemito(
+        movimientosDeCotizacion,
+        (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
+        (m) => Number(m.cantidad) || 1,
+        () => ""
+      );
+      const cobradoMovimientos = gruposRemitoCot.reduce((acc, g) => acc + (g.items[0]?.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
+      const cobradoComprometidas = comprometidas
         .filter((x) => x.cotizacionId === c.id)
         .reduce((acc, x) => acc + (x.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
-      mapa.set(c.id, { entregado, cobrado });
+      mapa.set(c.id, { entregado, cobrado: cobradoComprometidas + cobradoMovimientos });
     }
     return mapa;
   }, [cotizaciones, movimientos, comprometidas]);
@@ -15610,12 +15621,13 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
     montoPorMovimiento.set(m.id, monto);
   }
   // Remisiones de la obra con lo que valen y si ya tienen factura / pedido de facturación.
-  const remisiones = agruparPorRemito(
+  const gruposRemito = agruparPorRemito(
     movimientos.filter(esVenta),
     (m) => `${m.fecha || ""}|${(m.cliente || "").toLowerCase()}|${m.motivo || ""}`,
     (m) => Number(m.cantidad) || 1,
     () => ""
-  ).map((g) => ({
+  );
+  const remisiones = gruposRemito.map((g) => ({
     key: g.key, remito: g.remito, fecha: g.items[0]?.fecha || "", unidades: g.unidades,
     monto: Math.round(g.items.reduce((a, m) => a + (montoPorMovimiento.get(m.id) || 0), 0) * 100) / 100,
     facturas: facturas.filter((f) => (f.remitoKeys || []).includes(g.key)).map((f) => f.numero),
@@ -15626,7 +15638,14 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   const pagosComprometidas = comprometidas.flatMap((c) => (c.pagos || []).map((p) => ({
     fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago", nota: p.formaPago ? `${p.formaPago} · registrado en Ventas comprometidas` : "Registrado en Ventas comprometidas", origen: "comprometida",
   })));
-  const pagos = [...pagosFicha, ...pagosComprometidas].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  // Venta cerrada por remito directo (no pasó por Ventas comprometidas): el pago se carga en
+  // "Ventas cerradas" y queda guardado en la primera línea del grupo del remito, no por línea
+  // (ver agregarPagoVenta) — antes esta plata no entraba acá, así que una obra podía estar
+  // completamente cobrada y facturada y seguir figurando con saldo pendiente.
+  const pagosMovimientos = gruposRemito.flatMap((g) => (g.items[0]?.pagos || []).map((p) => ({
+    fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago", nota: p.formaPago ? `${p.formaPago} · registrado en Salidas/remito` : "Registrado en Salidas/remito", origen: "movimiento",
+  })));
+  const pagos = [...pagosFicha, ...pagosComprometidas, ...pagosMovimientos].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   const cobrado = pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0);
   const facturado = facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0);
   const productosLista = Array.from(filas.values()).sort((a, b) => b.contratado - a.contratado || a.codigo.localeCompare(b.codigo));

@@ -174,6 +174,7 @@ const COLLECTIONS = {
   pedidosFacturacion: "pedidosFacturacion",
   fichasObras: "fichasObras",
   facturasObra: "facturasObra",
+  notasCredito: "notasCredito",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
@@ -2438,6 +2439,7 @@ export default function App() {
   const [pedidosFacturacion, setPedidosFacturacion] = useState([]);
   const [fichasObras, setFichasObras] = useState([]);
   const [facturasObra, setFacturasObra] = useState([]);
+  const [notasCredito, setNotasCredito] = useState([]);
   const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
   const [pedidoAnticipoTarget, setPedidoAnticipoTarget] = useState(null); // cotización sobre la que se pide un anticipo (sin remito)
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
@@ -2503,6 +2505,7 @@ export default function App() {
       [COLLECTIONS.pedidosFacturacion]: setPedidosFacturacion,
       [COLLECTIONS.fichasObras]: setFichasObras,
       [COLLECTIONS.facturasObra]: setFacturasObra,
+      [COLLECTIONS.notasCredito]: setNotasCredito,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
@@ -3094,8 +3097,8 @@ export default function App() {
     [clientes, cotizaciones, movimientos, pedidosFacturacion, gruposEmpresas]
   );
   const cuentasObras = useMemo(
-    () => calcularCuentasObras(empresasObras, { fichasObras, facturasObra, comprometidas, productos, equipos, grupos: gruposEmpresas }),
-    [empresasObras, fichasObras, facturasObra, comprometidas, productos, equipos, gruposEmpresas]
+    () => calcularCuentasObras(empresasObras, { fichasObras, facturasObra, notasCredito, comprometidas, productos, equipos, grupos: gruposEmpresas }),
+    [empresasObras, fichasObras, facturasObra, notasCredito, comprometidas, productos, equipos, gruposEmpresas]
   );
   const listaObrasCuenta = useMemo(() => listaCuentasObras(empresasObras, cuentasObras), [empresasObras, cuentasObras]);
   // Para poder preguntar "¿esta cotización puntual ya está cobrada?" sin tener que resolver de
@@ -3162,6 +3165,20 @@ export default function App() {
     return ref.id;
   };
   const borrarFacturaObra = (id) => deleteItem(COLLECTIONS.facturasObra, id);
+  // Nota de crédito: devolución, error o cambio de producto sobre una obra ya facturada. Resta de
+  // "facturado" (ver calcularCuentaObra) — no genera PDF propio, solo queda el registro con sus
+  // líneas afectadas y, si hay, el archivo real que mandó Administración (mismo AdjuntoPicker que factura).
+  const guardarNotaCredito = async (nota) => {
+    const { id, ...data } = nota;
+    const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
+    if (id) {
+      await updateDoc(doc(db, COLLECTIONS.notasCredito, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() });
+      return id;
+    }
+    const ref = await addDoc(collection(db, COLLECTIONS.notasCredito), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
+    return ref.id;
+  };
+  const borrarNotaCredito = (id) => deleteItem(COLLECTIONS.notasCredito, id);
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   // El estado (Pendiente/Ganada/Perdida/Sin efecto) y si la cotización cuenta para la obra
   // (Principal/Suma/Historial, patch.cuentaObra) son cosas separadas a propósito: cambiar una
@@ -4622,8 +4639,10 @@ export default function App() {
           <ClientesView
             clientes={filteredClientes} query={query} onQuery={setQuery}
             empresas={empresasObras} cuentas={cuentasObras} pedidos={pedidosFacturacion}
-            fichasObras={fichasObras} facturasObra={facturasObra} grupos={gruposEmpresas} onGuardarGrupos={guardarGruposEmpresas}
+            fichasObras={fichasObras} facturasObra={facturasObra} notasCredito={notasCredito} productos={productos}
+            grupos={gruposEmpresas} onGuardarGrupos={guardarGruposEmpresas}
             onGuardarFicha={guardarFichaObra} onGuardarFactura={guardarFacturaObra} onBorrarFactura={borrarFacturaObra}
+            onGuardarNotaCredito={guardarNotaCredito} onBorrarNotaCredito={borrarNotaCredito}
             onNew={() => setDrawer("cliente")}
             onDelete={deleteCliente}
             onUpdateField={(id, field, value) => updateCliente(id, { [field]: value })}
@@ -15705,7 +15724,7 @@ function adelantoSugeridoDeCotizacion(cot) {
 // Cuenta de una obra: lo contratado, lo entregado (mercadería y plata), lo cobrado y lo facturado.
 // Lo entregado y no pagado / pagado se calcula cruzando entregas contra cobros: lo cobrado cubre
 // primero lo ya entregado, y lo que sobra es adelanto todavía sin consumir.
-function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, comprometidas, productos, equipos, pedidos = [] }) {
+function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, notasCredito = [], comprometidas, productos, equipos, pedidos = [] }) {
   const ganadas = cotizacionesQueCuentan(agruparCotizaciones(cotizaciones)).filter((c) => c.estado === "Ganada");
   const totalGanadas = ganadas.reduce((a, c) => a + calcularTotalCotizacion(c), 0);
   const manual = ficha && ficha.contratoMonto !== undefined && ficha.contratoMonto !== null && ficha.contratoMonto !== "" ? Number(ficha.contratoMonto) : null;
@@ -15815,7 +15834,11 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   const pagosMovimientos = [...pagosDirectos, ...pagosPedido];
   const pagos = [...pagosFicha, ...pagosComprometidas, ...pagosMovimientos].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   const cobrado = pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0);
-  const facturado = facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0);
+  // Una nota de crédito (devolución, error, cambio de producto sobre un contrato) resta de lo ya
+  // facturado — si no se descontara, "sin facturar" quedaría de menos y el reporte financiero
+  // mostraría más facturado de lo que en realidad quedó en pie.
+  const totalNotasCredito = notasCredito.reduce((a, n) => a + (Number(n.monto) || 0), 0);
+  const facturado = facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0) - totalNotasCredito;
   const productosLista = Array.from(filas.values()).sort((a, b) => b.contratado - a.contratado || a.codigo.localeCompare(b.codigo));
   const unidadesContratadas = productosLista.reduce((a, f) => a + f.contratado, 0);
 
@@ -15831,7 +15854,7 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   const adelantoCobrado = pagos.filter((p) => p.tipo === "Adelanto").reduce((a, p) => a + (Number(p.monto) || 0), 0);
   return {
     contrato: c2(contrato), contratoOrigen, totalGanadas, montoEntregado: entregado, unidadesEntregadas, unidadesContratadas, cobrado: c2(cobrado), facturado: c2(facturado), pagos,
-    productos: productosLista, ganadas, remisiones, facturas,
+    productos: productosLista, ganadas, remisiones, facturas, notasCredito, totalNotasCredito: c2(totalNotasCredito),
     adelantoPct, adelantoOrigen, adelantoPactado: adelantoPct ? c2((contrato * adelantoPct) / 100) : 0, adelantoCobrado: c2(adelantoCobrado),
     unidadesFaltan: Math.max(0, unidadesContratadas - unidadesEntregadas),
     entregadoYPagado: c2(Math.min(entregado, cobrado)),
@@ -15957,7 +15980,7 @@ function CuentaTiles({ c }) {
 }
 
 function sumarCuentas(cuentas) {
-  const z = { contrato: 0, montoEntregado: 0, unidadesEntregadas: 0, unidadesContratadas: 0, unidadesFaltan: 0, cobrado: 0, facturado: 0, entregadoYPagado: 0, entregadoNoPagado: 0, adelantoSinConsumir: 0, adelantoPactado: 0, adelantoCobrado: 0, restanteEntrega: 0, restanteCobro: 0, sinFacturar: 0 };
+  const z = { contrato: 0, montoEntregado: 0, unidadesEntregadas: 0, unidadesContratadas: 0, unidadesFaltan: 0, cobrado: 0, facturado: 0, totalNotasCredito: 0, entregadoYPagado: 0, entregadoNoPagado: 0, adelantoSinConsumir: 0, adelantoPactado: 0, adelantoCobrado: 0, restanteEntrega: 0, restanteCobro: 0, sinFacturar: 0 };
   for (const c of cuentas) for (const k of Object.keys(z)) z[k] += c[k];
   return { ...z, contratoOrigen: z.contrato > 0 ? "contrato" : "ninguno" };
 }
@@ -16209,6 +16232,125 @@ function FacturasObra({ facturas, remisiones, pedidos, empresa, obra, onGuardar,
   );
 }
 
+// Una línea por producto afectado por la nota de crédito (devolución, error, cambio de modelo) —
+// a diferencia de una cotización, acá no hay que validar stock ni precio de lista, solo dejar
+// constancia de qué modelo y cuánto se corrigió.
+function NotaCreditoLineas({ lineas, productos, onChange }) {
+  const set = (i, patch) => onChange(lineas.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const agregar = () => onChange([...lineas, { codigo: "", cantidad: 1, monto: "" }]);
+  const quitar = (i) => onChange(lineas.filter((_, j) => j !== i));
+  return (
+    <div className="space-y-2 mb-2">
+      {lineas.map((l, i) => (
+        <div key={i} className="flex items-end gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
+          <div style={{ minWidth: 180, flex: 1 }}>
+            <Field label="Producto"><SelectorModeloOTexto productos={productos} value={l.codigo} onChange={(v) => set(i, { codigo: v })} placeholder="Modelo afectado" /></Field>
+          </div>
+          <div style={{ width: 80 }}><Field label="Cant."><TextInput type="number" value={l.cantidad} onChange={(e) => set(i, { cantidad: e.target.value })} /></Field></div>
+          <div style={{ width: 110 }}><Field label="Monto U$S"><TextInput type="number" step="0.01" value={l.monto} onChange={(e) => set(i, { monto: e.target.value })} /></Field></div>
+          <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mb-1.5"><Trash2 size={14} style={{ color: MUTED }} /></button>
+        </div>
+      ))}
+      <SecondaryButton onClick={agregar}><Plus size={13} /> Agregar línea</SecondaryButton>
+    </div>
+  );
+}
+
+// Notas de crédito de una obra: devoluciones, errores o cambios de producto sobre un contrato ya
+// facturado. A diferencia de la factura, no genera un PDF propio (todavía) — es solo el registro
+// con el detalle de qué productos se corrigieron, más el archivo real si Administración mandó uno,
+// y resta de "facturado" en calcularCuentaObra para no inflar lo que en los hechos quedó en pie.
+function NotasCreditoObra({ notas, facturas, productos, empresa, obra, onGuardar, onBorrar }) {
+  const [form, setForm] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const nueva = () => setForm({ id: null, numero: "", fecha: todayISO(), motivo: "", facturaId: "", lineas: [{ codigo: "", cantidad: 1, monto: "" }], archivo: null });
+  const editar = (n) => setForm({
+    id: n.id, numero: n.numero || "", fecha: n.fecha || todayISO(), motivo: n.motivo || "", facturaId: n.facturaId || "",
+    lineas: (n.lineas || []).length ? n.lineas.map((l) => ({ ...l, monto: String(l.monto ?? "") })) : [{ codigo: "", cantidad: 1, monto: "" }],
+    archivo: n.archivo || null,
+  });
+  const montoTotal = form ? form.lineas.reduce((a, l) => a + (Number(l.monto) || 0), 0) : 0;
+  const guardar = async () => {
+    if (!form.motivo.trim()) { setMsg({ tipo: "error", texto: "Contá el motivo de la nota de crédito." }); return; }
+    const lineasValidas = form.lineas.filter((l) => l.codigo && Number(l.monto) > 0);
+    if (lineasValidas.length === 0) { setMsg({ tipo: "error", texto: "Cargá al menos un producto afectado con su monto." }); return; }
+    setOcupado(true);
+    setMsg(null);
+    try {
+      await onGuardar({
+        ...(form.id ? { id: form.id } : {}), empresaKey: empresa.key, obraKey: obra.key, cliente: empresa.nombre, obra: obra.nombre,
+        numero: form.numero.trim(), fecha: form.fecha, motivo: form.motivo.trim(), facturaId: form.facturaId || null,
+        lineas: lineasValidas.map((l) => ({ codigo: l.codigo, cantidad: Number(l.cantidad) || 0, monto: Number(l.monto) || 0 })),
+        monto: lineasValidas.reduce((a, l) => a + (Number(l.monto) || 0), 0),
+        archivo: form.archivo || null,
+      });
+      setForm(null);
+    } catch (e) { setMsg({ tipo: "error", texto: textoErrorFirestore(e, "notasCredito") }); }
+    setOcupado(false);
+  };
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>
+        Notas de crédito{notas.length > 0 ? ` · -${usd(notas.reduce((a, n) => a + (Number(n.monto) || 0), 0))}` : ""}
+      </p>
+      {notas.length === 0 && <p className="text-xs mb-2" style={{ color: MUTED }}>Todavía no hay notas de crédito para esta obra.</p>}
+      <div className="space-y-1.5 mb-2">
+        {notas.map((n) => {
+          const factura = (facturas || []).find((f) => f.id === n.facturaId);
+          return (
+            <div key={n.id} className="flex items-start justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+              <span style={{ color: INK }}>
+                <b>{n.numero ? `NC ${n.numero}` : "Nota de crédito"}</b> · {fmtDate(n.fecha)} · -{usd(n.monto)}
+                {factura && <span className="block" style={{ color: MUTED }}>Factura {factura.numero}</span>}
+                {n.motivo && <span className="block" style={{ color: MUTED }}>{n.motivo}</span>}
+                {(n.lineas || []).length > 0 && (
+                  <span className="block" style={{ color: MUTED }}>{n.lineas.map((l) => `${l.codigo} ×${l.cantidad}`).join(", ")}</span>
+                )}
+              </span>
+              <span className="flex gap-1 shrink-0 items-center">
+                {n.archivo?.data && <button type="button" onClick={() => abrirAdjunto(n.archivo)} className="text-xs underline" style={{ color: ACCENT }}>Ver</button>}
+                <button type="button" onClick={() => editar(n)} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
+                <button type="button" onClick={() => onBorrar(n.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {form ? (
+        <div className="p-3 rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+          <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{form.id ? "Editar nota de crédito" : "Cargar nota de crédito"}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+            <Field label="N° (opcional)"><TextInput value={form.numero} onChange={(e) => set("numero", e.target.value)} placeholder="Ej: 001-001-0000045" /></Field>
+            <Field label="Fecha"><TextInput type="date" value={form.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+          </div>
+          {facturas.length > 0 && (
+            <Field label="Factura relacionada (opcional)">
+              <Select value={form.facturaId} onChange={(e) => set("facturaId", e.target.value)}>
+                <option value="">Sin asociar a una factura puntual</option>
+                {facturas.map((f) => <option key={f.id} value={f.id}>Factura {f.numero} · {fmtDate(f.fecha)}</option>)}
+              </Select>
+            </Field>
+          )}
+          <Field label="Motivo"><TextInput value={form.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder="Ej: devolución de 2 unidades por falla" /></Field>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Productos afectados</p>
+          <NotaCreditoLineas lineas={form.lineas} productos={productos} onChange={(l) => set("lineas", l)} />
+          <p className="text-xs mb-2" style={{ color: INK }}>Total: <b>{usd(montoTotal)}</b></p>
+          <Field label="Archivo (PDF o foto, opcional)"><AdjuntoPicker valor={form.archivo} onChange={(a) => set("archivo", a)} onError={(t) => setMsg(t ? { tipo: "error", texto: t } : null)} /></Field>
+          <div className="flex gap-2">
+            <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar nota de crédito"}</PrimaryButton>
+            <SecondaryButton onClick={() => { setForm(null); setMsg(null); }}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      ) : (
+        <SecondaryButton onClick={nueva}><Plus size={14} /> Cargar nota de crédito</SecondaryButton>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>}
+    </div>
+  );
+}
+
 // Clientes (empresas) con sus obras: junta cotizaciones, salidas y pedidos de facturación por empresa y
 // obra (sin distinguir mayúsculas). Lo usan las fichas de Clientes y los resúmenes.
 const normClave = (s) => (s || "").trim().toLowerCase();
@@ -16280,7 +16422,7 @@ function razonesSocialesDeNombre(nombre, grupos) {
   return [];
 }
 // Cuenta de cada obra (clave `${empresa.key}|${obra.key}`): contrato / entregado / cobrado / facturado.
-function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometidas, productos, equipos, grupos = [] }) {
+function calcularCuentasObras(empresas, { fichasObras, facturasObra, notasCredito, comprometidas, productos, equipos, grupos = [] }) {
   const out = new Map();
   for (const e of empresas) {
     for (const o of e.obras.values()) {
@@ -16288,6 +16430,7 @@ function calcularCuentasObras(empresas, { fichasObras, facturasObra, comprometid
         cotizaciones: o.cotizaciones, movimientos: o.movimientos,
         ficha: fichasObras.find((f) => f.id === idFichaObra(e.key, o.key)),
         facturas: facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key),
+        notasCredito: (notasCredito || []).filter((n) => n.empresaKey === e.key && n.obraKey === o.key),
         comprometidas: comprometidas.filter((c) => resolverEmpresa(c.razonSocial, grupos)?.key === e.key && (normClave(c.obra) || "(sin obra)") === o.key),
         productos, equipos, pedidos: o.pedidos,
       }));
@@ -16390,7 +16533,7 @@ function DatosEmpresa({ e, empresas, grupos, onGuardar }) {
   );
 }
 
-function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, grupos, onGuardarGrupos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
+function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, notasCredito, productos, grupos, onGuardarGrupos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura, onGuardarNotaCredito, onBorrarNotaCredito }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const norm = normClave;
@@ -16448,6 +16591,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
                   const idFicha = idFichaObra(e.key, o.key);
                   const ficha = fichasObras.find((f) => f.id === idFicha);
                   const facturasDeObra = facturasObra.filter((f) => f.empresaKey === e.key && f.obraKey === o.key);
+                  const notasDeObra = (notasCredito || []).filter((n) => n.empresaKey === e.key && n.obraKey === o.key);
                   const base = { empresaKey: e.key, obraKey: o.key, cliente: e.nombre, obra: o.nombre, createdAt: ficha?.createdAt || Date.now() };
                   const remisiones = agruparPorRemito(
                     o.movimientos,
@@ -16511,6 +16655,10 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
                             facturas={facturasDeObra} remisiones={remisiones} pedidos={pedidos} empresa={e} obra={o}
                             onGuardar={onGuardarFactura} onBorrar={onBorrarFactura}
                           />
+                          <NotasCreditoObra
+                            notas={notasDeObra} facturas={facturasDeObra} productos={productos} empresa={e} obra={o}
+                            onGuardar={onGuardarNotaCredito} onBorrar={onBorrarNotaCredito}
+                          />
                         </div>
                       )}
                     </div>
@@ -16525,7 +16673,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
   );
 }
 
-function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, grupos, onGuardarGrupos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura }) {
+function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, notasCredito, productos, grupos, onGuardarGrupos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura, onGuardarNotaCredito, onBorrarNotaCredito }) {
   const [vista, setVista] = useState("fichas");
   const toggleVista = (
     <div className="flex gap-2 mb-3">
@@ -16551,7 +16699,9 @@ function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, factu
         {toggleVista}
         <FichasClientes
           empresas={empresas} cuentas={cuentas} pedidos={pedidos} fichasObras={fichasObras} facturasObra={facturasObra}
+          notasCredito={notasCredito} productos={productos}
           grupos={grupos} onGuardarGrupos={onGuardarGrupos} query={query} onPedido={onPedido} onGuardarFicha={onGuardarFicha} onGuardarFactura={onGuardarFactura} onBorrarFactura={onBorrarFactura}
+          onGuardarNotaCredito={onGuardarNotaCredito} onBorrarNotaCredito={onBorrarNotaCredito}
         />
       </Section>
     );

@@ -104,6 +104,7 @@ service cloud.firestore {
     match /pedidosFacturacion/{docId} { allow read, write: if esAdmin(); }
     match /fichasObras/{docId} { allow read, write: if esAdmin(); }
     match /facturasObra/{docId} { allow read, write: if esAdmin(); }
+    match /notasCredito/{docId} { allow read, write: if esAdmin(); }
     match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
     match /clientes/{docId} { allow read, write: if esAdmin(); }
     match /transito/{docId} { allow read, write: if esAdmin(); }

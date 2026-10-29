@@ -5254,6 +5254,7 @@ function EstadoVentaRemito({ pedido, esAdmin, onMarcarFactura, onMarcarPago }) {
 function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const [avisoFactura, setAvisoFactura] = useState("");
+  const [historialAbierto, setHistorialAbierto] = useState(false);
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const productoDe = (m) => productoDeCodigo(m.modelo || m.codigo, equipos, productos) || productoDeCodigo(m.codigo, equipos, productos);
   const grupos = useMemo(
@@ -5266,10 +5267,21 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
     [movimientos, productos, equipos]
   );
   if (grupos.length === 0) return <EmptyState icon={Package} title="Todavía no hay registros" subtitle="Usá el botón de arriba para cargar el primero." />;
-  return (
-    <div className="space-y-3">
-      {avisoFactura && <p className="text-xs mb-1" style={{ color: "#B45309" }}>{avisoFactura}</p>}
-      {grupos.map((g) => {
+  // Un remito de Venta queda "completado" (mercadería ya entregada por ser una Salida, factura
+  // confirmada y Pagada marcada) cuando no necesita más seguimiento — se saca de la vista
+  // principal para no mezclarlo con los que todavía están en curso, y queda en un Historial aparte.
+  // Muestra/Reposición/Otro no pasan por Facturada→Pagada, así que esos siempre quedan arriba.
+  const [gruposActivos, gruposHistorial] = useMemo(() => {
+    const activos = [], historial = [];
+    for (const g of grupos) {
+      const m0 = g.items[0];
+      const pedido = (pedidos || []).find((p) => p.remitoKey === g.key);
+      const completado = m0.motivo === "Venta" && !!pedido?.facturaConfirmada && !!pedido?.pagado;
+      (completado ? historial : activos).push(g);
+    }
+    return [activos, historial];
+  }, [grupos, pedidos]);
+  const renderGrupo = (g) => {
         const m0 = g.items[0];
         const motivos = [...new Set(g.items.map((m) => m.motivo).filter(Boolean))].join(", ");
         const destino = [m0.cliente || m0.empresaCliente, m0.obra].filter(Boolean).join(" — ");
@@ -5349,7 +5361,29 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
             />
           </RemitoGrupoCard>
         );
-      })}
+  };
+  return (
+    <div className="space-y-3">
+      {avisoFactura && <p className="text-xs mb-1" style={{ color: "#B45309" }}>{avisoFactura}</p>}
+      {gruposActivos.length === 0 && gruposHistorial.length > 0 ? (
+        <p className="text-sm" style={{ color: MUTED }}>No hay remitos en curso — todo lo que hay está completo, mirá el Historial de abajo.</p>
+      ) : (
+        gruposActivos.map(renderGrupo)
+      )}
+      {gruposHistorial.length > 0 && (
+        <div className="pt-3 mt-3 border-t" style={{ borderColor: BORDER }}>
+          <button
+            type="button" onClick={() => setHistorialAbierto((v) => !v)}
+            className="w-full flex items-center justify-between gap-2 py-1.5 text-left"
+          >
+            <span className="text-sm font-semibold flex items-center gap-1.5" style={{ color: INK }}>
+              <Clock size={14} style={{ color: MUTED }} /> Historial — completados ({gruposHistorial.length})
+            </span>
+            {historialAbierto ? <ChevronUp size={16} style={{ color: MUTED }} /> : <ChevronDown size={16} style={{ color: MUTED }} />}
+          </button>
+          {historialAbierto && <div className="space-y-3 mt-2">{gruposHistorial.map(renderGrupo)}</div>}
+        </div>
+      )}
     </div>
   );
 }

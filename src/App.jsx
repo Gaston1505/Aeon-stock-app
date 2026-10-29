@@ -13755,14 +13755,47 @@ function CotizacionDetalleModal({ c, productos, onClose }) {
   );
 }
 
-// Las cotizaciones que cuentan en el resumen (una por obra y rubro), con su cliente y obra.
+// Las cotizaciones que cuentan en el resumen (una por obra y rubro: la Principal, más las que se
+// suman a propósito) — mismo criterio que cotizacionesQueCuentan, para que el detalle de cada
+// cuadro muestre exactamente lo que ese cuadro contó, ni más ni menos.
 function listarCotizacionesQueCuentan(grupos) {
-  return grupos.flatMap((g) => g.obras.flatMap((o) => o.principales.map((h) => ({ cliente: g.cliente, obra: o.obra, rubro: h.rubro, c: h.activa }))));
+  return grupos.flatMap((g) => g.obras.flatMap((o) =>
+    [...o.principales, ...(o.sumandose || [])].map((h) => ({ cliente: g.cliente, obra: o.obra, rubro: h.rubro, c: h.activa }))
+  ));
+}
+
+// La razón puntual por la que ESTA cotización cayó en Ganada / En curso / Cobrada — mismos datos
+// que cotizacionEstadoGanadaVisual, pero en texto para mostrar al lado de cada una en el detalle.
+function motivoClasificacionGanada(estadoFinal, cuenta, movimientoPropio) {
+  if (estadoFinal === "Cobrada") {
+    if (cuenta && cuenta.ganadas.length === 1) {
+      return `Cobro completo de la obra: U$S ${cuenta.cobrado.toLocaleString("es-PY")} de U$S ${cuenta.contrato.toLocaleString("es-PY")}`;
+    }
+    return "Marcada como cobrada a mano (la obra tiene varios rubros Ganados)";
+  }
+  if (estadoFinal === "En curso") {
+    const soloUnRubro = !!cuenta && cuenta.ganadas.length === 1;
+    const cobrado = soloUnRubro ? cuenta.cobrado : (movimientoPropio?.cobrado || 0);
+    const partes = [];
+    if (movimientoPropio?.entregado) partes.push("ya se entregó mercadería");
+    if (cobrado > 0) partes.push(`cobrado U$S ${cobrado.toLocaleString("es-PY")}${soloUnRubro ? ` de U$S ${cuenta.contrato.toLocaleString("es-PY")}` : ""}`);
+    return partes.length ? partes.join(" · ") : "Arrancó algún movimiento";
+  }
+  if (estadoFinal === "Ganada") return "Sin movimiento todavía — ni entrega ni cobro";
+  return null;
 }
 
 // Cada recuadro del resumen se puede tocar: despliega debajo qué cotizaciones lo componen, y tocar una
 // abre su detalle completo.
 const ESTADOS_RESUMEN_COTIZACIONES = ["Pendiente", "Ganada", "En curso", "Cobrada", "Perdida"];
+const INFO_ESTADOS_COTIZACION = {
+  Total: "Todas las cotizaciones que cuentan (una por obra y rubro: la Principal, más las que se suman a propósito).",
+  Pendiente: "Todavía no se definió si se gana o se pierde.",
+  Ganada: "Se ganó, pero todavía no se movió nada — ni se entregó mercadería ni se cobró nada.",
+  "En curso": "Ya arrancó algo: se entregó mercadería y/o se cobró una parte, pero el cobro todavía no se completó.",
+  Cobrada: "Ya se cobró todo lo que corresponde, según la cuenta de la obra (ficha de obra + Ventas comprometidas). Si la obra tiene varios rubros Ganados, se marca a mano (botón \"Marcar como cobrada\"), porque ahí los pagos no vienen separados por rubro.",
+  Perdida: "Se perdió — el motivo queda cargado en cada cotización.",
+};
 function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [sel, setSel] = useState(null); // "Total" | estado
   const [detalle, setDetalle] = useState(null);
@@ -13784,14 +13817,20 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
   const tile = (key, label, n, total, color, bg) => {
     const activo = sel === key;
     return (
-      <button
-        key={key} type="button" onClick={() => setSel(activo ? null : key)}
-        className="px-3 py-2 rounded-lg text-left"
+      <div
+        key={key} className="relative rounded-lg"
         style={{ backgroundColor: bg, outline: activo ? `2px solid ${color}` : "none", outlineOffset: -2 }}
       >
-        <p className="text-xs" style={{ color }}>{label}{n != null ? ` (${n})` : ""}</p>
-        <p className="text-sm font-semibold" style={{ color }}>U$S {total.toLocaleString("es-PY")}</p>
-      </button>
+        <button type="button" onClick={() => setSel(activo ? null : key)} className="w-full px-3 py-2 text-left">
+          <p className="text-xs" style={{ color }}>{label}{n != null ? ` (${n})` : ""}</p>
+          <p className="text-sm font-semibold" style={{ color }}>U$S {total.toLocaleString("es-PY")}</p>
+        </button>
+        {INFO_ESTADOS_COTIZACION[key] && (
+          <span className="absolute top-0.5 right-0.5" onClick={(e) => e.stopPropagation()}>
+            <InfoTip><p>{INFO_ESTADOS_COTIZACION[key]}</p></InfoTip>
+          </span>
+        )}
+      </div>
     );
   };
   return (
@@ -13811,6 +13850,13 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
             <div className="space-y-1">
               {lista.map((f) => {
                 const est = estadoVisual(f.c);
+                const cuenta = cuentaPorCotizacionId?.get(f.c.id);
+                const movimientoPropio = movimientoPropioPorCotizacionId?.get(f.c.id);
+                const motivo = ["Ganada", "En curso", "Cobrada"].includes(est)
+                  ? motivoClasificacionGanada(est, cuenta, movimientoPropio)
+                  : est === "Perdida" || est === "Sin efecto"
+                    ? (f.c.motivoEstado || null)
+                    : null;
                 return (
                   <button
                     key={f.c.id} type="button" onClick={() => setDetalle(f.c)}
@@ -13823,6 +13869,9 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
                         {f.rubro}{f.c.nombre ? ` · ${f.c.nombre}` : ""} · {fmtDate(f.c.fecha)} · {(f.c.lineas || []).length} producto(s)
                         {sel === "Total" && <span style={{ color: ESTADO_COTIZACION_BADGE[est].color }}> · {est}</span>}
                       </span>
+                      {motivo && (
+                        <span className="block text-xs mt-0.5" style={{ color: ESTADO_COTIZACION_BADGE[est]?.color || MUTED }}>{motivo}</span>
+                      )}
                     </span>
                     <span className="flex items-center gap-1.5 shrink-0 text-sm font-semibold" style={{ color: ACCENT }}>
                       U$S {calcularTotalCotizacion(f.c).toLocaleString("es-PY")}
@@ -14371,7 +14420,12 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
     return [...porRubro.entries()].sort(([a], [b]) => idxRubro(a) - idxRubro(b));
   }, [grupo.hilos]);
   const hayVariosRubros = seccionesPorRubro.length > 1;
-  // Si la cotización mezclada "Electrodomésticos" de la obra todavía suma AL MISMO TIEMPO que ya
+  // Con varios rubros, antes quedaban todos apilados uno abajo del otro — para ver Cocina había que
+  // bajar pasando 4-5 cotizaciones de Aires. Este filtro deja elegir un rubro puntual; "Todos" (el
+  // default) mantiene el comportamiento de siempre, con el encabezado de cada sección.
+  const [rubroSel, setRubroSel] = useState(null);
+  const seccionesMostradas = rubroSel ? seccionesPorRubro.filter(([r]) => r === rubroSel) : seccionesPorRubro;
+  // Si una cotización mezclada "Electrodomésticos" de la obra todavía suma AL MISMO TIEMPO que ya
   // hay una principal de un rubro específico (Aires, Cocina, Termo), probablemente la mezclada
   // quedó superada por esas y habría que pasarla a Historial a mano — se avisa en vez de ocultarla
   // sola, para no tocar un total sin que el usuario lo decida.
@@ -14404,9 +14458,29 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
               </button>
             </div>
           )}
-          {seccionesPorRubro.map(([rubro, hilosDelRubro]) => (
+          {hayVariosRubros && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button" onClick={() => setRubroSel(null)}
+                className="text-xs px-2.5 py-1 rounded-full font-medium"
+                style={rubroSel === null ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+              >
+                Todos ({nHilos})
+              </button>
+              {seccionesPorRubro.map(([rubro, hilosDelRubro]) => (
+                <button
+                  key={rubro} type="button" onClick={() => setRubroSel(rubro)}
+                  className="text-xs px-2.5 py-1 rounded-full font-medium"
+                  style={rubroSel === rubro ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+                >
+                  {rubro} ({hilosDelRubro.length})
+                </button>
+              ))}
+            </div>
+          )}
+          {seccionesMostradas.map(([rubro, hilosDelRubro]) => (
             <div key={rubro}>
-              {hayVariosRubros && (
+              {hayVariosRubros && rubroSel === null && (
                 <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: MUTED }}>{rubro}</p>
               )}
               <div className="space-y-3">

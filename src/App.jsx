@@ -3114,13 +3114,15 @@ export default function App() {
         () => ""
       );
       // Mismos dos caminos que calcularCuentaObra: pagos puntuales de Ventas cerradas, o el check
-      // "Pagado" del Pedido de facturación (sin monto propio — se completa hasta el del remito).
-      const cobradoMovimientos = gruposRemitoCot.reduce((acc, g) => {
-        const pagosPropios = (g.items[0]?.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0);
-        const montoRemito = g.items.reduce((a, m) => a + (Number(m.monto) || 0), 0);
-        const pedido = pedidosFacturacion.find((p) => p.remitoKey === g.key);
-        return acc + (pedido?.pagado ? Math.max(pagosPropios, montoRemito) : pagosPropios);
-      }, 0);
+      // "Pagado" del Pedido de facturación (sin monto propio — ahí se toma el total de ESTA
+      // cotización, no solo lo despachado, porque la instalación no tiene movimiento propio). El
+      // tope se aplica una sola vez para toda la cotización, no por remito — si salió en varias
+      // entregas parciales con cada pedido marcado pagado, sumar el total una vez por cada una
+      // la infla de más.
+      const totalCotizacion = calcularTotalCotizacion(c);
+      const sumaPagosPropios = gruposRemitoCot.reduce((acc, g) => acc + (g.items[0]?.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
+      const hayPedidoPagado = gruposRemitoCot.some((g) => pedidosFacturacion.find((p) => p.remitoKey === g.key)?.pagado);
+      const cobradoMovimientos = hayPedidoPagado ? Math.max(sumaPagosPropios, totalCotizacion) : sumaPagosPropios;
       const cobradoComprometidas = comprometidas
         .filter((x) => x.cotizacionId === c.id)
         .reduce((acc, x) => acc + (x.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0), 0);
@@ -15651,23 +15653,45 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, compro
   // 1) Pagos puntuales de "Ventas cerradas", guardados en la primera línea del grupo del remito,
   //    no por línea (ver agregarPagoVenta).
   // 2) El check "Pagado" del Pedido de facturación (pedidosFacturacion) — un sí/no de
-  //    Administración sin monto propio; si está tildado, se completa hasta el monto del remito
-  //    (salvo que los pagos puntuales ya lo cubran, para no contarlo dos veces).
-  const pagosMovimientos = gruposRemito.flatMap((g) => {
-    const pagosPropios = (g.items[0]?.pagos || []).map((p) => ({
-      fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago",
-      nota: p.formaPago ? `${p.formaPago} · registrado en Salidas/remito` : "Registrado en Salidas/remito", origen: "movimiento",
-    }));
+  //    Administración sin monto propio. Si está tildado, se toma como cobrado el TOTAL de la
+  //    cotización de la que salió ese remito (equipos + instalación) y no solo el monto de la
+  //    mercadería despachada: la instalación no tiene su propio movimiento (a veces se la paga
+  //    aparte, p.ej. al técnico), así que comparada contra el remito solo, esa plata nunca
+  //    terminaba de cerrar aunque la venta ya estuviera cobrada del todo. El tope se calcula una
+  //    sola vez POR COTIZACIÓN (no por remito) para no duplicarlo si una misma cotización salió
+  //    en varias entregas parciales, cada una con su propio pedido marcado pagado.
+  const pagosDirectos = gruposRemito.flatMap((g) => (g.items[0]?.pagos || []).map((p) => ({
+    fecha: p.fecha, monto: Number(p.monto) || 0, tipo: "Pago",
+    nota: p.formaPago ? `${p.formaPago} · registrado en Salidas/remito` : "Registrado en Salidas/remito", origen: "movimiento",
+  })));
+  const pagosPedido = [];
+  const topesPorCotizacion = new Map(); // cotizacionId -> { sumaPropia, fecha }
+  for (const g of gruposRemito) {
     const pedido = pedidos.find((p) => p.remitoKey === g.key);
-    if (!pedido?.pagado) return pagosPropios;
-    const sumaPropia = pagosPropios.reduce((a, p) => a + p.monto, 0);
-    const montoRemito = Math.round(g.items.reduce((a, m) => a + (montoPorMovimiento.get(m.id) || 0), 0) * 100) / 100;
-    if (sumaPropia >= montoRemito) return pagosPropios;
-    return [...pagosPropios, {
-      fecha: g.items[0]?.fecha, monto: montoRemito - sumaPropia, tipo: "Pago",
-      nota: "Marcado como pagado en el Pedido de facturación", origen: "pedido",
-    }];
-  });
+    if (!pedido?.pagado) continue;
+    const sumaPropiaGrupo = (g.items[0]?.pagos || []).reduce((a, p) => a + (Number(p.monto) || 0), 0);
+    const cotizacionId = g.items[0]?.cotizacionId || null;
+    if (!cotizacionId) {
+      // Sin cotización de origen: no hay otro total de referencia más que lo que valía ese remito.
+      const montoRemitoSolo = Math.round(g.items.reduce((a, m) => a + (montoPorMovimiento.get(m.id) || 0), 0) * 100) / 100;
+      if (montoRemitoSolo > sumaPropiaGrupo) {
+        pagosPedido.push({ fecha: pedido.pagoFecha || g.items[0]?.fecha, monto: montoRemitoSolo - sumaPropiaGrupo, tipo: "Pago", nota: "Marcado como pagado en el Pedido de facturación", origen: "pedido" });
+      }
+      continue;
+    }
+    const prev = topesPorCotizacion.get(cotizacionId) || { sumaPropia: 0, fecha: null };
+    prev.sumaPropia += sumaPropiaGrupo;
+    prev.fecha = pedido.pagoFecha || prev.fecha || g.items[0]?.fecha;
+    topesPorCotizacion.set(cotizacionId, prev);
+  }
+  for (const [cotizacionId, info] of topesPorCotizacion) {
+    const cotOrigen = ganadas.find((c) => c.id === cotizacionId);
+    const montoReferencia = cotOrigen ? calcularTotalCotizacion(cotOrigen) : 0;
+    if (montoReferencia > info.sumaPropia) {
+      pagosPedido.push({ fecha: info.fecha, monto: montoReferencia - info.sumaPropia, tipo: "Pago", nota: "Marcado como pagado en el Pedido de facturación", origen: "pedido" });
+    }
+  }
+  const pagosMovimientos = [...pagosDirectos, ...pagosPedido];
   const pagos = [...pagosFicha, ...pagosComprometidas, ...pagosMovimientos].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   const cobrado = pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0);
   const facturado = facturas.reduce((a, f) => a + (Number(f.monto) || 0), 0);

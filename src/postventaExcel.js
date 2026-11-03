@@ -69,8 +69,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
     { key: "edificio", width: 22 },
     { key: "apartamento", width: 12 },
     { key: "cliente", width: 24 },
-    { key: "equipo", width: 26 },
-    { key: "capacidad", width: 14 },
+    { key: "equipos", width: 34 },
     { key: "situacion", width: 16 },
     { key: "fechaVenta", width: 13 },
     { key: "service12", width: 20 },
@@ -111,7 +110,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
   sheet.getRow(r).height = 22;
   r += 2;
 
-  const headers = ["Edificio", "Apartamento", "Cliente", "Equipo", "Capacidad", "Situación", "Fecha de venta", "Service 12 meses", "Service 24 meses", "Último informe técnico"];
+  const headers = ["Edificio", "Apartamento", "Cliente", "Equipos instalados", "Situación", "Fecha de venta", "Service 12 meses", "Service 24 meses", "Último informe técnico"];
   headers.forEach((h, i) => {
     const cell = sheet.getCell(r, i + 1);
     cell.value = h;
@@ -139,13 +138,15 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
     const ultimo = entregas[0];
     const s12 = estadoHito(u, 12);
     const s24 = estadoHito(u, 24);
+    const equiposTexto = (u.equipos?.length ? u.equipos : u.equipo ? [{ modelo: u.equipo, capacidad: u.capacidad }] : [])
+      .map((eq) => `${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`)
+      .join(", ") || "s/d";
 
     const row = [
       edificio?.nombre || "(edificio borrado)",
       u.apartamento || "",
       u.cliente || "",
-      u.equipo || "",
-      u.capacidad || "",
+      equiposTexto,
       u.tipoObra === "ventaCero" ? "Venta nueva" : "Obra activa",
       u.tipoObra === "ventaCero" ? fmtFecha(u.fechaVenta) : "—",
       s12.texto,
@@ -156,9 +157,9 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
       const cell = sheet.getCell(r, i + 1);
       cell.value = val;
       const opts = { wrap: true };
-      if (i === 7) Object.assign(opts, { fill: s12.fill, color: s12.color, align: "center" });
-      else if (i === 8) Object.assign(opts, { fill: s24.fill, color: s24.color, align: "center" });
-      else if (i === 1 || i === 5 || i === 6) opts.align = "center";
+      if (i === 6) Object.assign(opts, { fill: s12.fill, color: s12.color, align: "center" });
+      else if (i === 7) Object.assign(opts, { fill: s24.fill, color: s24.color, align: "center" });
+      else if (i === 1 || i === 4 || i === 5) opts.align = "center";
       styleCell(cell, opts);
     });
     r += 1;

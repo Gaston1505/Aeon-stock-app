@@ -18343,6 +18343,44 @@ function alertaUnidadPostventa(u) {
   return null;
 }
 
+// Una unidad puede tener varios equipos (ej. living + dormitorio) — `equipos` es la forma actual
+// ([{modelo,capacidad}]); `equipo`/`capacidad` sueltos quedan como lectura de compatibilidad por si
+// quedó algún registro viejo guardado antes de este cambio.
+function equiposDeUnidad(u) {
+  if (u?.equipos?.length) return u.equipos;
+  if (u?.equipo) return [{ modelo: u.equipo, capacidad: u.capacidad || "" }];
+  return [];
+}
+function textoEquiposUnidad(u) {
+  const lista = equiposDeUnidad(u);
+  if (lista.length === 0) return "s/d";
+  return lista.map((eq) => `${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`).join(", ");
+}
+
+// Una fila por equipo dentro de la unidad — mismo patrón que NotaCreditoLineas (agregar/quitar
+// filas con el modelo elegido del catálogo o a mano).
+function EquiposUnidadLineas({ equipos, productos, onChange }) {
+  const set = (i, patch) => onChange(equipos.map((eq, j) => (j === i ? { ...eq, ...patch } : eq)));
+  const agregar = () => onChange([...equipos, { modelo: "", capacidad: "" }]);
+  const quitar = (i) => onChange(equipos.filter((_, j) => j !== i));
+  return (
+    <div className="space-y-2 mb-2">
+      {equipos.map((eq, i) => (
+        <div key={i} className="flex items-end gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
+          <div style={{ minWidth: 200, flex: 1 }}>
+            <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={eq.modelo} onChange={(v) => set(i, { modelo: v })} placeholder="Modelo instalado" /></Field>
+          </div>
+          <div style={{ width: 140 }}><Field label="Capacidad"><TextInput value={eq.capacidad} onChange={(e) => set(i, { capacidad: e.target.value })} placeholder="Ej: 12.000 BTU" /></Field></div>
+          {equipos.length > 1 && (
+            <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mb-1.5"><Trash2 size={14} style={{ color: MUTED }} /></button>
+          )}
+        </div>
+      ))}
+      <SecondaryButton onClick={agregar}><Plus size={13} /> Agregar equipo</SecondaryButton>
+    </div>
+  );
+}
+
 function EdificioForm({ edificio, onGuardar, onCancelar }) {
   const [nombre, setNombre] = useState(edificio?.nombre || "");
   const [direccion, setDireccion] = useState(edificio?.direccion || "");
@@ -18377,8 +18415,10 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
   const [apartamento, setApartamento] = useState(unidad?.apartamento || "");
   const [cliente, setCliente] = useState(unidad?.cliente || "");
   const [telefono, setTelefono] = useState(unidad?.telefono || "");
-  const [equipo, setEquipo] = useState(unidad?.equipo || "");
-  const [capacidad, setCapacidad] = useState(unidad?.capacidad || "");
+  const [equipos, setEquipos] = useState(() => {
+    const existentes = equiposDeUnidad(unidad);
+    return existentes.length ? existentes : [{ modelo: "", capacidad: "" }];
+  });
   const [tipoObra, setTipoObra] = useState(unidad?.tipoObra || "ventaCero");
   const [fechaVenta, setFechaVenta] = useState(unidad?.fechaVenta || todayISO());
   const [ocupado, setOcupado] = useState(false);
@@ -18386,12 +18426,14 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
   const guardar = async () => {
     if (!apartamento.trim()) { setMsg("Cargá el número de apartamento."); return; }
     if (!cliente.trim()) { setMsg("Cargá el nombre del cliente."); return; }
+    const equiposValidos = equipos.filter((eq) => eq.modelo.trim()).map((eq) => ({ modelo: eq.modelo.trim(), capacidad: eq.capacidad.trim() }));
+    if (equiposValidos.length === 0) { setMsg("Cargá al menos un equipo con su modelo."); return; }
     setOcupado(true);
     try {
       await onGuardar({
         ...(unidad?.id ? { id: unidad.id } : {}),
         apartamento: apartamento.trim(), cliente: cliente.trim(), telefono: telefono.trim(),
-        equipo: equipo.trim(), capacidad: capacidad.trim(), tipoObra,
+        equipos: equiposValidos, equipo: null, capacidad: null, tipoObra,
         fechaVenta: tipoObra === "ventaCero" ? fechaVenta : "",
         activo: true,
       });
@@ -18406,11 +18448,9 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
         <Field label="N° de apartamento"><TextInput value={apartamento} onChange={(e) => setApartamento(e.target.value)} placeholder="Ej: 302" /></Field>
         <Field label="Cliente (inquilino/propietario)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
-        <Field label="Teléfono (opcional)"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
-        <Field label="Capacidad"><TextInput value={capacidad} onChange={(e) => setCapacidad(e.target.value)} placeholder="Ej: 12.000 BTU" /></Field>
-      </div>
-      <Field label="Modelo / tipo de equipo"><SelectorModeloOTexto productos={productos} value={equipo} onChange={setEquipo} placeholder="Modelo instalado" /></Field>
+      <Field label="Teléfono (opcional)"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Equipos instalados</p>
+      <EquiposUnidadLineas equipos={equipos} productos={productos} onChange={setEquipos} />
       <Field label="Situación">
         <Select value={tipoObra} onChange={(e) => setTipoObra(e.target.value)}>
           <option value="ventaCero">Venta nueva — service obligatorio a los 12 y 24 meses</option>
@@ -18444,7 +18484,7 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
     try {
       const lineas = unidades.filter((u) => elegidas.has(u.id)).map((u) => {
         const alerta = alertaUnidadPostventa(u);
-        return { unidadId: u.id, apartamento: u.apartamento, cliente: u.cliente, equipo: u.equipo, capacidad: u.capacidad, hito: alerta?.hito || null, hecho: false, fechaHecho: null, informe: "" };
+        return { unidadId: u.id, apartamento: u.apartamento, cliente: u.cliente, equipos: equiposDeUnidad(u), hito: alerta?.hito || null, hecho: false, fechaHecho: null, informe: "" };
       });
       await onGuardar({ edificioId: edificio.id, fechaProgramada, notas: notas.trim(), unidades: lineas });
       onCancelar();
@@ -18463,7 +18503,7 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
           return (
             <label key={u.id} className="flex items-center gap-2 text-xs p-1.5 rounded" style={{ color: INK, backgroundColor: alerta ? "#FDF1E0" : "transparent" }}>
               <input type="checkbox" checked={elegidas.has(u.id)} onChange={() => alternar(u.id)} />
-              <b>Depto {u.apartamento}</b> · {u.cliente} · {u.equipo || "s/d"}
+              <b>Depto {u.apartamento}</b> · {u.cliente} · {textoEquiposUnidad(u)}
               {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? `vencido hace ${Math.abs(alerta.dias)}d` : `en ${alerta.dias}d`}</span>}
             </label>
           );
@@ -18496,7 +18536,7 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
     <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span style={{ color: INK }}>
-          <b>Depto {entrada.apartamento}</b> · {entrada.cliente} · {entrada.equipo || "s/d"}{entrada.capacidad ? ` · ${entrada.capacidad}` : ""}
+          <b>Depto {entrada.apartamento}</b> · {entrada.cliente} · {textoEquiposUnidad(entrada)}
           {entrada.hito && <span style={{ color: MUTED }}> · service {entrada.hito}</span>}
         </span>
         {entrada.hecho ? (
@@ -18609,7 +18649,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
           return (
             <div key={u.id} className="flex items-center justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
               <span style={{ color: INK }}>
-                <b>Depto {u.apartamento}</b> · {u.cliente} · {u.equipo || "s/d"}{u.capacidad ? ` · ${u.capacidad}` : ""}
+                <b>Depto {u.apartamento}</b> · {u.cliente} · {textoEquiposUnidad(u)}
                 <span style={{ color: MUTED }}> · {u.tipoObra === "ventaCero" ? `venta ${fmtDate(u.fechaVenta)}` : "obra activa"}</span>
                 {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? "vencido" : `en ${alerta.dias}d`}</span>}
               </span>

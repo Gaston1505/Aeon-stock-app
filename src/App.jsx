@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye, List,
+  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth } from "./firebase";
@@ -175,6 +175,9 @@ const COLLECTIONS = {
   fichasObras: "fichasObras",
   facturasObra: "facturasObra",
   notasCredito: "notasCredito",
+  edificiosPostventa: "edificiosPostventa",
+  unidadesPostventa: "unidadesPostventa",
+  visitasPostventa: "visitasPostventa",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
@@ -2440,6 +2443,9 @@ export default function App() {
   const [fichasObras, setFichasObras] = useState([]);
   const [facturasObra, setFacturasObra] = useState([]);
   const [notasCredito, setNotasCredito] = useState([]);
+  const [edificiosPostventa, setEdificiosPostventa] = useState([]);
+  const [unidadesPostventa, setUnidadesPostventa] = useState([]);
+  const [visitasPostventa, setVisitasPostventa] = useState([]);
   const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
   const [pedidoAnticipoTarget, setPedidoAnticipoTarget] = useState(null); // cotización sobre la que se pide un anticipo (sin remito)
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
@@ -2506,6 +2512,9 @@ export default function App() {
       [COLLECTIONS.fichasObras]: setFichasObras,
       [COLLECTIONS.facturasObra]: setFacturasObra,
       [COLLECTIONS.notasCredito]: setNotasCredito,
+      [COLLECTIONS.edificiosPostventa]: setEdificiosPostventa,
+      [COLLECTIONS.unidadesPostventa]: setUnidadesPostventa,
+      [COLLECTIONS.visitasPostventa]: setVisitasPostventa,
       [COLLECTIONS.presupuestosReparacion]: setPresupuestosReparacion,
       [COLLECTIONS.clientes]: setClientes,
       [COLLECTIONS.transito]: setTransito,
@@ -3179,6 +3188,45 @@ export default function App() {
     return ref.id;
   };
   const borrarNotaCredito = (id) => deleteItem(COLLECTIONS.notasCredito, id);
+
+  // Mantenimiento postventa: edificios con varias unidades/apartamentos (cada uno con su propio
+  // equipo y cliente), agenda de visitas para coordinar el service, y el aviso de los 12/24 meses
+  // para las unidades de venta nueva. Independiente de Clientes/Obras — muchos edificios no tienen
+  // una obra cargada como tal (ventas viejas, o simplemente nunca se cotizó ahí).
+  const guardarEdificioPostventa = async (edificio) => {
+    const { id, ...data } = edificio;
+    const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
+    if (id) { await updateDoc(doc(db, COLLECTIONS.edificiosPostventa, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() }); return id; }
+    const ref = await addDoc(collection(db, COLLECTIONS.edificiosPostventa), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
+    return ref.id;
+  };
+  const borrarEdificioPostventa = (id) => deleteItem(COLLECTIONS.edificiosPostventa, id);
+  const guardarUnidadPostventa = async (unidad) => {
+    const { id, ...data } = unidad;
+    const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
+    if (id) { await updateDoc(doc(db, COLLECTIONS.unidadesPostventa, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() }); return id; }
+    const ref = await addDoc(collection(db, COLLECTIONS.unidadesPostventa), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
+    return ref.id;
+  };
+  const borrarUnidadPostventa = (id) => deleteItem(COLLECTIONS.unidadesPostventa, id);
+  const guardarVisitaPostventa = async (visita) => {
+    const { id, ...data } = visita;
+    const quien = { email: auth.currentUser?.email || null, uid: auth.currentUser?.uid || null };
+    if (id) { await updateDoc(doc(db, COLLECTIONS.visitasPostventa, id), { ...data, modificadoPorEmail: quien.email, modificadoEn: Date.now() }); return id; }
+    const ref = await addDoc(collection(db, COLLECTIONS.visitasPostventa), { ...data, createdAt: Date.now(), creadoPorEmail: quien.email, creadoPorUid: quien.uid });
+    return ref.id;
+  };
+  const borrarVisitaPostventa = (id) => deleteItem(COLLECTIONS.visitasPostventa, id);
+  // Marcar una unidad como hecha dentro de una visita: actualiza esa línea puntual (no toda la
+  // visita) y, si era un hito de 12 o 24 meses, también deja la fecha en la unidad para que la
+  // alerta no la siga marcando como pendiente.
+  const marcarUnidadVisitaHecha = async (visita, idx, { fechaHecho, informe }) => {
+    const unidades = visita.unidades.map((u, i) => (i === idx ? { ...u, hecho: true, fechaHecho, informe: (informe || "").trim() } : u));
+    await guardarVisitaPostventa({ id: visita.id, unidades });
+    const entrada = visita.unidades[idx];
+    if (entrada.hito === "12m") await guardarUnidadPostventa({ id: entrada.unidadId, service12Hecho: true, service12Fecha: fechaHecho });
+    else if (entrada.hito === "24m") await guardarUnidadPostventa({ id: entrada.unidadId, service24Hecho: true, service24Fecha: fechaHecho });
+  };
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   // El estado (Pendiente/Ganada/Perdida/Sin efecto) y si la cotización cuenta para la obra
   // (Principal/Suma/Historial, patch.cuentaObra) son cosas separadas a propósito: cambiar una
@@ -3221,6 +3269,19 @@ export default function App() {
     } catch (e) {
       console.error("Error generando Excel de la cotización", e);
       setPdfError("No se pudo generar el Excel de la cotización. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleDescargarPlanillaPostventa = async () => {
+    setDescargandoId("planilla-postventa");
+    setPdfError("");
+    try {
+      const { downloadPlanillaPostventaExcel } = await import("./postventaExcel");
+      await downloadPlanillaPostventaExcel(edificiosPostventa, unidadesPostventa, visitasPostventa);
+    } catch (e) {
+      console.error("Error generando la planilla de mantenimiento postventa", e);
+      setPdfError("No se pudo generar la planilla de mantenimiento postventa. Probá de nuevo.");
     }
     setDescargandoId(null);
   };
@@ -4157,6 +4218,7 @@ export default function App() {
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature, section: "Ventas" },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock, section: "Ventas" },
     { key: "ventas", label: "Garantías", icon: ShieldCheck, section: "Ventas" },
+    { key: "mantenimiento-postventa", label: "Mantenimiento postventa", icon: Building, section: "Ventas" },
     { key: "reclamos", label: "Historial de reclamos", icon: AlertTriangle, section: "Ventas" },
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer, section: "Ventas" },
     // Clientes
@@ -4522,6 +4584,18 @@ export default function App() {
               setDrawer("reclamo");
             }}
             descargandoId={descargandoId}
+            pdfError={pdfError}
+          />
+        )}
+
+        {tab === "mantenimiento-postventa" && (
+          <MantenimientoPostventaView
+            edificios={edificiosPostventa} unidades={unidadesPostventa} visitas={visitasPostventa} productos={productos}
+            query={query} onQuery={setQuery}
+            onGuardarEdificio={guardarEdificioPostventa} onBorrarEdificio={borrarEdificioPostventa}
+            onGuardarUnidad={guardarUnidadPostventa} onBorrarUnidad={borrarUnidadPostventa}
+            onGuardarVisita={guardarVisitaPostventa} onMarcarUnidadHecha={marcarUnidadVisitaHecha}
+            onExportarExcel={handleDescargarPlanillaPostventa} exportando={descargandoId === "planilla-postventa"}
             pdfError={pdfError}
           />
         )}
@@ -18243,6 +18317,394 @@ function ReclamoCard({ reclamo, onResolver, onReinstalar, onDelete }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Mantenimiento postventa ---------------------------------------------------------------------
+// Edificios con varias unidades (apartamentos), cada una con su propio equipo y cliente — pensado
+// para el service de aires en edificios, no para la relación Clientes/Obras (empresa+obra) que ya
+// tiene su propio seguimiento de garantía por venta completa en la pestaña Garantías. Acá la unidad
+// de seguimiento es el apartamento individual, porque el técnico va recorriendo depto por depto y
+// puede tardar varias visitas en terminar un edificio entero.
+
+// Unidad de venta nueva ("ventaCero"): a los 11 y 23 meses desde la venta hay que avisar para
+// coordinar el service obligatorio de los 12 y 24 meses. Devuelve el primer hito pendiente (12m
+// antes que 24m) o null si no hay nada que avisar todavía — una unidad "activa" (obra en curso, sin
+// venta de cero) no tiene este calendario fijo, el service ahí se agenda a demanda.
+function alertaUnidadPostventa(u) {
+  if (u.tipoObra !== "ventaCero" || !u.fechaVenta) return null;
+  for (const meses of [12, 24]) {
+    if (u[`service${meses}Hecho`]) continue;
+    const diasAviso = daysUntil(addMonthsISO(u.fechaVenta, meses - 1));
+    if (diasAviso > 0) continue; // todavía no se cumplió el mes de aviso (11 o 23)
+    const diasVto = daysUntil(addMonthsISO(u.fechaVenta, meses));
+    return { hito: `${meses}m`, vencido: diasVto < 0, dias: diasVto };
+  }
+  return null;
+}
+
+function EdificioForm({ edificio, onGuardar, onCancelar }) {
+  const [nombre, setNombre] = useState(edificio?.nombre || "");
+  const [direccion, setDireccion] = useState(edificio?.direccion || "");
+  const [notas, setNotas] = useState(edificio?.notas || "");
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const guardar = async () => {
+    if (!nombre.trim()) { setMsg("Cargá el nombre del edificio."); return; }
+    setOcupado(true);
+    try {
+      await onGuardar({ ...(edificio?.id ? { id: edificio.id } : {}), nombre: nombre.trim(), direccion: direccion.trim(), notas: notas.trim() });
+      onCancelar();
+    } catch (e) { setMsg(textoErrorFirestore(e, "edificiosPostventa")); }
+    setOcupado(false);
+  };
+  return (
+    <div className="p-3 rounded-lg border mb-3" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{edificio?.id ? "Editar edificio" : "Nuevo edificio"}</p>
+      <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Torres del Lago" /></Field>
+      <Field label="Dirección (opcional)"><TextInput value={direccion} onChange={(e) => setDireccion(e.target.value)} /></Field>
+      <Field label="Notas (opcional)"><Textarea value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+      </div>
+      {msg && <p className="text-xs mt-1.5" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
+function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
+  const [apartamento, setApartamento] = useState(unidad?.apartamento || "");
+  const [cliente, setCliente] = useState(unidad?.cliente || "");
+  const [telefono, setTelefono] = useState(unidad?.telefono || "");
+  const [equipo, setEquipo] = useState(unidad?.equipo || "");
+  const [capacidad, setCapacidad] = useState(unidad?.capacidad || "");
+  const [tipoObra, setTipoObra] = useState(unidad?.tipoObra || "ventaCero");
+  const [fechaVenta, setFechaVenta] = useState(unidad?.fechaVenta || todayISO());
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const guardar = async () => {
+    if (!apartamento.trim()) { setMsg("Cargá el número de apartamento."); return; }
+    if (!cliente.trim()) { setMsg("Cargá el nombre del cliente."); return; }
+    setOcupado(true);
+    try {
+      await onGuardar({
+        ...(unidad?.id ? { id: unidad.id } : {}),
+        apartamento: apartamento.trim(), cliente: cliente.trim(), telefono: telefono.trim(),
+        equipo: equipo.trim(), capacidad: capacidad.trim(), tipoObra,
+        fechaVenta: tipoObra === "ventaCero" ? fechaVenta : "",
+        activo: true,
+      });
+      onCancelar();
+    } catch (e) { setMsg(textoErrorFirestore(e, "unidadesPostventa")); }
+    setOcupado(false);
+  };
+  return (
+    <div className="p-3 rounded-lg border mb-2" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{unidad?.id ? "Editar unidad" : "Nueva unidad"}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="N° de apartamento"><TextInput value={apartamento} onChange={(e) => setApartamento(e.target.value)} placeholder="Ej: 302" /></Field>
+        <Field label="Cliente (inquilino/propietario)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="Teléfono (opcional)"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
+        <Field label="Capacidad"><TextInput value={capacidad} onChange={(e) => setCapacidad(e.target.value)} placeholder="Ej: 12.000 BTU" /></Field>
+      </div>
+      <Field label="Modelo / tipo de equipo"><SelectorModeloOTexto productos={productos} value={equipo} onChange={setEquipo} placeholder="Modelo instalado" /></Field>
+      <Field label="Situación">
+        <Select value={tipoObra} onChange={(e) => setTipoObra(e.target.value)}>
+          <option value="ventaCero">Venta nueva — service obligatorio a los 12 y 24 meses</option>
+          <option value="activa">Obra activa — ya tiene seguimiento propio, service a demanda</option>
+        </Select>
+      </Field>
+      {tipoObra === "ventaCero" && (
+        <Field label="Fecha de venta/instalación"><TextInput type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} /></Field>
+      )}
+      <div className="flex gap-2 mt-1">
+        <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+      </div>
+      {msg && <p className="text-xs mt-1.5" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
+// Agenda: elegir fecha + qué unidades entran en esta ronda de visitas — precarga las que ya tienen
+// aviso activo (service por vencer o vencido), pero se puede sumar/sacar cualquier otra.
+function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
+  const [fechaProgramada, setFechaProgramada] = useState(todayISO());
+  const [notas, setNotas] = useState("");
+  const [elegidas, setElegidas] = useState(() => new Set(unidades.filter((u) => alertaUnidadPostventa(u)).map((u) => u.id)));
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const alternar = (id) => setElegidas((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const guardar = async () => {
+    if (elegidas.size === 0) { setMsg("Elegí al menos una unidad."); return; }
+    setOcupado(true);
+    try {
+      const lineas = unidades.filter((u) => elegidas.has(u.id)).map((u) => {
+        const alerta = alertaUnidadPostventa(u);
+        return { unidadId: u.id, apartamento: u.apartamento, cliente: u.cliente, equipo: u.equipo, capacidad: u.capacidad, hito: alerta?.hito || null, hecho: false, fechaHecho: null, informe: "" };
+      });
+      await onGuardar({ edificioId: edificio.id, fechaProgramada, notas: notas.trim(), unidades: lineas });
+      onCancelar();
+    } catch (e) { setMsg(textoErrorFirestore(e, "visitasPostventa")); }
+    setOcupado(false);
+  };
+  return (
+    <div className="p-3 rounded-lg border mb-3" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: INK }}>Programar visita</p>
+      <Field label="Fecha programada"><TextInput type="date" value={fechaProgramada} onChange={(e) => setFechaProgramada(e.target.value)} /></Field>
+      <Field label="Notas (opcional)"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: coordinar con portería" /></Field>
+      <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Unidades a visitar</p>
+      <div className="space-y-1 mb-2 max-h-64 overflow-auto">
+        {unidades.map((u) => {
+          const alerta = alertaUnidadPostventa(u);
+          return (
+            <label key={u.id} className="flex items-center gap-2 text-xs p-1.5 rounded" style={{ color: INK, backgroundColor: alerta ? "#FDF1E0" : "transparent" }}>
+              <input type="checkbox" checked={elegidas.has(u.id)} onChange={() => alternar(u.id)} />
+              <b>Depto {u.apartamento}</b> · {u.cliente} · {u.equipo || "s/d"}
+              {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? `vencido hace ${Math.abs(alerta.dias)}d` : `en ${alerta.dias}d`}</span>}
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex gap-2">
+        <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Programar"}</PrimaryButton>
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+      </div>
+      {msg && <p className="text-xs mt-1.5" style={{ color: "#B91C1C" }}>{msg}</p>}
+    </div>
+  );
+}
+
+// Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
+// formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
+// depto porque la visita completa a veces lleva varias idas al edificio.
+function UnidadVisitaRow({ entrada, onMarcarHecha }) {
+  const [abierto, setAbierto] = useState(false);
+  const [fechaHecho, setFechaHecho] = useState(todayISO());
+  const [informe, setInforme] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const confirmar = async () => {
+    setOcupado(true);
+    await onMarcarHecha({ fechaHecho, informe });
+    setOcupado(false);
+    setAbierto(false);
+  };
+  return (
+    <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span style={{ color: INK }}>
+          <b>Depto {entrada.apartamento}</b> · {entrada.cliente} · {entrada.equipo || "s/d"}{entrada.capacidad ? ` · ${entrada.capacidad}` : ""}
+          {entrada.hito && <span style={{ color: MUTED }}> · service {entrada.hito}</span>}
+        </span>
+        {entrada.hecho ? (
+          <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+            Hecho {fmtDate(entrada.fechaHecho)}
+          </span>
+        ) : (
+          <SecondaryButton onClick={() => setAbierto((v) => !v)}>Marcar hecho</SecondaryButton>
+        )}
+      </div>
+      {entrada.hecho && entrada.informe && <p className="mt-1" style={{ color: MUTED }}>{entrada.informe}</p>}
+      {abierto && !entrada.hecho && (
+        <div className="mt-2 flex gap-2 flex-wrap items-end">
+          <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
+          <div style={{ minWidth: 220, flex: 1 }}>
+            <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
+          </div>
+          <PrimaryButton onClick={confirmar} disabled={ocupado}>{ocupado ? "Guardando..." : "Confirmar"}</PrimaryButton>
+          <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VisitaPostventaCard({ visita, onMarcarHecha }) {
+  const [abierto, setAbierto] = useState(false);
+  const hechas = visita.unidades.filter((u) => u.hecho).length;
+  const completa = hechas === visita.unidades.length;
+  return (
+    <div className="rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+      <button onClick={() => setAbierto((v) => !v)} className="w-full flex items-center justify-between gap-2 p-2.5 text-left">
+        <span className="text-sm" style={{ color: INK }}>
+          <b>{fmtDate(visita.fechaProgramada)}</b> · {hechas}/{visita.unidades.length} unidades
+          {visita.notas ? ` · ${visita.notas}` : ""}
+        </span>
+        <span className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: completa ? "#E9F7EF" : "#FDF1E0", color: completa ? "#15803D" : "#B45309" }}>
+            {completa ? "Completa" : "En curso"}
+          </span>
+          <ChevronDown size={16} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </span>
+      </button>
+      {abierto && (
+        <div className="px-2.5 pb-2.5 space-y-1.5">
+          {visita.unidades.map((u, i) => (
+            <UnidadVisitaRow key={u.unidadId} entrada={u} onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha }) {
+  const [editandoEdificio, setEditandoEdificio] = useState(false);
+  const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
+  const [programandoVisita, setProgramandoVisita] = useState(false);
+  const activas = unidades.filter((u) => u.activo !== false);
+  const alertas = activas.map((u) => ({ u, alerta: alertaUnidadPostventa(u) })).filter((x) => x.alerta);
+  const visitasOrdenadas = [...visitas].sort((a, b) => (b.fechaProgramada || "").localeCompare(a.fechaProgramada || ""));
+  return (
+    <div>
+      <button onClick={onVolver} className="text-xs mb-3 flex items-center gap-1" style={{ color: ACCENT }}><ArrowLeft size={13} /> Volver a edificios</button>
+      {editandoEdificio ? (
+        <EdificioForm edificio={edificio} onGuardar={onGuardarEdificio} onCancelar={() => setEditandoEdificio(false)} />
+      ) : (
+        <div className="flex items-start justify-between gap-2 mb-4">
+          <div>
+            <h2 className="text-xl font-bold" style={{ color: INK }}>{edificio.nombre}</h2>
+            {edificio.direccion && <p className="text-sm" style={{ color: MUTED }}>{edificio.direccion}</p>}
+            {edificio.notas && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{edificio.notas}</p>}
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <SecondaryButton onClick={() => setEditandoEdificio(true)}><Pencil size={13} /> Editar</SecondaryButton>
+            <SecondaryButton onClick={() => onBorrarEdificio(edificio.id)}><Trash2 size={13} /> Borrar</SecondaryButton>
+          </div>
+        </div>
+      )}
+
+      {alertas.length > 0 && (
+        <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <AlertTriangle size={15} style={{ color: "#B45309" }} />
+            <h3 className="text-sm font-bold" style={{ color: "#92400E" }}>Service por coordinar</h3>
+          </div>
+          {alertas.map(({ u, alerta }) => (
+            <p key={u.id} className="text-xs" style={{ color: "#92400E" }}>
+              · Depto {u.apartamento} ({u.cliente}) — service {alerta.hito} {alerta.vencido ? `vencido hace ${Math.abs(alerta.dias)}d` : `en ${alerta.dias}d`}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Unidades ({activas.length})</p>
+        <SecondaryButton onClick={() => setFormUnidad({})}><Plus size={13} /> Agregar unidad</SecondaryButton>
+      </div>
+      {formUnidad && (
+        <UnidadPostventaForm
+          unidad={formUnidad.id ? formUnidad : null} productos={productos}
+          onGuardar={(u) => onGuardarUnidad({ ...u, edificioId: edificio.id })}
+          onCancelar={() => setFormUnidad(null)}
+        />
+      )}
+      <div className="space-y-1.5 mb-5">
+        {activas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay unidades cargadas en este edificio.</p>}
+        {activas.map((u) => {
+          const alerta = alertaUnidadPostventa(u);
+          return (
+            <div key={u.id} className="flex items-center justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+              <span style={{ color: INK }}>
+                <b>Depto {u.apartamento}</b> · {u.cliente} · {u.equipo || "s/d"}{u.capacidad ? ` · ${u.capacidad}` : ""}
+                <span style={{ color: MUTED }}> · {u.tipoObra === "ventaCero" ? `venta ${fmtDate(u.fechaVenta)}` : "obra activa"}</span>
+                {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? "vencido" : `en ${alerta.dias}d`}</span>}
+              </span>
+              <span className="flex gap-1 shrink-0 items-center">
+                <button type="button" onClick={() => setFormUnidad(u)} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
+                <button type="button" onClick={() => onBorrarUnidad(u.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Agenda de visitas</p>
+        {activas.length > 0 && <SecondaryButton onClick={() => setProgramandoVisita(true)}><CalendarCheck size={13} /> Programar visita</SecondaryButton>}
+      </div>
+      {programandoVisita && (
+        <VisitaPostventaForm edificio={edificio} unidades={activas} onGuardar={onGuardarVisita} onCancelar={() => setProgramandoVisita(false)} />
+      )}
+      <div className="space-y-1.5">
+        {visitasOrdenadas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay visitas programadas.</p>}
+        {visitasOrdenadas.map((v) => (
+          <VisitaPostventaCard key={v.id} visita={v} onMarcarHecha={onMarcarUnidadHecha} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha, onExportarExcel, exportando, pdfError }) {
+  const [edificioSelId, setEdificioSelId] = useState(null);
+  const [nuevoEdificio, setNuevoEdificio] = useState(false);
+  const q = (query || "").trim().toLowerCase();
+  const visibles = edificios.filter((e) => !q || (e.nombre || "").toLowerCase().includes(q));
+
+  const edificioSel = edificioSelId ? edificios.find((e) => e.id === edificioSelId) : null;
+  if (edificioSel) {
+    return (
+      <EdificioDetalle
+        edificio={edificioSel}
+        unidades={unidades.filter((u) => u.edificioId === edificioSel.id)}
+        visitas={visitas.filter((v) => v.edificioId === edificioSel.id)}
+        productos={productos}
+        onVolver={() => setEdificioSelId(null)}
+        onGuardarEdificio={onGuardarEdificio} onBorrarEdificio={onBorrarEdificio}
+        onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
+        onGuardarVisita={onGuardarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
+      />
+    );
+  }
+
+  return (
+    <Section
+      title="Mantenimiento postventa"
+      subtitle="Edificios con varias unidades: cliente, apartamento, equipo y agenda de service por depto."
+      query={query} onQuery={onQuery}
+      onNew={() => setNuevoEdificio(true)} newLabel="Nuevo edificio"
+      extraActions={edificios.length > 0 && (
+        <SecondaryButton onClick={onExportarExcel} disabled={exportando}>
+          <Download size={14} /> {exportando ? "Generando..." : "Exportar planilla Excel"}
+        </SecondaryButton>
+      )}
+    >
+      {pdfError && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{pdfError}</p>}
+      {nuevoEdificio && <EdificioForm onGuardar={onGuardarEdificio} onCancelar={() => setNuevoEdificio(false)} />}
+      {visibles.length === 0 ? (
+        <EmptyState icon={Building} title="Todavía no hay edificios cargados" subtitle="Usá el botón de arriba para cargar el primero." />
+      ) : (
+        <div className="space-y-2">
+          {visibles.map((e) => {
+            const unidadesDe = unidades.filter((u) => u.edificioId === e.id && u.activo !== false);
+            const alertasDe = unidadesDe.filter((u) => alertaUnidadPostventa(u));
+            return (
+              <button
+                key={e.id} onClick={() => setEdificioSelId(e.id)}
+                className="w-full flex items-center justify-between gap-2 p-4 rounded-xl text-left"
+                style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}
+              >
+                <div>
+                  <p className="text-base font-bold" style={{ color: INK }}>{e.nombre}</p>
+                  <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+                    {unidadesDe.length} unidad{unidadesDe.length !== 1 ? "es" : ""}{e.direccion ? ` · ${e.direccion}` : ""}
+                  </p>
+                </div>
+                {alertasDe.length > 0 && (
+                  <span className="text-[11px] px-2 py-1 rounded-full font-medium shrink-0" style={{ backgroundColor: "#FDF1E0", color: "#B45309" }}>
+                    {alertasDe.length} con service por coordinar
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Section>
   );
 }
 

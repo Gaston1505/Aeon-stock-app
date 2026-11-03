@@ -105,6 +105,9 @@ service cloud.firestore {
     match /fichasObras/{docId} { allow read, write: if esAdmin(); }
     match /facturasObra/{docId} { allow read, write: if esAdmin(); }
     match /notasCredito/{docId} { allow read, write: if esAdmin(); }
+    match /edificiosPostventa/{docId} { allow read, write: if esAdmin(); }
+    match /unidadesPostventa/{docId} { allow read, write: if esAdmin(); }
+    match /visitasPostventa/{docId} { allow read, write: if esAdmin(); }
     match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
     match /clientes/{docId} { allow read, write: if esAdmin(); }
     match /transito/{docId} { allow read, write: if esAdmin(); }

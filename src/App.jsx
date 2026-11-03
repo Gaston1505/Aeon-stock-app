@@ -16316,13 +16316,13 @@ function NotaCreditoLineas({ lineas, productos, onChange }) {
   return (
     <div className="space-y-2 mb-2">
       {lineas.map((l, i) => (
-        <div key={i} className="flex items-end gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
+        <div key={i} className="flex items-start gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
           <div style={{ minWidth: 180, flex: 1 }}>
             <Field label="Producto"><SelectorModeloOTexto productos={productos} value={l.codigo} onChange={(v) => set(i, { codigo: v })} placeholder="Modelo afectado" /></Field>
           </div>
           <div style={{ width: 80 }}><Field label="Cant."><TextInput type="number" value={l.cantidad} onChange={(e) => set(i, { cantidad: e.target.value })} /></Field></div>
           <div style={{ width: 110 }}><Field label="Monto U$S"><TextInput type="number" step="0.01" value={l.monto} onChange={(e) => set(i, { monto: e.target.value })} /></Field></div>
-          <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mb-1.5"><Trash2 size={14} style={{ color: MUTED }} /></button>
+          <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mt-5"><Trash2 size={14} style={{ color: MUTED }} /></button>
         </div>
       ))}
       <SecondaryButton onClick={agregar}><Plus size={13} /> Agregar línea</SecondaryButton>
@@ -18366,13 +18366,13 @@ function EquiposUnidadLineas({ equipos, productos, onChange }) {
   return (
     <div className="space-y-2 mb-2">
       {equipos.map((eq, i) => (
-        <div key={i} className="flex items-end gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
+        <div key={i} className="flex items-start gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
           <div style={{ minWidth: 200, flex: 1 }}>
             <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={eq.modelo} onChange={(v) => set(i, { modelo: v })} placeholder="Modelo instalado" /></Field>
           </div>
           <div style={{ width: 140 }}><Field label="Capacidad"><TextInput value={eq.capacidad} onChange={(e) => set(i, { capacidad: e.target.value })} placeholder="Ej: 12.000 BTU" /></Field></div>
           {equipos.length > 1 && (
-            <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mb-1.5"><Trash2 size={14} style={{ color: MUTED }} /></button>
+            <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mt-5"><Trash2 size={14} style={{ color: MUTED }} /></button>
           )}
         </div>
       ))}

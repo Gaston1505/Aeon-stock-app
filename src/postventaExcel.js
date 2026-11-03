@@ -17,6 +17,8 @@ const AMBAR_CLARO = "FFFDF1E0";
 const ROJO = "FFB91C1C";
 const ROJO_CLARO = "FFFBEAEA";
 
+const fmtGs = (n) => `Gs ${Math.round(Number(n) || 0).toLocaleString("es-PY")}`;
+
 function thinBorder() {
   const side = { style: "thin", color: { argb: BORDER } };
   return { top: side, bottom: side, left: side, right: side };
@@ -75,6 +77,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
     { key: "service12", width: 20 },
     { key: "service24", width: 20 },
     { key: "ultimoInforme", width: 40 },
+    { key: "ganancia", width: 18 },
   ];
   sheet.columns = cols;
   const lastCol = cols.length;
@@ -110,7 +113,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
   sheet.getRow(r).height = 22;
   r += 2;
 
-  const headers = ["Edificio", "Apartamento", "Cliente", "Equipos instalados", "Situación", "Fecha de venta", "Service 12 meses", "Service 24 meses", "Último informe técnico"];
+  const headers = ["Edificio", "Apartamento", "Cliente", "Equipos instalados", "Situación", "Fecha de venta", "Service 12 meses", "Service 24 meses", "Último informe técnico", "Ganancia AEON acumulada"];
   headers.forEach((h, i) => {
     const cell = sheet.getCell(r, i + 1);
     cell.value = h;
@@ -136,6 +139,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
     }
     entregas.sort((a, b) => (b.fechaHecho || "").localeCompare(a.fechaHecho || ""));
     const ultimo = entregas[0];
+    const gananciaTotal = entregas.reduce((a, e) => a + ((Number(e.montoCliente) || 0) - (Number(e.montoInstalador) || 0)) / 2, 0);
     const s12 = estadoHito(u, 12);
     const s24 = estadoHito(u, 24);
     const equiposTexto = (u.equipos?.length ? u.equipos : u.equipo ? [{ modelo: u.equipo, capacidad: u.capacidad }] : [])
@@ -152,6 +156,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
       s12.texto,
       s24.texto,
       ultimo ? `${fmtFecha(ultimo.fechaHecho)}: ${ultimo.informe || "—"}` : "",
+      gananciaTotal !== 0 ? fmtGs(gananciaTotal) : "",
     ];
     row.forEach((val, i) => {
       const cell = sheet.getCell(r, i + 1);

@@ -3217,15 +3217,30 @@ export default function App() {
     return ref.id;
   };
   const borrarVisitaPostventa = (id) => deleteItem(COLLECTIONS.visitasPostventa, id);
-  // Marcar una unidad como hecha dentro de una visita: actualiza esa línea puntual (no toda la
-  // visita) y, si era un hito de 12 o 24 meses, también deja la fecha en la unidad para que la
-  // alerta no la siga marcando como pendiente.
-  const marcarUnidadVisitaHecha = async (visita, idx, { fechaHecho, informe }) => {
-    const unidades = visita.unidades.map((u, i) => (i === idx ? { ...u, hecho: true, fechaHecho, informe: (informe || "").trim() } : u));
+  // Si el hito cerrado era el service de 12 o 24 meses, deja la fecha en la unidad para que la
+  // alerta no la siga marcando como pendiente — un service "a demanda" (obra activa, sin hito) no
+  // toca nada acá, solo queda el registro de la visita.
+  const aplicarServiceHechoAUnidad = async (unidadId, hito, fechaHecho) => {
+    if (hito === "12m") await guardarUnidadPostventa({ id: unidadId, service12Hecho: true, service12Fecha: fechaHecho });
+    else if (hito === "24m") await guardarUnidadPostventa({ id: unidadId, service24Hecho: true, service24Fecha: fechaHecho });
+  };
+  // Marcar una unidad como hecha dentro de una visita ya programada: actualiza esa línea puntual
+  // (no toda la visita).
+  const marcarUnidadVisitaHecha = async (visita, idx, datos) => {
+    const unidades = visita.unidades.map((u, i) => (i === idx ? { ...u, hecho: true, ...datos } : u));
     await guardarVisitaPostventa({ id: visita.id, unidades });
     const entrada = visita.unidades[idx];
-    if (entrada.hito === "12m") await guardarUnidadPostventa({ id: entrada.unidadId, service12Hecho: true, service12Fecha: fechaHecho });
-    else if (entrada.hito === "24m") await guardarUnidadPostventa({ id: entrada.unidadId, service24Hecho: true, service24Fecha: fechaHecho });
+    await aplicarServiceHechoAUnidad(entrada.unidadId, entrada.hito, datos.fechaHecho);
+  };
+  // Cargar un service que ya se hizo, sin pasar por "Programar visita" — para ir tomando registro
+  // de los que se hacen sobre la marcha o de los que ya se hicieron antes de tener esta sección.
+  // Crea una visita de un solo renglón, ya marcado hecho, con el mismo esquema que una programada.
+  const registrarServiceRealizado = async (unidad, datos) => {
+    const alerta = alertaUnidadPostventa(unidad);
+    const hito = alerta?.hito || null;
+    const entrada = { unidadId: unidad.id, apartamento: unidad.apartamento, cliente: unidad.cliente, equipos: equiposDeUnidad(unidad), hito, hecho: true, ...datos };
+    await guardarVisitaPostventa({ edificioId: unidad.edificioId, fechaProgramada: datos.fechaHecho, notas: "Cargado directamente como service ya realizado", unidades: [entrada] });
+    await aplicarServiceHechoAUnidad(unidad.id, hito, datos.fechaHecho);
   };
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   // El estado (Pendiente/Ganada/Perdida/Sin efecto) y si la cotización cuenta para la obra
@@ -4595,6 +4610,7 @@ export default function App() {
             onGuardarEdificio={guardarEdificioPostventa} onBorrarEdificio={borrarEdificioPostventa}
             onGuardarUnidad={guardarUnidadPostventa} onBorrarUnidad={borrarUnidadPostventa}
             onGuardarVisita={guardarVisitaPostventa} onMarcarUnidadHecha={marcarUnidadVisitaHecha}
+            onRegistrarServiceRealizado={registrarServiceRealizado}
             onExportarExcel={handleDescargarPlanillaPostventa} exportando={descargandoId === "planilla-postventa"}
             pdfError={pdfError}
           />
@@ -15720,6 +15736,9 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
 const MAX_ADJUNTO_BYTES = 600 * 1024;
 const TIPOS_PAGO_OBRA = ["Adelanto", "Pago parcial", "Saldo final", "Otro"];
 const usd = (n) => `U$S ${(Number(n) || 0).toLocaleString("es-PY", { maximumFractionDigits: 2 })}`;
+// El service de mantenimiento postventa se cobra en guaraníes (como la tabla de Luis en
+// SERVICIO_TECNICO_PRECIOS), a diferencia del resto de la app que trabaja en dólares.
+const fmtGs = (n) => `Gs ${Math.round(Number(n) || 0).toLocaleString("es-PY")}`;
 const idFichaObra = (empresaKey, obraKey) => `${encodeURIComponent(empresaKey)}__${encodeURIComponent(obraKey)}`;
 const textoErrorFirestore = (e, coleccion) =>
   e?.code === "permission-denied"
@@ -18343,6 +18362,13 @@ function alertaUnidadPostventa(u) {
   return null;
 }
 
+// El service lo hace una empresa instaladora tercerizada (ej. Delta SRL): se le cobra al cliente
+// un monto, se le paga a la instaladora un costo menor, y la diferencia se reparte mitad y mitad
+// entre AEON y la instaladora — esta es la parte que queda para AEON.
+function gananciaAeonService(montoCliente, montoInstalador) {
+  return ((Number(montoCliente) || 0) - (Number(montoInstalador) || 0)) / 2;
+}
+
 // Una unidad puede tener varios equipos (ej. living + dormitorio) — `equipos` es la forma actual
 // ([{modelo,capacidad}]); `equipo`/`capacidad` sueltos quedan como lectura de compatibilidad por si
 // quedó algún registro viejo guardado antes de este cambio.
@@ -18525,10 +18551,12 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(todayISO());
   const [informe, setInforme] = useState("");
+  const [montoCliente, setMontoCliente] = useState("");
+  const [montoInstalador, setMontoInstalador] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const confirmar = async () => {
     setOcupado(true);
-    await onMarcarHecha({ fechaHecho, informe });
+    await onMarcarHecha({ fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0 });
     setOcupado(false);
     setAbierto(false);
   };
@@ -18548,16 +18576,70 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
         )}
       </div>
       {entrada.hecho && entrada.informe && <p className="mt-1" style={{ color: MUTED }}>{entrada.informe}</p>}
+      {entrada.hecho && (entrada.montoCliente || entrada.montoInstalador) && (
+        <p className="mt-0.5" style={{ color: MUTED }}>
+          Cliente {fmtGs(entrada.montoCliente)} · Instaladora {fmtGs(entrada.montoInstalador)} · Ganancia AEON {fmtGs(gananciaAeonService(entrada.montoCliente, entrada.montoInstalador))}
+        </p>
+      )}
       {abierto && !entrada.hecho && (
-        <div className="mt-2 flex gap-2 flex-wrap items-end">
-          <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
-          <div style={{ minWidth: 220, flex: 1 }}>
-            <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
+        <div className="mt-2">
+          <div className="flex gap-2 flex-wrap items-end">
+            <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
+            <div style={{ minWidth: 220, flex: 1 }}>
+              <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
+            </div>
           </div>
-          <PrimaryButton onClick={confirmar} disabled={ocupado}>{ocupado ? "Guardando..." : "Confirmar"}</PrimaryButton>
-          <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
+          <div className="flex gap-2 flex-wrap items-end">
+            <Field label="Costo al cliente (Gs)"><TextInput type="number" value={montoCliente} onChange={(e) => setMontoCliente(e.target.value)} placeholder="Ej: 330000" /></Field>
+            <Field label="Costo de la instaladora (Gs)"><TextInput type="number" value={montoInstalador} onChange={(e) => setMontoInstalador(e.target.value)} placeholder="Ej: 180000" /></Field>
+            <PrimaryButton onClick={confirmar} disabled={ocupado}>{ocupado ? "Guardando..." : "Confirmar"}</PrimaryButton>
+            <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
+          </div>
+          {(montoCliente || montoInstalador) && (
+            <p className="text-xs mt-1" style={{ color: MUTED }}>Ganancia AEON (mitad de la diferencia): <b style={{ color: INK }}>{fmtGs(gananciaAeonService(montoCliente, montoInstalador))}</b></p>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Mismo flujo que "Marcar hecho" de una visita programada, pero disparado directo desde la unidad
+// (sin pasar por el paso de agendar) — para ir cargando service que ya se hicieron.
+function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
+  const [fechaHecho, setFechaHecho] = useState(todayISO());
+  const [informe, setInforme] = useState("");
+  const [montoCliente, setMontoCliente] = useState("");
+  const [montoInstalador, setMontoInstalador] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const guardar = async () => {
+    setOcupado(true);
+    try {
+      await onGuardar({ fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0 });
+      onCancelar();
+    } catch (e) { setMsg(textoErrorFirestore(e, "visitasPostventa")); }
+    setOcupado(false);
+  };
+  return (
+    <div className="p-3 rounded-lg border mt-1.5 mb-1.5" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: INK }}>Registrar service ya realizado — Depto {unidad.apartamento}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
+        <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="Costo al cliente (Gs)"><TextInput type="number" value={montoCliente} onChange={(e) => setMontoCliente(e.target.value)} placeholder="Ej: 330000" /></Field>
+        <Field label="Costo de la instaladora (Gs)"><TextInput type="number" value={montoInstalador} onChange={(e) => setMontoInstalador(e.target.value)} placeholder="Ej: 180000" /></Field>
+      </div>
+      {(montoCliente || montoInstalador) && (
+        <p className="text-xs mb-2" style={{ color: MUTED }}>Ganancia AEON (mitad de la diferencia): <b style={{ color: INK }}>{fmtGs(gananciaAeonService(montoCliente, montoInstalador))}</b></p>
+      )}
+      <div className="flex gap-2">
+        <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+      </div>
+      {msg && <p className="text-xs mt-1.5" style={{ color: "#B91C1C" }}>{msg}</p>}
     </div>
   );
 }
@@ -18591,13 +18673,16 @@ function VisitaPostventaCard({ visita, onMarcarHecha }) {
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
+  const [registrandoUnidadId, setRegistrandoUnidadId] = useState(null);
   const activas = unidades.filter((u) => u.activo !== false);
   const alertas = activas.map((u) => ({ u, alerta: alertaUnidadPostventa(u) })).filter((x) => x.alerta);
   const visitasOrdenadas = [...visitas].sort((a, b) => (b.fechaProgramada || "").localeCompare(a.fechaProgramada || ""));
+  const serviciosHechos = visitas.flatMap((v) => (v.unidades || []).filter((u) => u.hecho));
+  const gananciaTotal = serviciosHechos.reduce((a, u) => a + gananciaAeonService(u.montoCliente, u.montoInstalador), 0);
   return (
     <div>
       <button onClick={onVolver} className="text-xs mb-3 flex items-center gap-1" style={{ color: ACCENT }}><ArrowLeft size={13} /> Volver a edificios</button>
@@ -18647,23 +18732,36 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
         {activas.map((u) => {
           const alerta = alertaUnidadPostventa(u);
           return (
-            <div key={u.id} className="flex items-center justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
-              <span style={{ color: INK }}>
-                <b>Depto {u.apartamento}</b> · {u.cliente} · {textoEquiposUnidad(u)}
-                <span style={{ color: MUTED }}> · {u.tipoObra === "ventaCero" ? `venta ${fmtDate(u.fechaVenta)}` : "obra activa"}</span>
-                {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? "vencido" : `en ${alerta.dias}d`}</span>}
-              </span>
-              <span className="flex gap-1 shrink-0 items-center">
-                <button type="button" onClick={() => setFormUnidad(u)} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
-                <button type="button" onClick={() => onBorrarUnidad(u.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
-              </span>
+            <div key={u.id}>
+              <div className="flex items-center justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <span style={{ color: INK }}>
+                  <b>Depto {u.apartamento}</b> · {u.cliente} · {textoEquiposUnidad(u)}
+                  <span style={{ color: MUTED }}> · {u.tipoObra === "ventaCero" ? `venta ${fmtDate(u.fechaVenta)}` : "obra activa"}</span>
+                  {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? "vencido" : `en ${alerta.dias}d`}</span>}
+                </span>
+                <span className="flex gap-1 shrink-0 items-center">
+                  <button type="button" onClick={() => setRegistrandoUnidadId((v) => (v === u.id ? null : u.id))} title="Registrar service ya realizado" className="p-1 rounded hover:bg-gray-100"><Wrench size={12} style={{ color: ACCENT }} /></button>
+                  <button type="button" onClick={() => setFormUnidad(u)} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
+                  <button type="button" onClick={() => onBorrarUnidad(u.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
+                </span>
+              </div>
+              {registrandoUnidadId === u.id && (
+                <ServiceRealizadoDirectoForm
+                  unidad={u}
+                  onGuardar={(datos) => onRegistrarServiceRealizado(u, datos)}
+                  onCancelar={() => setRegistrandoUnidadId(null)}
+                />
+              )}
             </div>
           );
         })}
       </div>
 
       <div className="flex items-center justify-between mb-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Agenda de visitas</p>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Agenda de visitas</p>
+          {gananciaTotal !== 0 && <p className="text-xs mt-0.5" style={{ color: MUTED }}>Ganancia acumulada de mantenimiento: <b style={{ color: INK }}>{fmtGs(gananciaTotal)}</b></p>}
+        </div>
         {activas.length > 0 && <SecondaryButton onClick={() => setProgramandoVisita(true)}><CalendarCheck size={13} /> Programar visita</SecondaryButton>}
       </div>
       {programandoVisita && (
@@ -18679,7 +18777,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha, onExportarExcel, exportando, pdfError }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const q = (query || "").trim().toLowerCase();
@@ -18697,6 +18795,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onGuardarEdificio={onGuardarEdificio} onBorrarEdificio={onBorrarEdificio}
         onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
         onGuardarVisita={onGuardarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
+        onRegistrarServiceRealizado={onRegistrarServiceRealizado}
       />
     );
   }

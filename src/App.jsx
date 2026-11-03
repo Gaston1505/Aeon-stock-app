@@ -4609,7 +4609,7 @@ export default function App() {
             query={query} onQuery={setQuery}
             onGuardarEdificio={guardarEdificioPostventa} onBorrarEdificio={borrarEdificioPostventa}
             onGuardarUnidad={guardarUnidadPostventa} onBorrarUnidad={borrarUnidadPostventa}
-            onGuardarVisita={guardarVisitaPostventa} onMarcarUnidadHecha={marcarUnidadVisitaHecha}
+            onGuardarVisita={guardarVisitaPostventa} onBorrarVisita={borrarVisitaPostventa} onMarcarUnidadHecha={marcarUnidadVisitaHecha}
             onRegistrarServiceRealizado={registrarServiceRealizado}
             onExportarExcel={handleDescargarPlanillaPostventa} exportando={descargandoId === "planilla-postventa"}
             pdfError={pdfError}
@@ -18549,11 +18549,20 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
 // depto porque la visita completa a veces lleva varias idas al edificio.
 function UnidadVisitaRow({ entrada, onMarcarHecha }) {
   const [abierto, setAbierto] = useState(false);
-  const [fechaHecho, setFechaHecho] = useState(todayISO());
-  const [informe, setInforme] = useState("");
-  const [montoCliente, setMontoCliente] = useState("");
-  const [montoInstalador, setMontoInstalador] = useState("");
+  const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
+  const [informe, setInforme] = useState(entrada.informe || "");
+  const [montoCliente, setMontoCliente] = useState(entrada.montoCliente ? String(entrada.montoCliente) : "");
+  const [montoInstalador, setMontoInstalador] = useState(entrada.montoInstalador ? String(entrada.montoInstalador) : "");
   const [ocupado, setOcupado] = useState(false);
+  // Al abrir para editar un hecho ya cargado, arranca de los valores guardados — abrir con un
+  // formulario en blanco era lo que obligaba a "recargar de cero" en vez de corregir un dato.
+  const abrir = () => {
+    setFechaHecho(entrada.fechaHecho || todayISO());
+    setInforme(entrada.informe || "");
+    setMontoCliente(entrada.montoCliente ? String(entrada.montoCliente) : "");
+    setMontoInstalador(entrada.montoInstalador ? String(entrada.montoInstalador) : "");
+    setAbierto(true);
+  };
   const confirmar = async () => {
     setOcupado(true);
     await onMarcarHecha({ fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0 });
@@ -18568,11 +18577,14 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
           {entrada.hito && <span style={{ color: MUTED }}> · service {entrada.hito}</span>}
         </span>
         {entrada.hecho ? (
-          <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
-            Hecho {fmtDate(entrada.fechaHecho)}
+          <span className="flex items-center gap-1.5">
+            <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+              Hecho {fmtDate(entrada.fechaHecho)}
+            </span>
+            <button type="button" onClick={abrir} title="Corregir este service" className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
           </span>
         ) : (
-          <SecondaryButton onClick={() => setAbierto((v) => !v)}>Marcar hecho</SecondaryButton>
+          <SecondaryButton onClick={abrir}>Marcar hecho</SecondaryButton>
         )}
       </div>
       {entrada.hecho && entrada.informe && <p className="mt-1" style={{ color: MUTED }}>{entrada.informe}</p>}
@@ -18581,7 +18593,7 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
           Cliente {fmtGs(entrada.montoCliente)} · Instaladora {fmtGs(entrada.montoInstalador)} · Ganancia AEON {fmtGs(gananciaAeonService(entrada.montoCliente, entrada.montoInstalador))}
         </p>
       )}
-      {abierto && !entrada.hecho && (
+      {abierto && (
         <div className="mt-2">
           <div className="flex gap-2 flex-wrap items-end">
             <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
@@ -18644,10 +18656,27 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, onMarcarHecha }) {
+function VisitaPostventaCard({ visita, onMarcarHecha, onGuardarVisita, onBorrarVisita }) {
   const [abierto, setAbierto] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
+  const [notas, setNotas] = useState(visita.notas || "");
+  const [ocupado, setOcupado] = useState(false);
   const hechas = visita.unidades.filter((u) => u.hecho).length;
   const completa = hechas === visita.unidades.length;
+  const abrirEdicion = (e) => {
+    e.stopPropagation();
+    setFechaProgramada(visita.fechaProgramada || todayISO());
+    setNotas(visita.notas || "");
+    setEditando(true);
+    setAbierto(true);
+  };
+  const guardarEdicion = async () => {
+    setOcupado(true);
+    await onGuardarVisita({ id: visita.id, fechaProgramada, notas: notas.trim() });
+    setOcupado(false);
+    setEditando(false);
+  };
   return (
     <div className="rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
       <button onClick={() => setAbierto((v) => !v)} className="w-full flex items-center justify-between gap-2 p-2.5 text-left">
@@ -18659,11 +18688,23 @@ function VisitaPostventaCard({ visita, onMarcarHecha }) {
           <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: completa ? "#E9F7EF" : "#FDF1E0", color: completa ? "#15803D" : "#B45309" }}>
             {completa ? "Completa" : "En curso"}
           </span>
+          <span role="button" onClick={abrirEdicion} title="Editar fecha/notas de la visita" className="p-1 rounded hover:bg-gray-100"><Pencil size={13} style={{ color: MUTED }} /></span>
+          <span role="button" onClick={(e) => { e.stopPropagation(); onBorrarVisita(visita.id); }} title="Borrar visita" className="p-1 rounded hover:bg-gray-100"><Trash2 size={13} style={{ color: MUTED }} /></span>
           <ChevronDown size={16} style={{ color: ACCENT, transform: abierto ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
         </span>
       </button>
       {abierto && (
         <div className="px-2.5 pb-2.5 space-y-1.5">
+          {editando && (
+            <div className="p-2 rounded border flex gap-2 flex-wrap items-end" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+              <Field label="Fecha programada"><TextInput type="date" value={fechaProgramada} onChange={(e) => setFechaProgramada(e.target.value)} /></Field>
+              <div style={{ minWidth: 200, flex: 1 }}>
+                <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+              </div>
+              <PrimaryButton onClick={guardarEdicion} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+              <SecondaryButton onClick={() => setEditando(false)}>Cancelar</SecondaryButton>
+            </div>
+          )}
           {visita.unidades.map((u, i) => (
             <UnidadVisitaRow key={u.unidadId} entrada={u} onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)} />
           ))}
@@ -18673,7 +18714,7 @@ function VisitaPostventaCard({ visita, onMarcarHecha }) {
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -18770,14 +18811,14 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
       <div className="space-y-1.5">
         {visitasOrdenadas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay visitas programadas.</p>}
         {visitasOrdenadas.map((v) => (
-          <VisitaPostventaCard key={v.id} visita={v} onMarcarHecha={onMarcarUnidadHecha} />
+          <VisitaPostventaCard key={v.id} visita={v} onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} />
         ))}
       </div>
     </div>
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const q = (query || "").trim().toLowerCase();
@@ -18794,7 +18835,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onVolver={() => setEdificioSelId(null)}
         onGuardarEdificio={onGuardarEdificio} onBorrarEdificio={onBorrarEdificio}
         onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
-        onGuardarVisita={onGuardarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
+        onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
       />
     );

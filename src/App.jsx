@@ -25,6 +25,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
+  downloadReciboServicioPdf,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
@@ -1596,6 +1597,27 @@ function parseCatalogoExcel(arrayBuffer) {
   });
   return { productos, errores };
 }
+// Importación de clientes por edificio para Mantenimiento postventa, a partir de un Excel con el
+// mismo layout que maneja Servicio Técnico (columna E = nombre del edificio, solo en la primera
+// fila de cada bloque; F = apartamento; G = cliente; H = teléfono). No crea equipos ni fecha de
+// venta — eso se completa a mano después, el import solo deja cargados edificio/depto/cliente/tel.
+function parseClientesPostventaExcel(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const filas = [];
+  let edificioActual = "";
+  for (const row of rows) {
+    const edificioCelda = String(row[4] || "").trim();
+    const apartamento = String(row[5] || "").trim();
+    const cliente = String(row[6] || "").trim();
+    const telefono = String(row[7] || "").trim();
+    if (edificioCelda) edificioActual = edificioCelda;
+    if (!apartamento || !cliente) continue;
+    filas.push({ edificioNombre: edificioActual, apartamento, cliente, telefono });
+  }
+  return filas;
+}
 function descargarPlantillaCatalogo() {
   const wb = XLSX.utils.book_new();
   const filas = [{
@@ -2495,6 +2517,8 @@ export default function App() {
   const [pdfError, setPdfError] = useState("");
   const [importandoCatalogo, setImportandoCatalogo] = useState(false);
   const [importResultado, setImportResultado] = useState("");
+  const [importandoClientesPostventa, setImportandoClientesPostventa] = useState(false);
+  const [importResultadoPostventa, setImportResultadoPostventa] = useState("");
 
   useEffect(() => {
     if (!user) return;
@@ -3483,6 +3507,18 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const handleDescargarReciboServicio = async (datos) => {
+    setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:recibo`);
+    setPdfError("");
+    try {
+      await downloadReciboServicioPdf(datos);
+    } catch (e) {
+      console.error("Error generando recibo de servicio", e);
+      setPdfError("No se pudo generar el recibo de servicio. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const addPresupuestoReparacion = (data) => addItem(COLLECTIONS.presupuestosReparacion, data);
   const deletePresupuestoReparacion = (id) => deleteItem(COLLECTIONS.presupuestosReparacion, id);
 
@@ -3783,6 +3819,44 @@ export default function App() {
       setImportResultado("No se pudo leer el archivo. Verificá que sea un .xlsx válido.");
     }
     setImportandoCatalogo(false);
+  };
+
+  const handleImportarClientesPostventa = async (file) => {
+    setImportandoClientesPostventa(true);
+    setImportResultadoPostventa("");
+    try {
+      const buffer = await file.arrayBuffer();
+      const filas = parseClientesPostventaExcel(buffer);
+      const edificioIdPorNombre = new Map(edificiosPostventa.map((e) => [(e.nombre || "").trim().toLowerCase(), e.id]));
+      const existentes = new Set(unidadesPostventa.map((u) => `${u.edificioId}::${(u.apartamento || "").trim()}`));
+      let edificiosCreados = 0, unidadesCreadas = 0, yaExistian = 0;
+      for (const fila of filas) {
+        const key = fila.edificioNombre.trim().toLowerCase();
+        let edificioId = edificioIdPorNombre.get(key);
+        if (!edificioId) {
+          edificioId = await guardarEdificioPostventa({ nombre: fila.edificioNombre, direccion: "", notas: "" });
+          edificioIdPorNombre.set(key, edificioId);
+          edificiosCreados++;
+        }
+        const keyUnidad = `${edificioId}::${fila.apartamento}`;
+        if (existentes.has(keyUnidad)) { yaExistian++; continue; }
+        await guardarUnidadPostventa({
+          edificioId, apartamento: fila.apartamento, cliente: fila.cliente, telefono: fila.telefono,
+          equipos: [], tipoObra: "activa", fechaVenta: "", activo: true,
+        });
+        existentes.add(keyUnidad);
+        unidadesCreadas++;
+      }
+      let msg = `${unidadesCreadas} unidad(es) nueva(s) creada(s)`;
+      if (edificiosCreados) msg += `, ${edificiosCreados} edificio(s) nuevo(s)`;
+      msg += ".";
+      if (yaExistian) msg += ` ${yaExistian} ya existían (apartamento ya cargado) y no se tocaron.`;
+      setImportResultadoPostventa(msg);
+    } catch (e) {
+      console.error("Error importando clientes postventa", e);
+      setImportResultadoPostventa("No se pudo leer el archivo. Verificá que sea un .xlsx con columnas Edificio/Apartamento/Cliente/Teléfono.");
+    }
+    setImportandoClientesPostventa(false);
   };
 
   const exportExcel = () => {
@@ -4613,6 +4687,9 @@ export default function App() {
             onRegistrarServiceRealizado={registrarServiceRealizado}
             onExportarExcel={handleDescargarPlanillaPostventa} exportando={descargandoId === "planilla-postventa"}
             pdfError={pdfError}
+            onImportarClientes={handleImportarClientesPostventa} importandoClientes={importandoClientesPostventa}
+            importResultadoClientes={importResultadoPostventa}
+            onDescargarRecibo={handleDescargarReciboServicio} descargandoRecibo={descargandoId}
           />
         )}
 
@@ -18383,6 +18460,25 @@ function textoEquiposUnidad(u) {
   return lista.map((eq) => `${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`).join(", ");
 }
 
+// Texto sugerido de garantía/próximo service para el recibo del cliente, según el hito que cerró
+// este service — solo una sugerencia editable: para unidades de "obra activa" (sin hito, arreglo
+// comercial caso por caso con la instaladora) se deja en blanco para que se cargue a mano.
+function defaultsReciboServicio(hito) {
+  if (hito === "12m") {
+    return {
+      garantiaTexto: "Garantía de fábrica vigente, con cobertura extendida hasta 36 meses desde la compra siempre que se realice el próximo service antes de los 24 meses.",
+      proximoServicioTexto: "A los 24 meses desde la compra (service obligatorio para mantener la garantía extendida).",
+    };
+  }
+  if (hito === "24m") {
+    return {
+      garantiaTexto: "Mantenimientos oficiales cumplidos: cobertura de fábrica vigente hasta 36 meses desde la compra.",
+      proximoServicioTexto: "No queda un próximo service obligatorio por garantía; recomendamos un mantenimiento preventivo anual.",
+    };
+  }
+  return { garantiaTexto: "", proximoServicioTexto: "Recomendamos el próximo mantenimiento preventivo en 12 meses." };
+}
+
 // Una fila por equipo dentro de la unidad — mismo patrón que NotaCreditoLineas (agregar/quitar
 // filas con el modelo elegido del catálogo o a mano).
 function EquiposUnidadLineas({ equipos, productos, onChange }) {
@@ -18547,12 +18643,14 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, onMarcarHecha }) {
+function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRecibo, descargandoRecibo }) {
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
   const [informe, setInforme] = useState(entrada.informe || "");
   const [montoCliente, setMontoCliente] = useState(entrada.montoCliente ? String(entrada.montoCliente) : "");
   const [montoInstalador, setMontoInstalador] = useState(entrada.montoInstalador ? String(entrada.montoInstalador) : "");
+  const [garantiaTexto, setGarantiaTexto] = useState(entrada.garantiaTexto ?? defaultsReciboServicio(entrada.hito).garantiaTexto);
+  const [proximoServicioTexto, setProximoServicioTexto] = useState(entrada.proximoServicioTexto ?? defaultsReciboServicio(entrada.hito).proximoServicioTexto);
   const [ocupado, setOcupado] = useState(false);
   // Al abrir para editar un hecho ya cargado, arranca de los valores guardados — abrir con un
   // formulario en blanco era lo que obligaba a "recargar de cero" en vez de corregir un dato.
@@ -18561,14 +18659,20 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
     setInforme(entrada.informe || "");
     setMontoCliente(entrada.montoCliente ? String(entrada.montoCliente) : "");
     setMontoInstalador(entrada.montoInstalador ? String(entrada.montoInstalador) : "");
+    setGarantiaTexto(entrada.garantiaTexto ?? defaultsReciboServicio(entrada.hito).garantiaTexto);
+    setProximoServicioTexto(entrada.proximoServicioTexto ?? defaultsReciboServicio(entrada.hito).proximoServicioTexto);
     setAbierto(true);
   };
   const confirmar = async () => {
     setOcupado(true);
-    await onMarcarHecha({ fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0 });
+    await onMarcarHecha({
+      fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0,
+      garantiaTexto: garantiaTexto.trim(), proximoServicioTexto: proximoServicioTexto.trim(),
+    });
     setOcupado(false);
     setAbierto(false);
   };
+  const idRecibo = `${entrada.apartamento}:${entrada.fechaHecho}:recibo`;
   return (
     <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -18581,6 +18685,21 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
             <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
               Hecho {fmtDate(entrada.fechaHecho)}
             </span>
+            {onDescargarRecibo && (
+              <button
+                type="button"
+                onClick={() => onDescargarRecibo({
+                  edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
+                  equipos: equiposDeUnidad(entrada), fechaServicio: entrada.fechaHecho, informe: entrada.informe,
+                  garantiaTexto: entrada.garantiaTexto, proximoServicioTexto: entrada.proximoServicioTexto,
+                })}
+                disabled={descargandoRecibo === idRecibo}
+                title="Descargar recibo de servicio para el cliente"
+                className="p-1 rounded hover:bg-gray-100"
+              >
+                <FileText size={12} style={{ color: ACCENT }} />
+              </button>
+            )}
             <button type="button" onClick={abrir} title="Corregir este service" className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
           </span>
         ) : (
@@ -18604,6 +18723,11 @@ function UnidadVisitaRow({ entrada, onMarcarHecha }) {
           <div className="flex gap-2 flex-wrap items-end">
             <Field label="Costo al cliente (Gs)"><TextInput type="number" value={montoCliente} onChange={(e) => setMontoCliente(e.target.value)} placeholder="Ej: 330000" /></Field>
             <Field label="Costo de la instaladora (Gs)"><TextInput type="number" value={montoInstalador} onChange={(e) => setMontoInstalador(e.target.value)} placeholder="Ej: 180000" /></Field>
+          </div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mt-1 mb-1" style={{ color: MUTED }}>Para el recibo del cliente</p>
+          <Field label="Garantía (opcional)"><TextInput value={garantiaTexto} onChange={(e) => setGarantiaTexto(e.target.value)} placeholder="Ej: cobertura vigente hasta 36 meses..." /></Field>
+          <Field label="Próximo mantenimiento (opcional)"><TextInput value={proximoServicioTexto} onChange={(e) => setProximoServicioTexto(e.target.value)} placeholder="Ej: a los 24 meses desde la compra" /></Field>
+          <div className="flex gap-2 mt-1">
             <PrimaryButton onClick={confirmar} disabled={ocupado}>{ocupado ? "Guardando..." : "Confirmar"}</PrimaryButton>
             <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
           </div>
@@ -18656,7 +18780,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, onMarcarHecha, onGuardarVisita, onBorrarVisita }) {
+function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarRecibo, descargandoRecibo }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -18706,7 +18830,11 @@ function VisitaPostventaCard({ visita, onMarcarHecha, onGuardarVisita, onBorrarV
             </div>
           )}
           {visita.unidades.map((u, i) => (
-            <UnidadVisitaRow key={u.unidadId} entrada={u} onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)} />
+            <UnidadVisitaRow
+              key={u.unidadId} entrada={u} edificioNombre={edificioNombre}
+              onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
+              onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
+            />
           ))}
         </div>
       )}
@@ -18714,7 +18842,7 @@ function VisitaPostventaCard({ visita, onMarcarHecha, onGuardarVisita, onBorrarV
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarRecibo, descargandoRecibo }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -18811,16 +18939,26 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
       <div className="space-y-1.5">
         {visitasOrdenadas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay visitas programadas.</p>}
         {visitasOrdenadas.map((v) => (
-          <VisitaPostventaCard key={v.id} visita={v} onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} />
+          <VisitaPostventaCard
+            key={v.id} visita={v} edificioNombre={edificio.nombre}
+            onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
+            onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarRecibo, descargandoRecibo }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
+  const fileInputRef = useRef(null);
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (file) onImportarClientes(file);
+  };
   const q = (query || "").trim().toLowerCase();
   const visibles = edificios.filter((e) => !q || (e.nombre || "").toLowerCase().includes(q));
 
@@ -18837,6 +18975,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
         onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
+        onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
       />
     );
   }
@@ -18847,13 +18986,24 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
       subtitle="Edificios con varias unidades: cliente, apartamento, equipo y agenda de service por depto."
       query={query} onQuery={onQuery}
       onNew={() => setNuevoEdificio(true)} newLabel="Nuevo edificio"
-      extraActions={edificios.length > 0 && (
-        <SecondaryButton onClick={onExportarExcel} disabled={exportando}>
-          <Download size={14} /> {exportando ? "Generando..." : "Exportar planilla Excel"}
-        </SecondaryButton>
+      extraActions={(
+        <>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="hidden" />
+          <SecondaryButton onClick={() => fileInputRef.current?.click()} disabled={importandoClientes}>
+            <Upload size={14} /> {importandoClientes ? "Importando..." : "Importar clientes (Excel)"}
+          </SecondaryButton>
+          {edificios.length > 0 && (
+            <SecondaryButton onClick={onExportarExcel} disabled={exportando}>
+              <Download size={14} /> {exportando ? "Generando..." : "Exportar planilla Excel"}
+            </SecondaryButton>
+          )}
+        </>
       )}
     >
       {pdfError && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{pdfError}</p>}
+      {importResultadoClientes && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultadoClientes}</div>
+      )}
       {nuevoEdificio && <EdificioForm onGuardar={onGuardarEdificio} onCancelar={() => setNuevoEdificio(false)} />}
       {visibles.length === 0 ? (
         <EmptyState icon={Building} title="Todavía no hay edificios cargados" subtitle="Usá el botón de arriba para cargar el primero." />

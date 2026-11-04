@@ -6141,7 +6141,6 @@ const CONCEPTOS_COSTO_TRANSITO = [
   { key: "comisionShiny", label: "Comisión Shiny" },
   { key: "despacho", label: "Despacho" },
   { key: "seguro", label: "Seguro" },
-  { key: "fleteInterno", label: "Flete interno (puerto → depósito)" },
   { key: "montacargas", label: "Montacargas" },
 ];
 const COMISION_FLETE_PORCENTAJE = 0.0471;
@@ -6210,19 +6209,33 @@ function valuacionTransito(transitoEnvios, productos) {
 // totales que ya carga TransitoForm (ver CONCEPTOS_COSTO_TRANSITO), acá se trackea CUÁNDO toca
 // cada paso, si ya se hizo y el comprobante correspondiente (sube a Firebase Storage). Vive en
 // el campo "cronograma" del envío: { [etapaKey]: { fechaEstimada, fechaReal, hecho,
-// comprobanteUrl, comprobanteNombre, nota, documentos? } }. Las claves de las etapas con monto
-// coinciden con las de CONCEPTOS_COSTO_TRANSITO para leer el monto de ahí directo, sin duplicarlo.
+// comprobanteUrl, comprobanteNombre, nota, documentos? } }. Cada etapa lee su monto del campo de
+// CONCEPTOS_COSTO_TRANSITO que tenga el mismo key — salvo que declare "montoKey" propio, para el
+// caso de "fleteNaviero" (acá se llama distinto porque es un paso del cronograma, pero el monto
+// real está en el campo "flete" que ya existía de antes).
+//
+// Roles reales (de los documentos de un envío real — Atlan / HBL SHIPSE2608065): Navicon es la
+// naviera, Mega Transport Paraguay SRL es su representante acá (factura flete marítimo + gastos
+// locales + emisión de BL, a 30 días) y Tdex es el despachante (arma la DAI, cobra tributos +
+// gastos de despacho —que YA incluyen el flete interno puerto→depósito— + honorarios, todo se
+// paga de una para que liberen el despacho). El montacargas es aparte, con otra empresa.
 const ETAPAS_CRONOGRAMA_TRANSITO = [
   { key: "adelantoFabrica", label: "Adelanto a fábrica (30%)", hint: "Seña inicial del pedido" },
   { key: "pagoFinalFabrica", label: "Saldo a fábrica (70%)", hint: "Al terminar la producción" },
   { key: "comisionShiny", label: "Comisión Shiny", hint: "Inspección de mercadería y supervisión de carga del contenedor" },
-  { key: "documentacion", label: "Documentación (naviera / despachante)", hint: "BL, factura comercial, packing list, certificado de origen, seguro", sinMonto: true },
-  { key: "despacho", label: "Despacho de aduana", hint: "Pago de despacho en Paraguay" },
-  { key: "fleteInterno", label: "Flete interno", hint: "Puerto → depósito" },
-  { key: "montacargas", label: "Montacargas", hint: "Descarga en depósito" },
+  { key: "documentacion", label: "Documentación (naviera / despachante)", hint: "Booking, factura comercial, packing list, BL (draft → definitivo), certificado de origen y seguro si aplica.", sinMonto: true },
+  { key: "fleteNaviero", montoKey: "flete", label: "Flete marítimo / gastos locales (naviera)", hint: "Flete + gastos locales + emisión de BL, al representante de la naviera en Paraguay (ej. Mega Transport). Se paga a 30 días de la factura — no hace falta pagarlo de inmediato." },
+  { key: "despacho", label: "Despacho de aduana", hint: "Tributos aduaneros + gastos de despacho (incluye flete interno puerto→depósito) + honorarios del despachante (ej. Tdex) — se paga en el momento, para que liberen el despacho." },
+  { key: "montacargas", label: "Montacargas", hint: "Se paga aparte, directo a la empresa de montacargas — no forma parte de la factura del despachante." },
 ];
 const DOCUMENTOS_DEFAULT_TRANSITO = [
-  "Factura comercial", "Packing list", "BL (conocimiento de embarque)", "Certificado de origen", "Seguro de transporte",
+  "Datos del embarque / booking",
+  "Factura comercial",
+  "Packing list",
+  "BL draft (revisar RUC/CUIT y código NCM antes de aprobar)",
+  "BL definitivo (original o telex release)",
+  "Certificado de origen (si aplica)",
+  "Seguro de transporte (si aplica)",
 ];
 // Primera etapa sin marcar "hecho", en orden — es la que se resalta como "Siguiente paso" aunque
 // todavía no tenga fecha estimada cargada, para que siempre haya algo accionable.
@@ -19378,7 +19391,7 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
                           key={etapa.key}
                           etapa={etapa}
                           entrada={cronograma[etapa.key]}
-                          monto={Number(t[etapa.key]) || 0}
+                          monto={Number(t[etapa.montoKey || etapa.key]) || 0}
                           esProxima={etapa.key === proxima}
                           onGuardar={(patch) => onGuardarEtapa(t, etapa.key, patch)}
                           onSubirComprobante={(file) => onSubirComprobante(t, etapa.key, file)}
@@ -19457,7 +19470,6 @@ function TransitoForm({ envio, productos, onSave }) {
   const [comisionShiny, setComisionShiny] = useState(envio ? String(envio.comisionShiny ?? "") : "");
   const [despacho, setDespacho] = useState(envio ? String(envio.despacho ?? "") : "");
   const [seguro, setSeguro] = useState(envio ? String(envio.seguro ?? "") : "");
-  const [fleteInterno, setFleteInterno] = useState(envio ? String(envio.fleteInterno ?? "") : "");
   const [montacargas, setMontacargas] = useState(envio ? String(envio.montacargas ?? "") : "");
   const [notas, setNotas] = useState(envio?.notas || "");
   const [modeloNuevo, setModeloNuevo] = useState("");
@@ -19489,7 +19501,7 @@ function TransitoForm({ envio, productos, onSave }) {
   };
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
 
-  const costoTotal = [adelantoFabrica, pagoFinalFabrica, representanteChina, flete, comisionFlete, comisionShiny, despacho, seguro, fleteInterno, montacargas]
+  const costoTotal = [adelantoFabrica, pagoFinalFabrica, representanteChina, flete, comisionFlete, comisionShiny, despacho, seguro, montacargas]
     .reduce((acc, v) => acc + (Number(v) || 0), 0);
 
   const submit = () => {
@@ -19507,7 +19519,6 @@ function TransitoForm({ envio, productos, onSave }) {
       comisionShiny: Number(comisionShiny) || 0,
       despacho: Number(despacho) || 0,
       seguro: Number(seguro) || 0,
-      fleteInterno: Number(fleteInterno) || 0,
       montacargas: Number(montacargas) || 0,
     });
   };
@@ -19556,13 +19567,10 @@ function TransitoForm({ envio, productos, onSave }) {
       <p className="text-xs mb-3" style={{ color: MUTED }}>La comisión se sugiere sola (4,71% del flete) y se puede pisar a mano.</p>
       <Field label="Comisión Shiny U$S"><TextInput type="number" value={comisionShiny} onChange={(e) => setComisionShiny(e.target.value)} placeholder="Inspección de mercadería + carga del contenedor" /></Field>
       <div className="flex gap-2">
-        <Field label="Despacho U$S"><TextInput type="number" value={despacho} onChange={(e) => setDespacho(e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Despacho U$S"><TextInput type="number" value={despacho} onChange={(e) => setDespacho(e.target.value)} placeholder="Tributos + gastos de despacho (incl. flete interno) + honorarios" /></Field>
         <Field label="Seguro U$S"><TextInput type="number" value={seguro} onChange={(e) => setSeguro(e.target.value)} placeholder="Opcional" /></Field>
       </div>
-      <div className="flex gap-2">
-        <Field label="Flete interno U$S"><TextInput type="number" value={fleteInterno} onChange={(e) => setFleteInterno(e.target.value)} placeholder="Puerto → depósito" /></Field>
-        <Field label="Montacargas U$S"><TextInput type="number" value={montacargas} onChange={(e) => setMontacargas(e.target.value)} placeholder="Opcional" /></Field>
-      </div>
+      <Field label="Montacargas U$S"><TextInput type="number" value={montacargas} onChange={(e) => setMontacargas(e.target.value)} placeholder="Pago aparte, a la empresa de montacargas" /></Field>
       <p className="text-xs mb-3" style={{ color: MUTED }}>Costo total del envío: U$S {costoTotal.toLocaleString("es-PY")}</p>
 
       <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>

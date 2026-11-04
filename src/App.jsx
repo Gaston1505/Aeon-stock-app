@@ -5897,9 +5897,7 @@ function armarContratoDesdeCotizacion(cot, grupos) {
     condicionSaldo: "contra retiro de los equipos en depósito",
     incluirMora: false, pctMora: 0.5, diasGraciaMora: 5,
     plazoEntrega: "",
-    // No hay un dato fijo de "quién firma por AEON" guardado en ningún lado del sistema —
-    // se deja editable con un valor por defecto razonable (el firmante de siempre en los PDF).
-    aeonRepresentante: COMPANY.firmante, aeonCi: "",
+    aeonRepresentante: COMPANY.firmante, aeonCi: "9461994",
   };
 }
 

@@ -190,10 +190,10 @@ export async function generateCotizacionPdf(cotizacion, productos = []) {
   const base = import.meta.env.BASE_URL;
   const [logoBytes, firmaBytes] = await Promise.all([
     fetchBytes(`${base}aeon-logo.jpg`),
-    fetchBytes(`${base}generated/firma.png`),
+    fetchBytes(`${base}firma-gaston.jpg`),
   ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
-  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
 
   const lineas = cotizacion.lineas || [];
   const showEspec = lineas.some((l) => l.especValor);
@@ -972,8 +972,12 @@ export async function generateGarantiaPdf(venta) {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
   const base = import.meta.env.BASE_URL;
-  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const [logoBytes, firmaBytes] = await Promise.all([
+    fetchBytes(`${base}aeon-logo.jpg`),
+    fetchBytes(`${base}firma-gaston.jpg`),
+  ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
 
   const lineas = venta.lineas || [];
 
@@ -1071,13 +1075,17 @@ export async function generateGarantiaPdf(venta) {
   }
   drawHeader();
   lineas.forEach((l) => {
-    ensureSpace(16);
+    const modeloLines = wrapText(font, l.modelo || "", 7.5, colModelo - 8);
+    const descLines = wrapText(font, l.descripcion || "", 7.5, colDescripcion - 8);
+    const h = Math.max(modeloLines.length * 9 + 7, descLines.length * 9 + 7, 16);
+    ensureSpace(h);
     if (y === PAGE_H - MARGIN) drawHeader();
-    const h = 16;
     rect(MARGIN, y - h, colModelo, h, { border: BORDER });
-    text(l.modelo || "", MARGIN + 4, y - 11, { size: 7.5 });
+    const modeloTop = y - (h - modeloLines.length * 9) / 2 - 7;
+    modeloLines.forEach((line, i) => text(line, MARGIN + 4, modeloTop - i * 9, { size: 7.5 }));
     rect(MARGIN + colModelo, y - h, colDescripcion, h, { border: BORDER });
-    text(l.descripcion || "", MARGIN + colModelo + 4, y - 11, { size: 7.5 });
+    const descTop = y - (h - descLines.length * 9) / 2 - 7;
+    descLines.forEach((line, i) => text(line, MARGIN + colModelo + 4, descTop - i * 9, { size: 7.5 }));
     rect(MARGIN + colModelo + colDescripcion, y - h, colCant, h, { border: BORDER });
     centerText(String(l.cantidad ?? ""), MARGIN + colModelo + colDescripcion, y, colCant, h, { size: 7.5 });
     y -= h;
@@ -1103,8 +1111,16 @@ export async function generateGarantiaPdf(venta) {
   y -= legalH + 30;
 
   // Firma AEON
-  ensureSpace(40);
+  ensureSpace(70);
   const aeonLineX = PAGE_W - MARGIN - 160;
+  if (firmaImg) {
+    const w = 110;
+    const h = (firmaImg.height / firmaImg.width) * w;
+    page.drawImage(firmaImg, { x: aeonLineX + 25, y: y - h + 6, width: w, height: h });
+    y -= h - 4;
+  } else {
+    y -= 30;
+  }
   page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
   y -= 11;
   const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
@@ -1389,8 +1405,12 @@ export async function generateGarantiaCompletaPdf(venta) {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
   const base = import.meta.env.BASE_URL;
-  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const [logoBytes, firmaBytes] = await Promise.all([
+    fetchBytes(`${base}aeon-logo.jpg`),
+    fetchBytes(`${base}firma-gaston.jpg`),
+  ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
 
   const lineas = venta.lineas || [];
   const colModelo = 110;
@@ -1516,15 +1536,19 @@ export async function generateGarantiaCompletaPdf(venta) {
   }
   drawHeaderEquipos();
   lineas.forEach((l) => {
-    ensureSpace(16);
+    const descLines = wrapText(font, l.descripcion || "", 7.5, colDescripcion - 8);
+    const modeloLines = wrapText(font, l.modelo || "", 7.5, colModelo - 8);
+    const h = Math.max(descLines.length * 9 + 7, modeloLines.length * 9 + 7, 16);
+    ensureSpace(h);
     if (y === PAGE_H - MARGIN) drawHeaderEquipos();
-    const h = 16;
     let cx = MARGIN;
     rect(cx, y - h, colDescripcion, h, { border: BORDER });
-    text(l.descripcion || "", cx + 4, y - 11, { size: 7.5 });
+    const descTop = y - (h - descLines.length * 9) / 2 - 7;
+    descLines.forEach((line, i) => text(line, cx + 4, descTop - i * 9, { size: 7.5 }));
     cx += colDescripcion;
     rect(cx, y - h, colModelo, h, { border: BORDER });
-    text(l.modelo || "", cx + 4, y - 11, { size: 7.5 });
+    const modeloTop = y - (h - modeloLines.length * 9) / 2 - 7;
+    modeloLines.forEach((line, i) => text(line, cx + 4, modeloTop - i * 9, { size: 7.5 }));
     cx += colModelo;
     rect(cx, y - h, colCant, h, { border: BORDER });
     centerText(String(l.cantidad ?? ""), cx, y, colCant, h, { size: 7.5 });
@@ -1548,13 +1572,26 @@ export async function generateGarantiaCompletaPdf(venta) {
   text("Al firmar este documento, el cliente declara haber recibido el equipo en perfectas condiciones", MARGIN, y, { size: 7, color: MUTED });
   y -= 9;
   text("y aceptar los términos y condiciones detallados en el presente certificado.", MARGIN, y, { size: 7, color: MUTED });
-  y -= 30;
+  y -= 10;
+
+  // La línea de ambas firmas va a la misma altura (y) — lo único que cambia es cuánto lugar en
+  // blanco se deja arriba: el lado AEON usa la firma escaneada (si está disponible), el del
+  // cliente queda en blanco para firmar a mano.
+  const aeonLineX = PAGE_W - MARGIN - 160;
+  const sigTopY = y;
+  let firmaH = 0;
+  if (firmaImg) {
+    const w = 110;
+    firmaH = (firmaImg.height / firmaImg.width) * w;
+    page.drawImage(firmaImg, { x: aeonLineX + 25, y: sigTopY - firmaH, width: w, height: firmaH });
+  }
+  y = sigTopY - Math.max(firmaH + 4, 30);
+
   const clienteLineX = MARGIN;
   page.drawLine({ start: { x: clienteLineX, y }, end: { x: clienteLineX + 200, y }, thickness: 0.5, color: MUTED });
   text("Firma del cliente", clienteLineX, y - 10, { size: 7.5, color: MUTED });
   text("Aclaración / C.I. N°: ______________________", clienteLineX, y - 22, { size: 7.5, color: MUTED });
 
-  const aeonLineX = PAGE_W - MARGIN - 160;
   page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
   y -= 11;
   const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);

@@ -19171,6 +19171,7 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
   const [abierto, setAbierto] = useState(false);
   const [fechaEstimada, setFechaEstimada] = useState(entrada?.fechaEstimada || "");
   const [fechaReal, setFechaReal] = useState(entrada?.fechaReal || "");
+  const [montoEstimado, setMontoEstimado] = useState(entrada?.montoEstimado ?? "");
   const [hecho, setHecho] = useState(!!entrada?.hecho);
   const [nota, setNota] = useState(entrada?.nota || "");
   const [documentos, setDocumentos] = useState(
@@ -19185,6 +19186,7 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
   const abrir = () => {
     setFechaEstimada(entrada?.fechaEstimada || "");
     setFechaReal(entrada?.fechaReal || "");
+    setMontoEstimado(entrada?.montoEstimado ?? "");
     setHecho(!!entrada?.hecho);
     setNota(entrada?.nota || "");
     setDocumentos(entrada?.documentos || (etapa.sinMonto ? DOCUMENTOS_DEFAULT_TRANSITO.map((nombre) => ({ nombre, hecho: false })) : []));
@@ -19200,6 +19202,7 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
   const confirmar = () => {
     const patch = { fechaEstimada, fechaReal, hecho, nota };
     if (etapa.sinMonto) patch.documentos = documentos;
+    else patch.montoEstimado = Number(montoEstimado) || 0;
     onGuardar(patch);
     setAbierto(false);
   };
@@ -19226,7 +19229,9 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
           <div className="min-w-0">
             <p className="text-xs font-medium truncate" style={{ color: INK }}>{etapa.label}</p>
             <p className="text-[11px] truncate" style={{ color: MUTED }}>
-              {etapa.hint}{!etapa.sinMonto && monto > 0 ? ` · U$S ${monto.toLocaleString("es-PY")}` : ""}
+              {etapa.hint}
+              {!etapa.sinMonto && monto > 0 && ` · U$S ${monto.toLocaleString("es-PY")}`}
+              {!etapa.sinMonto && monto <= 0 && Number(entrada?.montoEstimado) > 0 && ` · est. U$S ${Number(entrada.montoEstimado).toLocaleString("es-PY")}`}
             </p>
           </div>
         </div>
@@ -19239,8 +19244,13 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
         <div className="mt-2 pt-2" style={{ borderTop: `0.5px solid ${BORDER}` }} onClick={(e) => e.stopPropagation()}>
           <div className="flex gap-2">
             <Field label="Fecha estimada"><TextInput type="date" value={fechaEstimada} onChange={(e) => setFechaEstimada(e.target.value)} /></Field>
-            <Field label="Fecha real"><TextInput type="date" value={fechaReal} onChange={(e) => setFechaReal(e.target.value)} /></Field>
+            {!etapa.sinMonto && (
+              <Field label="Monto estimado U$S">
+                <TextInput type="number" value={montoEstimado} onChange={(e) => setMontoEstimado(e.target.value)} placeholder="Para avisar a administración" />
+              </Field>
+            )}
           </div>
+          <Field label="Fecha real"><TextInput type="date" value={fechaReal} onChange={(e) => setFechaReal(e.target.value)} /></Field>
           <label className="flex items-center gap-1.5 mb-3 text-xs" style={{ color: INK }}>
             <input type="checkbox" checked={hecho} onChange={(e) => marcarHecho(e.target.checked)} /> Hecho
           </label>
@@ -19281,6 +19291,29 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
   const enCamino = transito.filter((t) => t.estado !== "Llegado");
   const totalUnidades = enCamino.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
   const totalCosto = enCamino.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
+  // "Próximos pagos previstos": montos ESTIMADOS cargados a mano en una etapa antes de que se
+  // sepa/pague el monto real (ver montoEstimado en EtapaCronogramaRow) — para avisarle a
+  // administración con tiempo cuánto hace falta separar y cuándo, sin esperar la factura real.
+  const proximosPagos = useMemo(() => {
+    const filas = [];
+    enCamino.forEach((t) => {
+      const cronograma = t.cronograma || {};
+      ETAPAS_CRONOGRAMA_TRANSITO.forEach((etapa) => {
+        if (etapa.sinMonto) return;
+        const entrada = cronograma[etapa.key];
+        const montoEstimado = Number(entrada?.montoEstimado) || 0;
+        if (entrada?.hecho || !entrada?.fechaEstimada || montoEstimado <= 0) return;
+        filas.push({
+          fecha: entrada.fechaEstimada,
+          referencia: t.contenedor || "Sin contenedor / referencia",
+          etapaLabel: etapa.label,
+          monto: montoEstimado,
+        });
+      });
+    });
+    return filas.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [enCamino]);
+  const totalProximosPagos = proximosPagos.reduce((acc, f) => acc + f.monto, 0);
   return (
     <Section
       title={
@@ -19298,6 +19331,26 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
       query={query} onQuery={onQuery}
       onNew={onNew} newLabel="Nuevo envío"
     >
+      {proximosPagos.length > 0 && (
+        <div className="rounded-lg p-3.5 mb-3" style={{ backgroundColor: "#FEF3E2", border: "0.5px solid #F5D9A8" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Bell size={15} style={{ color: "#B45309" }} />
+            <h3 className="text-sm font-bold" style={{ color: "#92400E" }}>Próximos pagos previstos</h3>
+            <InfoTip>
+              <p>Montos estimados cargados a mano en cada etapa (ver "Monto estimado" al abrir una etapa del cronograma) antes de que se sepa o se pague el monto real — para avisarle a administración con tiempo cuánto hace falta separar y para cuándo.</p>
+              <p>Una vez que la etapa se marca "Hecho" (o se le carga el monto real pagado), deja de listarse acá.</p>
+            </InfoTip>
+          </div>
+          <p className="text-xs font-semibold mb-2" style={{ color: "#92400E" }}>Total estimado: U$S {totalProximosPagos.toLocaleString("es-PY")}</p>
+          <div className="space-y-0.5">
+            {proximosPagos.map((f, i) => (
+              <p key={i} className="text-xs" style={{ color: "#92400E" }}>
+                · {fmtDate(f.fecha)} — {f.referencia} — {f.etapaLabel}: U$S {f.monto.toLocaleString("es-PY")}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
       {transito.length === 0 ? (
         <EmptyState icon={Ship} title="No hay envíos en tránsito" subtitle="Cargá acá lo que se está fabricando o viene en camino desde China." />
       ) : (

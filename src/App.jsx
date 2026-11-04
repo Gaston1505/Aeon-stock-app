@@ -6219,14 +6219,18 @@ function valuacionTransito(transitoEnvios, productos) {
 // locales + emisión de BL, a 30 días) y Tdex es el despachante (arma la DAI, cobra tributos +
 // gastos de despacho —que YA incluyen el flete interno puerto→depósito— + honorarios, todo se
 // paga de una para que liberen el despacho). El montacargas es aparte, con otra empresa.
+// "monedaDefault" es solo para el monto ESTIMADO (ver montoEstimado) — adelanto/saldo/comisión
+// Shiny/flete naviero son siempre con contraparte en el exterior (USD), mientras que despacho y
+// montacargas suelen cotizarse en guaraníes acá en Paraguay (ej. el presupuesto de Tdex viene en
+// Gs.), aunque se puede pisar por envío porque no todos los despachantes cotizan igual.
 const ETAPAS_CRONOGRAMA_TRANSITO = [
-  { key: "adelantoFabrica", label: "Adelanto a fábrica (30%)", hint: "Seña inicial del pedido" },
-  { key: "pagoFinalFabrica", label: "Saldo a fábrica (70%)", hint: "Al terminar la producción" },
-  { key: "comisionShiny", label: "Comisión Shiny", hint: "Inspección de mercadería y supervisión de carga del contenedor" },
+  { key: "adelantoFabrica", label: "Adelanto a fábrica (30%)", hint: "Seña inicial del pedido", monedaDefault: "USD" },
+  { key: "pagoFinalFabrica", label: "Saldo a fábrica (70%)", hint: "Al terminar la producción", monedaDefault: "USD" },
+  { key: "comisionShiny", label: "Comisión Shiny", hint: "Inspección de mercadería y supervisión de carga del contenedor", monedaDefault: "USD" },
   { key: "documentacion", label: "Documentación (naviera / despachante)", hint: "Booking, factura comercial, packing list, BL (draft → definitivo), certificado de origen y seguro si aplica.", sinMonto: true },
-  { key: "fleteNaviero", montoKey: "flete", label: "Flete marítimo / gastos locales (naviera)", hint: "Flete + gastos locales + emisión de BL, al representante de la naviera en Paraguay (ej. Mega Transport). Se paga a 30 días de la factura — no hace falta pagarlo de inmediato." },
-  { key: "despacho", label: "Despacho de aduana", hint: "Tributos aduaneros + gastos de despacho (incluye flete interno puerto→depósito) + honorarios del despachante (ej. Tdex) — se paga en el momento, para que liberen el despacho." },
-  { key: "montacargas", label: "Montacargas", hint: "Se paga aparte, directo a la empresa de montacargas — no forma parte de la factura del despachante." },
+  { key: "fleteNaviero", montoKey: "flete", label: "Flete marítimo / gastos locales (naviera)", hint: "Flete + gastos locales + emisión de BL, al representante de la naviera en Paraguay (ej. Mega Transport). Se paga a 30 días de la factura — no hace falta pagarlo de inmediato.", monedaDefault: "USD" },
+  { key: "despacho", label: "Despacho de aduana", hint: "Tributos aduaneros + gastos de despacho (incluye flete interno puerto→depósito) + honorarios del despachante (ej. Tdex) — se paga en el momento, para que liberen el despacho.", monedaDefault: "PYG" },
+  { key: "montacargas", label: "Montacargas", hint: "Se paga aparte, directo a la empresa de montacargas — no forma parte de la factura del despachante.", monedaDefault: "PYG" },
 ];
 const DOCUMENTOS_DEFAULT_TRANSITO = [
   "Datos del embarque / booking",
@@ -19172,6 +19176,7 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
   const [fechaEstimada, setFechaEstimada] = useState(entrada?.fechaEstimada || "");
   const [fechaReal, setFechaReal] = useState(entrada?.fechaReal || "");
   const [montoEstimado, setMontoEstimado] = useState(entrada?.montoEstimado ?? "");
+  const [moneda, setMoneda] = useState(entrada?.moneda || etapa.monedaDefault || "USD");
   const [hecho, setHecho] = useState(!!entrada?.hecho);
   const [nota, setNota] = useState(entrada?.nota || "");
   const [documentos, setDocumentos] = useState(
@@ -19187,6 +19192,7 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
     setFechaEstimada(entrada?.fechaEstimada || "");
     setFechaReal(entrada?.fechaReal || "");
     setMontoEstimado(entrada?.montoEstimado ?? "");
+    setMoneda(entrada?.moneda || etapa.monedaDefault || "USD");
     setHecho(!!entrada?.hecho);
     setNota(entrada?.nota || "");
     setDocumentos(entrada?.documentos || (etapa.sinMonto ? DOCUMENTOS_DEFAULT_TRANSITO.map((nombre) => ({ nombre, hecho: false })) : []));
@@ -19202,7 +19208,10 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
   const confirmar = () => {
     const patch = { fechaEstimada, fechaReal, hecho, nota };
     if (etapa.sinMonto) patch.documentos = documentos;
-    else patch.montoEstimado = Number(montoEstimado) || 0;
+    else {
+      patch.montoEstimado = Number(montoEstimado) || 0;
+      patch.moneda = moneda;
+    }
     onGuardar(patch);
     setAbierto(false);
   };
@@ -19231,7 +19240,9 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
             <p className="text-[11px] truncate" style={{ color: MUTED }}>
               {etapa.hint}
               {!etapa.sinMonto && monto > 0 && ` · U$S ${monto.toLocaleString("es-PY")}`}
-              {!etapa.sinMonto && monto <= 0 && Number(entrada?.montoEstimado) > 0 && ` · est. U$S ${Number(entrada.montoEstimado).toLocaleString("es-PY")}`}
+              {!etapa.sinMonto && monto <= 0 && Number(entrada?.montoEstimado) > 0 && (
+                ` · est. ${(entrada.moneda || etapa.monedaDefault) === "PYG" ? fmtGs(entrada.montoEstimado) : `U$S ${Number(entrada.montoEstimado).toLocaleString("es-PY")}`}`
+              )}
             </p>
           </div>
         </div>
@@ -19245,11 +19256,19 @@ function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSub
           <div className="flex gap-2">
             <Field label="Fecha estimada"><TextInput type="date" value={fechaEstimada} onChange={(e) => setFechaEstimada(e.target.value)} /></Field>
             {!etapa.sinMonto && (
-              <Field label="Monto estimado U$S">
+              <Field label={`Monto estimado ${moneda === "PYG" ? "Gs" : "U$S"}`}>
                 <TextInput type="number" value={montoEstimado} onChange={(e) => setMontoEstimado(e.target.value)} placeholder="Para avisar a administración" />
               </Field>
             )}
           </div>
+          {!etapa.sinMonto && (
+            <Field label="Moneda del monto estimado">
+              <Select value={moneda} onChange={(e) => setMoneda(e.target.value)}>
+                <option value="USD">Dólares (U$S)</option>
+                <option value="PYG">Guaraníes (Gs)</option>
+              </Select>
+            </Field>
+          )}
           <Field label="Fecha real"><TextInput type="date" value={fechaReal} onChange={(e) => setFechaReal(e.target.value)} /></Field>
           <label className="flex items-center gap-1.5 mb-3 text-xs" style={{ color: INK }}>
             <input type="checkbox" checked={hecho} onChange={(e) => marcarHecho(e.target.checked)} /> Hecho
@@ -19308,12 +19327,14 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
           referencia: t.contenedor || "Sin contenedor / referencia",
           etapaLabel: etapa.label,
           monto: montoEstimado,
+          moneda: entrada.moneda || etapa.monedaDefault || "USD",
         });
       });
     });
     return filas.sort((a, b) => a.fecha.localeCompare(b.fecha));
   }, [enCamino]);
-  const totalProximosPagos = proximosPagos.reduce((acc, f) => acc + f.monto, 0);
+  const totalProximosPagosUsd = proximosPagos.filter((f) => f.moneda !== "PYG").reduce((acc, f) => acc + f.monto, 0);
+  const totalProximosPagosPyg = proximosPagos.filter((f) => f.moneda === "PYG").reduce((acc, f) => acc + f.monto, 0);
   return (
     <Section
       title={
@@ -19341,11 +19362,18 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
               <p>Una vez que la etapa se marca "Hecho" (o se le carga el monto real pagado), deja de listarse acá.</p>
             </InfoTip>
           </div>
-          <p className="text-xs font-semibold mb-2" style={{ color: "#92400E" }}>Total estimado: U$S {totalProximosPagos.toLocaleString("es-PY")}</p>
+          <div className="mb-2">
+            {totalProximosPagosUsd > 0 && (
+              <p className="text-xs font-semibold" style={{ color: "#92400E" }}>Total estimado (U$S): U$S {totalProximosPagosUsd.toLocaleString("es-PY")}</p>
+            )}
+            {totalProximosPagosPyg > 0 && (
+              <p className="text-xs font-semibold" style={{ color: "#92400E" }}>Total estimado (Gs): {fmtGs(totalProximosPagosPyg)}</p>
+            )}
+          </div>
           <div className="space-y-0.5">
             {proximosPagos.map((f, i) => (
               <p key={i} className="text-xs" style={{ color: "#92400E" }}>
-                · {fmtDate(f.fecha)} — {f.referencia} — {f.etapaLabel}: U$S {f.monto.toLocaleString("es-PY")}
+                · {fmtDate(f.fecha)} — {f.referencia} — {f.etapaLabel}: {f.moneda === "PYG" ? fmtGs(f.monto) : `U$S ${f.monto.toLocaleString("es-PY")}`}
               </p>
             ))}
           </div>

@@ -1,10 +1,13 @@
 rules_version = '2';
 
 // AEON Stock App — Firebase Storage. Mismo esquema de rol que firestore.rules (usuarios/{uid}.rol),
-// leído desde acá vía firestore.get(). Por ahora el único uso es el comprobante de cada etapa del
-// cronograma de Tránsito (ver ETAPAS_CRONOGRAMA_TRANSITO en App.jsx), bajo
-// transito/{envioId}/{etapaKey}/{fileName} — mismo alcance "solo admin" que la colección
-// "transito" en Firestore.
+// leído desde acá vía firestore.get(). Usos actuales:
+// - Comprobante de cada etapa del cronograma de Tránsito (ver ETAPAS_CRONOGRAMA_TRANSITO en
+//   App.jsx), bajo transito/{envioId}/{etapaKey}/{fileName}.
+// - Contrato de provisión ya firmado por el cliente (fuera de la app), subido como comprobante
+//   bajo contratos/{cotizacionId}/{fileName} (ver ContratoForm/subirContratoFirmado en App.jsx).
+// Mismo alcance "solo admin" para ambos, igual que las colecciones "transito" y "cotizaciones"
+// en Firestore.
 //
 // IMPORTANTE: este archivo no se despliega solo — no hay paso de CI para Storage Rules (ver
 // .github/workflows/deploy.yml, que solo construye y publica el sitio). Hay que pegar este
@@ -20,6 +23,10 @@ service firebase.storage {
     }
 
     match /transito/{envioId}/{etapaKey}/{fileName} {
+      allow read, write: if esAdmin();
+    }
+
+    match /contratos/{cotizacionId}/{fileName} {
       allow read, write: if esAdmin();
     }
   }

@@ -1626,6 +1626,330 @@ export async function downloadGarantiaCompletaPdf(venta) {
   downloadBlob(bytes, nombreArchivoGarantiaCompleta(venta), "application/pdf");
 }
 
+// ---------- Contrato de provisión de equipos ----------
+// Texto tal cual la plantilla vigente (Manual de procedimientos, 01/09/2026): entrega SOLO en
+// depósito de AEON, sin flete/transporte a cargo del PROVEEDOR — a diferencia de una plantilla
+// anterior que sí lo incluía. Si el día de mañana cambia la política comercial, este es el único
+// lugar que hay que tocar.
+const MESES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function fechaEnPalabras(iso) {
+  if (!iso) return { dia: "___", mes: "___", anio: "____" };
+  const [y, m, d] = iso.split("-").map(Number);
+  return { dia: String(d || "___"), mes: MESES_LARGO[(m || 1) - 1] || "___", anio: String(y || "____") };
+}
+
+export async function generateContratoPdf(datos) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const [logoBytes, firmaBytes] = await Promise.all([
+    fetchBytes(`${base}aeon-logo.jpg`),
+    fetchBytes(`${base}firma-gaston.png`),
+  ]);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = pdf.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+  function ensureSpace(h) {
+    if (y - h < MARGIN) newPage();
+  }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function drawParrafo(str, opts = {}) {
+    const size = opts.size || 8.5;
+    const lines = wrapText(font, str, size, CONTENT_W);
+    ensureSpace(lines.length * (size + 3) + 4);
+    lines.forEach((line) => { text(line, MARGIN, y, { size }); y -= size + 3; });
+    y -= 4;
+  }
+  function drawItem(str, opts = {}) {
+    const size = opts.size || 8.5;
+    const indent = 12;
+    const lines = wrapText(font, str, size, CONTENT_W - indent);
+    lines.forEach((line, i) => {
+      ensureSpace(size + 3);
+      text(i === 0 ? "•" : "", MARGIN, y, { size });
+      text(line, MARGIN + indent, y, { size });
+      y -= size + 3;
+    });
+    y -= 2;
+  }
+  function drawClausula(titulo) {
+    ensureSpace(22);
+    text(titulo, MARGIN, y, { bold: true, size: 9.5, color: ACCENT });
+    y -= 15;
+  }
+
+  // Header
+  if (logoImg) {
+    const w = 90;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+    y -= h + 4;
+  }
+  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
+  y -= 11;
+  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 9;
+  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
+  y -= 14;
+
+  const title = "CONTRATO DE PROVISIÓN DE EQUIPOS";
+  const titleW = bold.widthOfTextAtSize(title, 10);
+  page.drawRectangle({ x: MARGIN, y: y - 18, width: CONTENT_W, height: 18, color: ACCENT });
+  text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
+  y -= 18 + 14;
+
+  const { dia, mes, anio } = fechaEnPalabras(datos.fecha);
+  const esGs = datos.moneda === "GS";
+  const fmtMonto = (n) => (esGs ? fmtGs(n) : fmtNum(n));
+  const simbolo = esGs ? "Gs." : "USD";
+  const montoTotal = Number(datos.montoTotal) || 0;
+  const pctAnticipo = Number(datos.pctAnticipo) || 0;
+  const pctSaldo = 100 - pctAnticipo;
+  const montoAnticipo = (montoTotal * pctAnticipo) / 100;
+  const montoSaldo = montoTotal - montoAnticipo;
+  const montoLetras = esGs ? montoEnLetrasGuaranies(montoTotal) : montoEnLetras(montoTotal);
+  const pctAnticipoLetras = numeroALetras(pctAnticipo);
+
+  drawParrafo(
+    `En la ciudad de Asunción, Capital de la República del Paraguay, a los ${dia} días del mes de ${mes} de ${anio}, ` +
+      "conste por el presente contrato privado de PROVISIÓN DE EQUIPOS suscrito entre las partes intervinientes, que " +
+      "con el debido reconocimiento de las firmas y rúbricas surtirá efecto de instrumento público conforme a las " +
+      "cláusulas siguientes:"
+  );
+
+  drawClausula("CLÁUSULA PRIMERA: PARTES INTERVINIENTES.");
+  drawParrafo(
+    `1.1. – La empresa ${datos.clienteRazonSocial || "[RAZÓN SOCIAL DEL CLIENTE]"}, sociedad debidamente constituida ` +
+      `bajo ley paraguaya, con RUC ${datos.clienteRuc || "[RUC CLIENTE]"}, representada por ` +
+      `${datos.clienteRepresentante || "[NOMBRE REPRESENTANTE]"}, con C.I. N° ${datos.clienteCi || "[N° C.I.]"}, con ` +
+      `domicilio en ${datos.clienteDomicilio || "[DOMICILIO DEL CLIENTE]"}, de esta capital, que en lo sucesivo y para ` +
+      "efectos de este contrato se denominará EL COMPRADOR."
+  );
+  drawParrafo(
+    "1.2. – La empresa QUANTUM INVESTMENTS S.A., sociedad debidamente constituida bajo ley paraguaya, con RUC N° " +
+      `80116329-3, representada por ${datos.aeonRepresentante || "[NOMBRE REPRESENTANTE AEON]"} con C.I. N° ` +
+      `${datos.aeonCi || "[N° C.I.]"} y domicilio en la Calle San Juan XXIII esquina Juan Max Boettner, edificio Park ` +
+      "Plaza, piso 11, oficina D, de esta capital, que en lo sucesivo y para efectos del presente contrato se " +
+      "denominará EL PROVEEDOR."
+  );
+
+  drawClausula("CLÁUSULA SEGUNDA: OBJETO.");
+  drawParrafo(
+    "En virtud del presente contrato, el PROVEEDOR se compromete y obliga a la provisión de electrodomésticos de la " +
+      `marca AEON Home Tech, importados a nombre del PROVEEDOR, con destino a la obra ${datos.obraNombre || "[NOMBRE DE LA OBRA/EDIFICIO]"}, ` +
+      `ubicada en ${datos.obraDireccion || "[DIRECCIÓN DE LA OBRA]"} de la ciudad de ${datos.obraCiudad || "[CIUDAD]"} – Paraguay. ` +
+      "Los datos de la obra se consignan a efectos de identificación del proyecto y referencia para garantía y service."
+  );
+  drawParrafo(
+    `La entrega de los equipos se realizará en el depósito de EL PROVEEDOR, sito en ${datos.depositoDireccion || "[DIRECCIÓN DEL DEPÓSITO AEON]"}. ` +
+      "EL PROVEEDOR no realiza la entrega de los equipos en la obra; el retiro y transporte de la mercadería desde el " +
+      "depósito hasta la obra es responsabilidad exclusiva de EL COMPRADOR."
+  );
+
+  drawClausula("CLÁUSULA TERCERA: CARACTERÍSTICAS.");
+  drawParrafo("Las características de los equipos suministrados acordados se encuentran descritas en el siguiente anexo:");
+  drawItem("ANEXO I: Presupuesto detallado de equipos a suministrar por el PROVEEDOR y especificaciones técnicas.");
+  drawParrafo("El Anexo forma parte integrante e inseparable del presente contrato.");
+
+  drawClausula("CLÁUSULA CUARTA: PRECIO.");
+  drawParrafo(
+    "El precio total de los equipos, conforme a las características descritas en la Cláusula Tercera del presente " +
+      `contrato y aceptado por ambas partes, es de ${simbolo} ${fmtMonto(montoTotal)} (${montoLetras}). IVA incluido.`
+  );
+  drawParrafo(
+    "Nota: si la operación corresponde a mercadería ya disponible en depósito físico de Aeon y se abona al contado, " +
+      "el monto podrá establecerse en Guaraníes.",
+    { size: 7.5 }
+  );
+
+  drawClausula("CLÁUSULA QUINTA: FORMA DE PAGO.");
+  drawParrafo("La forma de pago establecida es la siguiente:");
+  drawItem(
+    `Un primer pago del ${pctAnticipo}% (${pctAnticipoLetras} por ciento) en concepto de anticipo, a la firma de este ` +
+      `contrato, que asciende a ${simbolo} ${fmtMonto(montoAnticipo)}. Este pago es condición necesaria para que el ` +
+      "PROVEEDOR confirme el pedido y proceda a iniciar la fabricación de los equipos."
+  );
+  drawItem(
+    `Un segundo y último pago del ${pctSaldo}% restante, que asciende a ${simbolo} ${fmtMonto(montoSaldo)}, abonadero ` +
+      `${datos.condicionSaldo || "contra retiro de los equipos en depósito"}.`
+  );
+  if (datos.incluirMora) {
+    drawItem(
+      "En caso de que EL COMPRADOR se atrase en alguno de los pagos según lo pactado en este contrato, devengará un " +
+        `recargo de ${Number(datos.pctMora) || 0}% por cada día de atraso sobre el monto adeudado, calculado a partir ` +
+        `de los ${Number(datos.diasGraciaMora) || 0} días del vencimiento de la factura.`
+    );
+  }
+
+  drawClausula("CLÁUSULA SEXTA: PLAZO DE ENTREGA.");
+  drawParrafo(
+    "Salvo casos fortuitos o de fuerza mayor debidamente comprobados por el PROVEEDOR, el plazo para la provisión de " +
+      `los electrodomésticos será de ${datos.plazoEntrega || "[PLAZO ESTIMADO]"} a partir de la confirmación del pedido ` +
+      "y acreditación del anticipo."
+  );
+  drawParrafo(
+    "En caso de que el PROVEEDOR incumpla el plazo total comprometido en la presente cláusula, dicho incumplimiento " +
+      "estará sujeto a una multa del 0,5% por cada día de atraso, sobre el valor total del contrato."
+  );
+  drawParrafo("Para el cumplimiento de este plazo, el COMPRADOR deberá efectuar los pagos establecidos en la cláusula anterior en tiempo y forma.");
+
+  drawClausula("CLÁUSULA SÉPTIMA: CAUSAS DE FUERZA MAYOR O CASO FORTUITO.");
+  drawParrafo(
+    "Se entenderá por causas de fuerza mayor aquellos fenómenos de la naturaleza o actos del hombre que escapan al " +
+      "control de las partes contratantes, que impidan la normal provisión e instalación de los equipos, tales como: " +
+      "terremotos, incendios, inundaciones, epidemias, cuarentenas, actos de gobierno o autoridades públicas " +
+      "nacionales o extranjeras — incluyendo el caso en que la aduana, a través de su Departamento de Fiscalización u " +
+      "otro, requiera un control diferido inmediato del objeto de la venta una vez arribada al país. Incluye " +
+      "tumultos, insurrecciones, conmociones civiles, condiciones climáticas adversas y severas, y otras causas que " +
+      "puedan afectar la normal ejecución del contrato."
+  );
+
+  drawClausula("CLÁUSULA OCTAVA: AJUSTES PARA CAMBIO DE NORMATIVA VIGENTE.");
+  drawParrafo(
+    "En caso de que la normativa legal vigente a la fecha de la firma del presente contrato cambie durante el " +
+      "periodo de ejecución y afecte los costos tributarios y/o de importación, el COMPRADOR se compromete al pago de " +
+      "acuerdo al ajuste correspondiente en la cuota que afecte el costo conforme al cambio normativo. El porcentaje " +
+      "de ajuste será fijado de común acuerdo."
+  );
+
+  drawClausula("CLÁUSULA NOVENA: GARANTÍA.");
+  drawParrafo(
+    "Los equipos objeto del presente contrato cuentan con garantía conforme al Certificado de Garantía Aeon Home " +
+      "Tech entregado junto con el producto, cuyos términos principales se resumen a continuación:"
+  );
+  drawItem(
+    "Garantía base de un (1) año desde la fecha de entrega/instalación, por defectos de calidad y fabricación. No " +
+      "cubre defectos causados por mala instalación o mantenimiento por terceros no autorizados, sobrecargas " +
+      "eléctricas o mal uso de los equipos."
+  );
+  drawItem("Extensible hasta treinta y seis (36) meses desde la entrega, sujeto a la realización de los services oficiales de Aeon antes de los 12 y 24 meses posteriores a la entrega.");
+  drawItem(
+    "Es responsabilidad del COMPRADOR coordinar dichos services dentro de los plazos establecidos para mantener " +
+      "vigente la extensión de garantía. El PROVEEDOR podrá notificar proactivamente los vencimientos, sin que ello " +
+      "constituya obligación de seguimiento indefinido."
+  );
+  drawItem("Para el detalle completo de alcances, exclusiones y procedimiento de reclamo, rige lo establecido en el Certificado de Garantía entregado junto con los equipos.");
+
+  drawClausula("CLÁUSULA DÉCIMA: DOMICILIO.");
+  drawParrafo("Para efectos legales, EL PROVEEDOR señala como domicilio legal el siguiente:");
+  drawParrafo("QUANTUM INVESTMENTS S.A. — Calle San Juan XXIII esquina Juan Max Boettner, Edificio Park Plaza, piso 11, oficina D — Asunción, Paraguay.");
+  drawParrafo("EL COMPRADOR señala como domicilio legal el siguiente:");
+  drawParrafo(
+    `${datos.clienteRazonSocial || "[RAZÓN SOCIAL CLIENTE]"} — ` +
+      `${datos.clienteDomicilio || "[DOMICILIO CLIENTE]"} — Teléfono: ${datos.clienteTelefono || "___"} — ${datos.clienteCiudad || "[CIUDAD]"}, Paraguay.`
+  );
+
+  drawClausula("CLÁUSULA DÉCIMA PRIMERA: RETIRO DE MERCADERÍA.");
+  drawParrafo(
+    "EL PROVEEDOR entrega la mercadería exclusivamente en su depósito. No presta servicio de transporte, flete ni " +
+      "entrega en obra, salvo que se acuerde expresamente y por escrito un servicio adicional de traslado, ajeno al " +
+      "presente contrato."
+  );
+  drawParrafo(
+    "EL COMPRADOR deberá coordinar el retiro dentro de un plazo razonable desde la notificación de disponibilidad de " +
+      "la mercadería. EL PROVEEDOR no se responsabiliza por daños, pérdidas o costos de almacenamiento derivados de " +
+      "la demora en el retiro por parte de EL COMPRADOR más allá de dicho plazo."
+  );
+
+  drawClausula("CLÁUSULA DÉCIMA SEGUNDA: DERECHOS DE PROPIEDAD.");
+  drawParrafo(
+    "El COMPRADOR adquirirá la propiedad de los equipos al pagar la última cuota. El PROVEEDOR, si no se cumple el " +
+      "pago de alguna de las cuotas establecidas en este documento, podrá retirar el equipo y sus accesorios, " +
+      "quedando la o las cuotas ya pagadas en propiedad de la empresa como resarcimiento convencional de los daños y " +
+      "perjuicios ocasionados."
+  );
+
+  drawClausula("CLÁUSULA DÉCIMA TERCERA: JURISDICCIÓN Y COMPETENCIA.");
+  drawParrafo(
+    "Las partes expresan que los términos del presente contrato y las obligaciones que de él emergen se encuentran " +
+      "sujetas a la jurisdicción de las leyes y autoridades paraguayas. Las partes constituyen legal y realmente sus " +
+      "domicilios en los lugares señalados en la Cláusula Décima de este documento, donde serán válidas las " +
+      "notificaciones y citaciones judiciales o extrajudiciales practicadas."
+  );
+
+  drawClausula("CLÁUSULA DÉCIMA CUARTA: CONCILIACIÓN Y ARBITRAJE.");
+  drawParrafo(
+    "Las partes intervinientes acuerdan que todo litigio, discrepancia, cuestión o reclamación resultante del " +
+      "presente contrato (y anexos), o relacionado con él directa o indirectamente, se resolverá en primera " +
+      "instancia por negociaciones directas entre las partes, las cuales tendrán una duración máxima de 15 (quince) " +
+      "días. Si las partes concluyen en un acuerdo, celebrarán un Convenio Conciliatorio que será obligatorio para " +
+      "las partes."
+  );
+  drawParrafo(
+    "Si las negociaciones directas resultan infructuosas, o una de las partes incumple el Convenio Conciliatorio " +
+      "derivado de las negociaciones directas, las diferencias podrán someterse a un arbitraje ante el Centro de " +
+      "Arbitraje y Mediación Paraguay de la Cámara Nacional de Comercio y Servicios de Paraguay, que se desarrollará " +
+      "en la sede del Centro, de acuerdo con sus normas de procedimiento, ante un tribunal arbitral conformado por " +
+      "tres árbitros designados de la lista del Cuerpo Arbitral del Centro, cuyo laudo será definitivo y vinculante " +
+      "para las partes. Las partes declaran conocer y aceptar el reglamento vigente, incluso en orden a su régimen " +
+      "de gastos y costas, considerándolo parte integrante del presente contrato."
+  );
+
+  drawClausula("CLÁUSULA DÉCIMA QUINTA: EFICACIA DEL CONTRATO.");
+  drawParrafo("El presente contrato tiene fuerza de ley entre las partes contratantes.");
+
+  drawClausula("CLÁUSULA DÉCIMA SEXTA: CONFORMIDAD Y ACEPTACIÓN.");
+  drawParrafo(
+    "Las partes declaramos nuestra plena aceptación y absoluta conformidad con todas las cláusulas que anteceden, " +
+      "declarando que las mismas corresponden a nuestra fiel y real voluntad, sin haber mediado vicio de " +
+      "consentimiento, sometiéndonos a su fiel cumplimiento; las que surtirán su valor legal y eficacia jurídica, por " +
+      "lo que firmamos al pie, en 2 (dos) ejemplares de igual tenor y valor, en la fecha estipulada en el " +
+      "encabezado del presente contrato en la ciudad de Asunción, Paraguay."
+  );
+
+  // Firmas — igual patrón que el certificado de garantía completo: el lado PROVEEDOR ya lleva la
+  // firma escaneada (el contrato sale de acá pre-firmado por AEON), el lado COMPRADOR queda en
+  // blanco porque la firma del cliente se hace fuera de la app.
+  ensureSpace(90);
+  y -= 10;
+  const compradorLineX = MARGIN;
+  const aeonLineX = PAGE_W - MARGIN - 180;
+  const sigTopY = y;
+  let firmaH = 0;
+  if (firmaImg) {
+    const w = 110;
+    firmaH = (firmaImg.height / firmaImg.width) * w;
+    page.drawImage(firmaImg, { x: aeonLineX + 35, y: sigTopY - firmaH, width: w, height: firmaH });
+  }
+  y = sigTopY - Math.max(firmaH + 4, 30);
+
+  page.drawLine({ start: { x: compradorLineX, y }, end: { x: compradorLineX + 200, y }, thickness: 0.5, color: MUTED });
+  text(datos.clienteRepresentante || "", compradorLineX, y - 10, { size: 8 });
+  text(datos.clienteRazonSocial || "", compradorLineX, y - 20, { size: 7.5, color: MUTED });
+  text("COMPRADOR", compradorLineX, y - 30, { size: 7, color: MUTED });
+
+  page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 180, y }, thickness: 0.5, color: MUTED });
+  const nameW = font.widthOfTextAtSize(datos.aeonRepresentante || COMPANY.firmante, 8);
+  text(datos.aeonRepresentante || COMPANY.firmante, aeonLineX + 90 - nameW / 2, y - 10, { size: 8 });
+  const razW = font.widthOfTextAtSize(COMPANY.razonSocial, 7.5);
+  text(COMPANY.razonSocial, aeonLineX + 90 - razW / 2, y - 20, { size: 7.5, color: MUTED });
+  const provW = font.widthOfTextAtSize("PROVEEDOR", 7);
+  text("PROVEEDOR", aeonLineX + 90 - provW / 2, y - 30, { size: 7, color: MUTED });
+
+  return pdf.save();
+}
+
+export function nombreArchivoContrato(datos) {
+  const partes = ["Contrato_Provision", datos.fecha || "", limpiarNombreArchivo(datos.clienteRazonSocial) || "cliente", limpiarNombreArchivo(datos.obraNombre)].filter(Boolean);
+  return `${partes.join("_")}.pdf`;
+}
+
+export async function downloadContratoPdf(datos) {
+  const bytes = await generateContratoPdf(datos);
+  downloadBlob(bytes, nombreArchivoContrato(datos), "application/pdf");
+}
+
 // ---------- Reporte de muestras (declaración mensual para el seguro) ----------
 // `filas`: [{ modelo, codigo, cantidad, sinMarca, valorUnitario }]
 export async function generateReporteMuestrasPdf(filas, fecha) {

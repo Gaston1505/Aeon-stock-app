@@ -31,6 +31,7 @@ import {
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
   downloadListadoProductosPdf, generateListadoProductosPdf, nombreArchivoListadoProductos,
+  downloadContratoPdf, nombreArchivoContrato,
   COMPANY, fmtFecha, dataUrlToBytes,
 } from "./pdf";
 import { prepararPdfParaFirestore } from "./pdfCompress";
@@ -2471,6 +2472,7 @@ export default function App() {
   const [visitasPostventa, setVisitasPostventa] = useState([]);
   const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
   const [pedidoAnticipoTarget, setPedidoAnticipoTarget] = useState(null); // cotización sobre la que se pide un anticipo (sin remito)
+  const [contratoTarget, setContratoTarget] = useState(null); // cotización sobre la que se arma el contrato de provisión
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [transito, setTransito] = useState([]);
@@ -3751,6 +3753,16 @@ export default function App() {
     guardarEtapaCronograma(envio, etapaKey, { comprobanteUrl: url, comprobanteNombre: file.name });
   };
 
+  // Contrato de provisión ya firmado por el cliente (fuera de la app) — se sube como comprobante,
+  // mismo patrón que subirComprobanteTransito.
+  const subirContratoFirmado = async (cotizacion, file) => {
+    const path = `contratos/${cotizacion.id}/${Date.now()}_${file.name}`;
+    const archivoRef = storageRef(storage, path);
+    await uploadBytes(archivoRef, file);
+    const url = await getDownloadURL(archivoRef);
+    updateCotizacion(cotizacion.id, { contratoFirmadoUrl: url, contratoFirmadoNombre: file.name, contratoEstado: "firmado" });
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -4786,6 +4798,7 @@ export default function App() {
             onCompartirFichas={handleCompartirFichas}
             onDescargarRentabilidadPdf={handleDescargarRentabilidadPdf}
             onPedidoAnticipo={esAdmin ? ((c) => { setPedidoAnticipoTarget(c); setDrawer("pedido-facturacion"); }) : undefined}
+            onGenerarContrato={esAdmin ? ((c) => { setContratoTarget(c); setDrawer("contrato"); }) : undefined}
             descargandoId={descargandoId}
             pdfError={pdfError}
           />
@@ -5100,6 +5113,26 @@ export default function App() {
             if (!ventas.some((v) => v.cotizacionId === cotizacion.id)) setPromptFichaVenta(cotizacion);
           }}
         />
+      </Drawer>
+      <Drawer open={drawer === "contrato"} onClose={() => { setDrawer(null); setContratoTarget(null); }} title="Contrato de provisión de equipos">
+        {contratoTarget && (
+          <ContratoForm
+            key={contratoTarget.id}
+            cotizacion={contratoTarget}
+            grupos={gruposEmpresas}
+            onGuardarDatos={(contratoDatos) => {
+              // Lee el estado actual de la cotización (no el `contratoTarget` capturado al abrir el
+              // drawer) para no pisar "firmado" con "generado" si ya se subió el contrato firmado
+              // mientras este formulario seguía abierto.
+              const actual = cotizaciones.find((c) => c.id === contratoTarget.id);
+              updateCotizacion(contratoTarget.id, {
+                contratoDatos, contratoGeneradoEn: Date.now(),
+                ...(actual?.contratoEstado === "firmado" ? {} : { contratoEstado: "generado" }),
+              });
+            }}
+            onSubirFirmado={(file) => subirContratoFirmado(contratoTarget, file)}
+          />
+        )}
       </Drawer>
       <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); setPedidoAnticipoTarget(null); }} title={pedidoAnticipoTarget ? "Pedido de facturación — anticipo" : "Pedido de facturación"}>
         {pedidoTarget && (
@@ -5843,6 +5876,171 @@ function montoYaPedidoDeCotizacion(cotizacionId, pedidos, excluirId) {
   return (pedidos || [])
     .filter((p) => p.cotizacionId === cotizacionId && p.id !== excluirId)
     .reduce((acc, p) => acc + totalPedido(p), 0);
+}
+
+// Datos iniciales del contrato de provisión a partir de una cotización — lo que ya se puede
+// inferir (cliente, RUC vía razones sociales ya configuradas, obra, monto total) más los campos
+// que solo se completan a mano (representante, CI, domicilios, depósito, condiciones de pago).
+function armarContratoDesdeCotizacion(cot, grupos) {
+  const cliente = (cot.cliente || "").trim();
+  return {
+    fecha: todayISO(),
+    clienteRazonSocial: cliente,
+    clienteRuc: rucDeRazonSocial(cliente, grupos) || "",
+    clienteRepresentante: "", clienteCi: "", clienteDomicilio: "", clienteTelefono: "",
+    clienteCiudad: "Asunción",
+    obraNombre: (cot.obra || "").trim(), obraDireccion: "", obraCiudad: "",
+    depositoDireccion: "",
+    moneda: "USD",
+    montoTotal: desglosarTotalCotizacion(cot).total,
+    pctAnticipo: 30,
+    condicionSaldo: "contra retiro de los equipos en depósito",
+    incluirMora: false, pctMora: 0.5, diasGraciaMora: 5,
+    plazoEntrega: "",
+    // No hay un dato fijo de "quién firma por AEON" guardado en ningún lado del sistema —
+    // se deja editable con un valor por defecto razonable (el firmante de siempre en los PDF).
+    aeonRepresentante: COMPANY.firmante, aeonCi: "",
+  };
+}
+
+function ContratoForm({ cotizacion, grupos, onGuardarDatos, onSubirFirmado }) {
+  const inicial = useMemo(
+    () => ({ ...armarContratoDesdeCotizacion(cotizacion, grupos), ...(cotizacion.contratoDatos || {}) }),
+    [] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const [d, setD] = useState(inicial);
+  const [msg, setMsg] = useState(null); // { tipo: "ok" | "error", texto }
+  const [ocupado, setOcupado] = useState("");
+  const set = (campo, valor) => setD((prev) => ({ ...prev, [campo]: valor }));
+
+  const montoTotal = Number(d.montoTotal) || 0;
+  const pctAnticipo = Number(d.pctAnticipo) || 0;
+  const montoAnticipo = (montoTotal * pctAnticipo) / 100;
+  const montoSaldo = montoTotal - montoAnticipo;
+  const simbolo = d.moneda === "GS" ? "Gs." : "U$S";
+
+  const guardar = async () => {
+    setMsg(null);
+    setOcupado("guardar");
+    try {
+      await onGuardarDatos(d);
+      setMsg({ tipo: "ok", texto: "Datos del contrato guardados." });
+    } catch (e) {
+      setMsg({ tipo: "error", texto: `No se pudo guardar: ${e?.message || e}` });
+    }
+    setOcupado("");
+  };
+  const generarPdf = async () => {
+    setMsg(null);
+    setOcupado("pdf");
+    try {
+      await onGuardarDatos(d);
+      await downloadContratoPdf(d);
+    } catch (e) {
+      setMsg({ tipo: "error", texto: `No se pudo generar el PDF: ${e?.message || e}` });
+    }
+    setOcupado("");
+  };
+  const subirFirmado = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setMsg(null);
+    setOcupado("subir");
+    try {
+      await onSubirFirmado(file);
+      setMsg({ tipo: "ok", texto: "Contrato firmado subido correctamente." });
+    } catch (err) {
+      setMsg({ tipo: "error", texto: `No se pudo subir el archivo: ${err?.message || err}` });
+    }
+    setOcupado("");
+  };
+
+  return (
+    <div>
+      <p className="text-xs mb-3 px-2.5 py-2 rounded" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
+        El PDF se arma con estos datos para enviarlo al cliente — la firma de él se hace fuera de la app. El lado
+        AEON sale ya prefirmado.
+        {cotizacion.contratoEstado === "firmado" && cotizacion.contratoFirmadoUrl && (
+          <> <a href={cotizacion.contratoFirmadoUrl} target="_blank" rel="noreferrer" className="underline">Ver el contrato firmado ya subido</a>.</>
+        )}
+      </p>
+
+      <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Cliente (COMPRADOR)</p>
+      <Field label="Razón social"><TextInput value={d.clienteRazonSocial} onChange={(e) => set("clienteRazonSocial", e.target.value)} /></Field>
+      <Field label="RUC"><TextInput value={d.clienteRuc} onChange={(e) => set("clienteRuc", e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <div className="flex-1"><Field label="Representante"><TextInput value={d.clienteRepresentante} onChange={(e) => set("clienteRepresentante", e.target.value)} /></Field></div>
+        <div className="flex-1"><Field label="C.I. N°"><TextInput value={d.clienteCi} onChange={(e) => set("clienteCi", e.target.value)} /></Field></div>
+      </div>
+      <Field label="Domicilio"><TextInput value={d.clienteDomicilio} onChange={(e) => set("clienteDomicilio", e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <div className="flex-1"><Field label="Teléfono"><TextInput value={d.clienteTelefono} onChange={(e) => set("clienteTelefono", e.target.value)} /></Field></div>
+        <div className="flex-1"><Field label="Ciudad"><TextInput value={d.clienteCiudad} onChange={(e) => set("clienteCiudad", e.target.value)} /></Field></div>
+      </div>
+
+      <p className="text-base font-bold mt-3 mb-2" style={{ color: ACCENT }}>Obra</p>
+      <Field label="Nombre de la obra/edificio"><TextInput value={d.obraNombre} onChange={(e) => set("obraNombre", e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <div className="flex-1"><Field label="Dirección de la obra"><TextInput value={d.obraDireccion} onChange={(e) => set("obraDireccion", e.target.value)} /></Field></div>
+        <div className="flex-1"><Field label="Ciudad"><TextInput value={d.obraCiudad} onChange={(e) => set("obraCiudad", e.target.value)} /></Field></div>
+      </div>
+      <Field label="Dirección del depósito AEON (ahí se entrega, no en la obra)">
+        <TextInput value={d.depositoDireccion} onChange={(e) => set("depositoDireccion", e.target.value)} placeholder="Ej: Avda. ..., Asunción" />
+      </Field>
+
+      <p className="text-base font-bold mt-3 mb-2" style={{ color: ACCENT }}>Precio y forma de pago</p>
+      <div className="flex gap-2">
+        <div className="flex-1"><Field label="Moneda">
+          <Select value={d.moneda} onChange={(e) => set("moneda", e.target.value)}>
+            <option value="USD">Dólares (USD)</option>
+            <option value="GS">Guaraníes (Gs.)</option>
+          </Select>
+        </Field></div>
+        <div className="flex-1"><Field label={`Monto total (${simbolo})`}><TextInput type="number" value={d.montoTotal} onChange={(e) => set("montoTotal", e.target.value)} /></Field></div>
+      </div>
+      <Field label="% de anticipo (el resto queda como saldo)"><TextInput type="number" value={d.pctAnticipo} onChange={(e) => set("pctAnticipo", e.target.value)} /></Field>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>
+        Anticipo: {simbolo} {fmtN(montoAnticipo)} · Saldo ({100 - pctAnticipo}%): {simbolo} {fmtN(montoSaldo)}
+      </p>
+      <Field label="Condición de pago del saldo">
+        <TextInput value={d.condicionSaldo} onChange={(e) => set("condicionSaldo", e.target.value)} placeholder="Ej: contra retiro de los equipos en depósito / a los 30 días de la firma" />
+      </Field>
+      <label className="flex items-center gap-2 text-xs mb-2" style={{ color: INK }}>
+        <input type="checkbox" checked={!!d.incluirMora} onChange={(e) => set("incluirMora", e.target.checked)} />
+        Incluir cláusula de mora
+      </label>
+      {d.incluirMora && (
+        <div className="flex gap-2 mb-2">
+          <div className="flex-1"><Field label="% diario de recargo"><TextInput type="number" value={d.pctMora} onChange={(e) => set("pctMora", e.target.value)} /></Field></div>
+          <div className="flex-1"><Field label="Días de gracia desde vencimiento"><TextInput type="number" value={d.diasGraciaMora} onChange={(e) => set("diasGraciaMora", e.target.value)} /></Field></div>
+        </div>
+      )}
+      <Field label="Plazo de entrega estimado"><TextInput value={d.plazoEntrega} onChange={(e) => set("plazoEntrega", e.target.value)} placeholder="Ej: 60 a 90 días" /></Field>
+      <Field label="Fecha del contrato"><TextInput type="date" value={d.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+
+      <p className="text-base font-bold mt-3 mb-2" style={{ color: ACCENT }}>Representante de AEON que firma</p>
+      <p className="text-[11px] mb-2" style={{ color: MUTED }}>No hay un dato fijo cargado en el sistema para esto — editalo si corresponde.</p>
+      <div className="flex gap-2">
+        <div className="flex-1"><Field label="Nombre"><TextInput value={d.aeonRepresentante} onChange={(e) => set("aeonRepresentante", e.target.value)} /></Field></div>
+        <div className="flex-1"><Field label="C.I. N°"><TextInput value={d.aeonCi} onChange={(e) => set("aeonCi", e.target.value)} /></Field></div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap mt-3">
+        <PrimaryButton onClick={generarPdf} disabled={!!ocupado}><Download size={14} /> {ocupado === "pdf" ? "Generando..." : "Generar PDF"}</PrimaryButton>
+        <SecondaryButton onClick={guardar} disabled={!!ocupado}>{ocupado === "guardar" ? "Guardando..." : "Guardar datos"}</SecondaryButton>
+      </div>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Contrato firmado</p>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>Cuando el cliente lo devuelva firmado, subilo acá como comprobante.</p>
+      <label className="text-xs px-2.5 py-1.5 rounded border inline-flex items-center gap-1 cursor-pointer" style={{ borderColor: BORDER, color: INK }}>
+        <Upload size={13} /> {ocupado === "subir" ? "Subiendo..." : "Subir contrato firmado (PDF)"}
+        <input type="file" accept="application/pdf" className="hidden" onChange={subirFirmado} disabled={!!ocupado} />
+      </label>
+
+      {msg && <p className="text-xs mt-3" style={{ color: msg.tipo === "ok" ? "#15803D" : "#B91C1C" }}>{msg.texto}</p>}
+    </div>
+  );
 }
 
 // Destinatarios fijos del pedido de facturación (Administración).
@@ -14552,7 +14750,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta, movimientoPropio }) {
+function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta, movimientoPropio }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
   // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
@@ -14763,6 +14961,16 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
             <FileText size={13} /> Pedido de anticipo
           </button>
         )}
+        {onGenerarContrato && (
+          <button
+            onClick={() => onGenerarContrato(c)}
+            title="Arma el contrato de provisión de equipos en PDF, listo para enviar al cliente a firmar"
+            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+            style={{ borderColor: BORDER, color: INK }}
+          >
+            <FileSignature size={13} /> {c.contratoEstado === "firmado" ? "Contrato (firmado)" : c.contratoEstado === "generado" ? "Contrato (generado)" : "Generar contrato"}
+          </button>
+        )}
       </div>
       {verRentabilidad && (
         <RentabilidadCotizacionView
@@ -14783,7 +14991,7 @@ const CUENTA_OBRA_BADGE = {
   suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
   historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
-function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, descargandoId, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
@@ -14824,7 +15032,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
         onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
-        onPedidoAnticipo={onPedidoAnticipo}
+        onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato}
         descargandoId={descargandoId} cuenta={cuentaPorCotizacionId?.get(hilo.activa.id)} movimientoPropio={movimientoPropioPorCotizacionId?.get(hilo.activa.id)}
       />
       {expandido && (
@@ -14847,7 +15055,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
 // Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
 // todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
 // una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
-function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
@@ -14938,7 +15146,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
                     onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                     onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
                     onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
-                    onPedidoAnticipo={onPedidoAnticipo}
+                    onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato}
                     descargandoId={descargandoId} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
                   />
                 ))}
@@ -14954,7 +15162,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
 // Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
 // el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
 // minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
-function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([grupo], cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupo, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
@@ -14984,7 +15192,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
-              onPedidoAnticipo={onPedidoAnticipo}
+              onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato}
               descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
             />
           ))}
@@ -14994,7 +15202,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
@@ -15031,7 +15239,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
                 onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
-        onPedidoAnticipo={onPedidoAnticipo}
+        onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato}
         descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
               />
             ))}

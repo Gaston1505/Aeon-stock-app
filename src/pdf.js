@@ -190,10 +190,10 @@ export async function generateCotizacionPdf(cotizacion, productos = []) {
   const base = import.meta.env.BASE_URL;
   const [logoBytes, firmaBytes] = await Promise.all([
     fetchBytes(`${base}aeon-logo.jpg`),
-    fetchBytes(`${base}firma-gaston.jpg`),
+    fetchBytes(`${base}firma-gaston.png`),
   ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
-  const firmaImg = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
 
   const lineas = cotizacion.lineas || [];
   const showEspec = lineas.some((l) => l.especValor);
@@ -974,10 +974,10 @@ export async function generateGarantiaPdf(venta) {
   const base = import.meta.env.BASE_URL;
   const [logoBytes, firmaBytes] = await Promise.all([
     fetchBytes(`${base}aeon-logo.jpg`),
-    fetchBytes(`${base}firma-gaston.jpg`),
+    fetchBytes(`${base}firma-gaston.png`),
   ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
-  const firmaImg = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
 
   const lineas = venta.lineas || [];
 
@@ -1407,10 +1407,10 @@ export async function generateGarantiaCompletaPdf(venta) {
   const base = import.meta.env.BASE_URL;
   const [logoBytes, firmaBytes] = await Promise.all([
     fetchBytes(`${base}aeon-logo.jpg`),
-    fetchBytes(`${base}firma-gaston.jpg`),
+    fetchBytes(`${base}firma-gaston.png`),
   ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
-  const firmaImg = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
 
   const lineas = venta.lineas || [];
   const colModelo = 110;

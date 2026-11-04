@@ -71,7 +71,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
   const base = import.meta.env.BASE_URL;
   const [logoBuf, firmaBuf] = await Promise.all([
     fetchArrayBuffer(`${base}aeon-logo.jpg`),
-    fetchArrayBuffer(`${base}firma-gaston.jpg`),
+    fetchArrayBuffer(`${base}firma-gaston.png`),
   ]);
 
   let r = 1;
@@ -284,7 +284,7 @@ export async function generateCotizacionExcelBuffer(cotizacion) {
 
   // Firma
   if (firmaBuf) {
-    const firmaId = workbook.addImage({ buffer: firmaBuf, extension: "jpeg" });
+    const firmaId = workbook.addImage({ buffer: firmaBuf, extension: "png" });
     sheet.addImage(firmaId, { tl: { col: lastCol - 2, row: r - 1 }, ext: { width: 100, height: 45 } });
     r += 3;
   } else {

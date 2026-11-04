@@ -48,9 +48,9 @@ export async function generatePedidoFacturacionPdf(p) {
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const base = import.meta.env.BASE_URL;
-  const [logoBytes, firmaBytes] = await Promise.all([fetchBytes(`${base}aeon-logo.jpg`), fetchBytes(`${base}firma-gaston.jpg`)]);
+  const [logoBytes, firmaBytes] = await Promise.all([fetchBytes(`${base}aeon-logo.jpg`), fetchBytes(`${base}firma-gaston.png`)]);
   const logo = logoBytes ? await pdf.embedJpg(logoBytes) : null;
-  const firma = firmaBytes ? await pdf.embedJpg(firmaBytes) : null;
+  const firma = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
 
   const PW = 595.28, PH = 841.89, M = 36;
   const W = PW - M * 2;
@@ -236,7 +236,7 @@ export async function generatePedidoFacturacionExcel(p) {
   Object.entries(alturas).forEach(([r, h]) => { ws.getRow(Number(r)).height = h; });
 
   const base = import.meta.env.BASE_URL;
-  const [logoBytes, firmaBytes] = await Promise.all([fetchBytes(`${base}aeon-logo.jpg`), fetchBytes(`${base}firma-gaston.jpg`)]);
+  const [logoBytes, firmaBytes] = await Promise.all([fetchBytes(`${base}aeon-logo.jpg`), fetchBytes(`${base}firma-gaston.png`)]);
   if (logoBytes) {
     const id = wb.addImage({ buffer: logoBytes, extension: "jpeg" });
     ws.addImage(id, { tl: { col: 0.1, row: 0.2 }, ext: { width: 184, height: 33.5 } });
@@ -315,7 +315,7 @@ export async function generatePedidoFacturacionExcel(p) {
   ws.getCell(rf, 7).value = "AUTORIZADO"; estilo(ws.getCell(rf, 7), { size: 11, align: "center", border: { top: { style: "dashed", color: { argb: "FF000000" } } } });
   ws.getCell(rf, 2).border = { top: { style: "dashed", color: { argb: "FF000000" } } };
   if (firmaBytes) {
-    const id = wb.addImage({ buffer: firmaBytes, extension: "jpeg" });
+    const id = wb.addImage({ buffer: firmaBytes, extension: "png" });
     ws.addImage(id, { tl: { col: 6.1, row: rf - 3 }, ext: { width: 88, height: 40 } });
   }
 

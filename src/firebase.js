@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 // These values are safe to expose in client-side code — Firebase's web
 // config is not a secret. Access is controlled by Firestore security rules,
@@ -21,3 +22,5 @@ const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(app, { ignoreUndefinedProperties: true });
 
 export const auth = getAuth(app);
+
+export const storage = getStorage(app);

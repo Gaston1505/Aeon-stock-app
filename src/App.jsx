@@ -8,10 +8,11 @@ import {
   Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { db, auth } from "./firebase";
+import { db, auth, storage } from "./firebase";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot, query, query as fsQuery, where, orderBy, runTransaction,
 } from "firebase/firestore";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { downloadEtiquetasPdf, textoSerial, parsearSerial, claveCodigo, SERIAL_BASE_APP } from "./etiquetas";
 import { anchosCode128 } from "./code128";
 import { CENTROS_COSTO, centroCostoPorCodigo, centroCostoSugerido, totalLineaPedido, totalPedido } from "./centrosCosto";
@@ -3732,6 +3733,24 @@ export default function App() {
     updateTransito(envio.id, { estado: "Llegado", fechaLlegada });
   };
 
+  // Cronograma de pagos/gastos + documentación de un envío (ver ETAPAS_CRONOGRAMA_TRANSITO) —
+  // patch parcial sobre UNA etapa, mergeado a mano porque Firestore reemplaza un campo objeto
+  // entero en vez de mezclarlo clave por clave.
+  const guardarEtapaCronograma = (envio, etapaKey, patch) => {
+    const cronograma = { ...(envio.cronograma || {}) };
+    cronograma[etapaKey] = { ...(cronograma[etapaKey] || {}), ...patch };
+    updateTransito(envio.id, { cronograma });
+  };
+  // Comprobante de una etapa del cronograma: sube a Storage bajo transito/{envioId}/{etapaKey}/...
+  // y guarda la URL de descarga en esa etapa, con el mismo merge de arriba.
+  const subirComprobanteTransito = async (envio, etapaKey, file) => {
+    const path = `transito/${envio.id}/${etapaKey}/${Date.now()}_${file.name}`;
+    const archivoRef = storageRef(storage, path);
+    await uploadBytes(archivoRef, file);
+    const url = await getDownloadURL(archivoRef);
+    guardarEtapaCronograma(envio, etapaKey, { comprobanteUrl: url, comprobanteNombre: file.name });
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -4277,6 +4296,7 @@ export default function App() {
 
   const pendientesEntrada = esAdmin ? solicitudes.filter((s) => s.tipo === "entrada" && s.estado === "Pendiente").length : 0;
   const pendientesSalida = esAdmin ? solicitudes.filter((s) => s.tipo === "salida" && s.estado === "Pendiente").length : 0;
+  const pendientesCronogramaTransito = esAdmin ? transito.filter((t) => t.estado !== "Llegado" && cronogramaTieneVencido(t)).length : 0;
 
   // Cada item lleva su `section` — el nav los renderiza agrupados con un encabezado chico por
   // sección (antes era una lista plana sin separación visual, por eso se veía "todo mezclado").
@@ -4284,7 +4304,7 @@ export default function App() {
     { key: "resumen", label: "Resumen", icon: LayoutDashboard, section: null },
     // Stock / inventario
     { key: "deposito", label: "Depósito", icon: Warehouse, section: "Stock e inventario" },
-    { key: "transito", label: "Tránsito", icon: Ship, section: "Stock e inventario" },
+    { key: "transito", label: pendientesCronogramaTransito > 0 ? `Tránsito (${pendientesCronogramaTransito})` : "Tránsito", icon: Ship, section: "Stock e inventario" },
     { key: "armado-pedido", label: "Orden de Compra", icon: ShoppingCart, section: "Stock e inventario" },
     { key: "pre-lista-pedido", label: "Pre-lista de pedido", icon: ClipboardList, section: "Stock e inventario" },
     { key: "playa", label: "Zona de playa", icon: Inbox, section: "Stock e inventario" },
@@ -4846,6 +4866,8 @@ export default function App() {
             onDarLlegada={(t) => { setLlegadaTarget(t); setDrawer("llegada-transito"); }}
             onAgregarRepuesto={(t) => { setRepuestoTarget(t); setDrawer("repuesto-transito"); }}
             onQuitarRepuesto={(t, repuestoId) => quitarRepuestoTransito(t, repuestoId)}
+            onGuardarEtapa={guardarEtapaCronograma}
+            onSubirComprobante={subirComprobanteTransito}
           />
         )}
 
@@ -6116,8 +6138,11 @@ const CONCEPTOS_COSTO_TRANSITO = [
   { key: "representanteChina", label: "Representante en China" },
   { key: "flete", label: "Flete" },
   { key: "comisionFlete", label: "Comisión flete (4,71%)" },
+  { key: "comisionShiny", label: "Comisión Shiny" },
   { key: "despacho", label: "Despacho" },
   { key: "seguro", label: "Seguro" },
+  { key: "fleteInterno", label: "Flete interno (puerto → depósito)" },
+  { key: "montacargas", label: "Montacargas" },
 ];
 const COMISION_FLETE_PORCENTAJE = 0.0471;
 // Subconjunto de "logística pura" — sin el pago a fábrica, porque ese ya está representado
@@ -6179,6 +6204,53 @@ function valuacionTransito(transitoEnvios, productos) {
     ventaPrecioLista += ventaProductos + pyRepuestos * 3;
   }
   return { costoOrigen, costoPuestoPy, ventaPrecioLista };
+}
+
+// Cronograma de pagos/gastos y documentación de cada envío de Tránsito — además de los montos
+// totales que ya carga TransitoForm (ver CONCEPTOS_COSTO_TRANSITO), acá se trackea CUÁNDO toca
+// cada paso, si ya se hizo y el comprobante correspondiente (sube a Firebase Storage). Vive en
+// el campo "cronograma" del envío: { [etapaKey]: { fechaEstimada, fechaReal, hecho,
+// comprobanteUrl, comprobanteNombre, nota, documentos? } }. Las claves de las etapas con monto
+// coinciden con las de CONCEPTOS_COSTO_TRANSITO para leer el monto de ahí directo, sin duplicarlo.
+const ETAPAS_CRONOGRAMA_TRANSITO = [
+  { key: "adelantoFabrica", label: "Adelanto a fábrica (30%)", hint: "Seña inicial del pedido" },
+  { key: "pagoFinalFabrica", label: "Saldo a fábrica (70%)", hint: "Al terminar la producción" },
+  { key: "comisionShiny", label: "Comisión Shiny", hint: "Inspección de mercadería y supervisión de carga del contenedor" },
+  { key: "documentacion", label: "Documentación (naviera / despachante)", hint: "BL, factura comercial, packing list, certificado de origen, seguro", sinMonto: true },
+  { key: "despacho", label: "Despacho de aduana", hint: "Pago de despacho en Paraguay" },
+  { key: "fleteInterno", label: "Flete interno", hint: "Puerto → depósito" },
+  { key: "montacargas", label: "Montacargas", hint: "Descarga en depósito" },
+];
+const DOCUMENTOS_DEFAULT_TRANSITO = [
+  "Factura comercial", "Packing list", "BL (conocimiento de embarque)", "Certificado de origen", "Seguro de transporte",
+];
+// Primera etapa sin marcar "hecho", en orden — es la que se resalta como "Siguiente paso" aunque
+// todavía no tenga fecha estimada cargada, para que siempre haya algo accionable.
+function primeraEtapaPendienteCronograma(cronograma) {
+  return ETAPAS_CRONOGRAMA_TRANSITO.find((et) => !(cronograma?.[et.key]?.hecho))?.key;
+}
+// Estado visual de una etapa — mismo criterio de "por vencer"/"vencido" que alertaUnidadPostventa
+// pero con ventana de 7 días (acá los pasos son de semanas, no de años).
+function estadoEtapaCronograma(entrada, esProxima) {
+  if (entrada?.hecho) return { texto: `Hecho${entrada.fechaReal ? ` ${fmtDate(entrada.fechaReal)}` : ""}`, bg: "#E9F7EF", color: "#15803D" };
+  if (entrada?.fechaEstimada) {
+    const hoy = new Date(todayISO() + "T00:00:00");
+    const vto = new Date(entrada.fechaEstimada + "T00:00:00");
+    const dias = Math.round((vto - hoy) / 86400000);
+    if (dias < 0) return { texto: `Vencido hace ${Math.abs(dias)}d`, bg: "#FBEAEA", color: "#B91C1C" };
+    if (dias <= 7) return { texto: `Por vencer (${dias}d)`, bg: "#FDF1E0", color: "#B45309" };
+  }
+  if (esProxima) return { texto: "Siguiente paso", bg: "#FDF1E0", color: "#B45309" };
+  return { texto: "Pendiente", bg: ACCENT_LIGHT, color: MUTED };
+}
+// Un envío "necesita atención" si tiene al menos una etapa vencida — usado para el badge de nav.
+function cronogramaTieneVencido(envio) {
+  const cronograma = envio.cronograma || {};
+  const hoy = todayISO();
+  return ETAPAS_CRONOGRAMA_TRANSITO.some((et) => {
+    const entrada = cronograma[et.key];
+    return !entrada?.hecho && entrada?.fechaEstimada && entrada.fechaEstimada < hoy;
+  });
 }
 
 // Clasifica una venta comprometida cruzando cuánto se entregó (retirado) contra cuánto se
@@ -19078,7 +19150,121 @@ function ReclamosView({ reclamos, query, onQuery, onNew, onResolver, onReinstala
   );
 }
 
-function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada, onAgregarRepuesto, onQuitarRepuesto }) {
+// Una fila expandible del cronograma de un envío (ver ETAPAS_CRONOGRAMA_TRANSITO) — plegada
+// muestra el estado (hecho/por vencer/vencido/siguiente paso); al abrirla se edita fecha
+// estimada/real, el tilde de "Hecho", una nota libre, el checklist de documentos (solo la etapa
+// de documentación) y se puede subir el comprobante correspondiente a Firebase Storage.
+function EtapaCronogramaRow({ etapa, entrada, monto, esProxima, onGuardar, onSubirComprobante }) {
+  const [abierto, setAbierto] = useState(false);
+  const [fechaEstimada, setFechaEstimada] = useState(entrada?.fechaEstimada || "");
+  const [fechaReal, setFechaReal] = useState(entrada?.fechaReal || "");
+  const [hecho, setHecho] = useState(!!entrada?.hecho);
+  const [nota, setNota] = useState(entrada?.nota || "");
+  const [documentos, setDocumentos] = useState(
+    entrada?.documentos || (etapa.sinMonto ? DOCUMENTOS_DEFAULT_TRANSITO.map((nombre) => ({ nombre, hecho: false })) : [])
+  );
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+  const fileInputRef = useRef(null);
+
+  const estado = estadoEtapaCronograma(entrada, esProxima);
+
+  const abrir = () => {
+    setFechaEstimada(entrada?.fechaEstimada || "");
+    setFechaReal(entrada?.fechaReal || "");
+    setHecho(!!entrada?.hecho);
+    setNota(entrada?.nota || "");
+    setDocumentos(entrada?.documentos || (etapa.sinMonto ? DOCUMENTOS_DEFAULT_TRANSITO.map((nombre) => ({ nombre, hecho: false })) : []));
+    setAbierto(true);
+  };
+  const marcarHecho = (checked) => {
+    setHecho(checked);
+    if (checked && !fechaReal) setFechaReal(todayISO());
+  };
+  const toggleDocumento = (idx) => {
+    setDocumentos(documentos.map((d, i) => (i === idx ? { ...d, hecho: !d.hecho } : d)));
+  };
+  const confirmar = () => {
+    const patch = { fechaEstimada, fechaReal, hecho, nota };
+    if (etapa.sinMonto) patch.documentos = documentos;
+    onGuardar(patch);
+    setAbierto(false);
+  };
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setSubiendo(true);
+    setError("");
+    try {
+      await onSubirComprobante(file);
+    } catch (err) {
+      setError(`No se pudo subir el comprobante: ${err?.message || err}`);
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md px-2.5 py-2" style={{ backgroundColor: "#FAFAFB", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-center justify-between gap-2 cursor-pointer" onClick={() => (abierto ? setAbierto(false) : abrir())}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: estado.color }} />
+          <div className="min-w-0">
+            <p className="text-xs font-medium truncate" style={{ color: INK }}>{etapa.label}</p>
+            <p className="text-[11px] truncate" style={{ color: MUTED }}>
+              {etapa.hint}{!etapa.sinMonto && monto > 0 ? ` · U$S ${monto.toLocaleString("es-PY")}` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: estado.bg, color: estado.color }}>{estado.texto}</span>
+          {abierto ? <ChevronUp size={13} style={{ color: MUTED }} /> : <ChevronDown size={13} style={{ color: MUTED }} />}
+        </div>
+      </div>
+      {abierto && (
+        <div className="mt-2 pt-2" style={{ borderTop: `0.5px solid ${BORDER}` }} onClick={(e) => e.stopPropagation()}>
+          <div className="flex gap-2">
+            <Field label="Fecha estimada"><TextInput type="date" value={fechaEstimada} onChange={(e) => setFechaEstimada(e.target.value)} /></Field>
+            <Field label="Fecha real"><TextInput type="date" value={fechaReal} onChange={(e) => setFechaReal(e.target.value)} /></Field>
+          </div>
+          <label className="flex items-center gap-1.5 mb-3 text-xs" style={{ color: INK }}>
+            <input type="checkbox" checked={hecho} onChange={(e) => marcarHecho(e.target.checked)} /> Hecho
+          </label>
+          {etapa.sinMonto && (
+            <div className="mb-3">
+              <p className="text-xs font-medium mb-1" style={{ color: MUTED }}>Documentos</p>
+              {documentos.map((d, i) => (
+                <label key={i} className="flex items-center gap-1.5 text-xs mb-1" style={{ color: INK }}>
+                  <input type="checkbox" checked={!!d.hecho} onChange={() => toggleDocumento(i)} /> {d.nombre}
+                </label>
+              ))}
+            </div>
+          )}
+          <Field label="Nota"><TextInput value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Opcional" /></Field>
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handleFile} className="hidden" />
+            <SecondaryButton onClick={() => fileInputRef.current?.click()} disabled={subiendo}>
+              <Upload size={13} /> {subiendo ? "Subiendo..." : "Subir comprobante"}
+            </SecondaryButton>
+            {entrada?.comprobanteNombre && (
+              <a href={entrada.comprobanteUrl} target="_blank" rel="noreferrer" className="text-xs underline truncate" style={{ color: ACCENT }}>
+                {entrada.comprobanteNombre}
+              </a>
+            )}
+          </div>
+          {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+          <div className="flex gap-2">
+            <PrimaryButton onClick={confirmar}>Guardar</PrimaryButton>
+            <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDelete, onComprometer, onQuitarCompromiso, onDarLlegada, onAgregarRepuesto, onQuitarRepuesto, onGuardarEtapa, onSubirComprobante }) {
   const enCamino = transito.filter((t) => t.estado !== "Llegado");
   const totalUnidades = enCamino.reduce((acc, t) => acc + sumCantidad(t.lineas || []), 0);
   const totalCosto = enCamino.reduce((acc, t) => acc + costoTotalEnvio(t), 0);
@@ -19181,6 +19367,26 @@ function TransitoView({ transito, productos, query, onQuery, onNew, onEdit, onDe
                     );
                   })}
                 </div>
+                <div className="mt-2.5">
+                  <p className="text-xs font-semibold mb-1.5" style={{ color: ACCENT }}>Cronograma de pagos y documentación</p>
+                  <div className="space-y-1.5">
+                    {(() => {
+                      const cronograma = t.cronograma || {};
+                      const proxima = primeraEtapaPendienteCronograma(cronograma);
+                      return ETAPAS_CRONOGRAMA_TRANSITO.map((etapa) => (
+                        <EtapaCronogramaRow
+                          key={etapa.key}
+                          etapa={etapa}
+                          entrada={cronograma[etapa.key]}
+                          monto={Number(t[etapa.key]) || 0}
+                          esProxima={etapa.key === proxima}
+                          onGuardar={(patch) => onGuardarEtapa(t, etapa.key, patch)}
+                          onSubirComprobante={(file) => onSubirComprobante(t, etapa.key, file)}
+                        />
+                      ));
+                    })()}
+                  </div>
+                </div>
                 {((t.repuestos || []).length > 0 || !llegado) && (
                   <details className="mt-2">
                     <summary className="text-xs cursor-pointer" style={{ color: ACCENT }}>
@@ -19248,8 +19454,11 @@ function TransitoForm({ envio, productos, onSave }) {
   const [flete, setFlete] = useState(envio ? String(envio.flete ?? "") : "");
   const [comisionFlete, setComisionFlete] = useState(envio ? String(envio.comisionFlete ?? "") : "");
   const comisionAutoRef = useRef(null);
+  const [comisionShiny, setComisionShiny] = useState(envio ? String(envio.comisionShiny ?? "") : "");
   const [despacho, setDespacho] = useState(envio ? String(envio.despacho ?? "") : "");
   const [seguro, setSeguro] = useState(envio ? String(envio.seguro ?? "") : "");
+  const [fleteInterno, setFleteInterno] = useState(envio ? String(envio.fleteInterno ?? "") : "");
+  const [montacargas, setMontacargas] = useState(envio ? String(envio.montacargas ?? "") : "");
   const [notas, setNotas] = useState(envio?.notas || "");
   const [modeloNuevo, setModeloNuevo] = useState("");
   const [cantidadNueva, setCantidadNueva] = useState(1);
@@ -19280,7 +19489,7 @@ function TransitoForm({ envio, productos, onSave }) {
   };
   const quitarLinea = (idx) => setLineas(lineas.filter((_, i) => i !== idx));
 
-  const costoTotal = [adelantoFabrica, pagoFinalFabrica, representanteChina, flete, comisionFlete, despacho, seguro]
+  const costoTotal = [adelantoFabrica, pagoFinalFabrica, representanteChina, flete, comisionFlete, comisionShiny, despacho, seguro, fleteInterno, montacargas]
     .reduce((acc, v) => acc + (Number(v) || 0), 0);
 
   const submit = () => {
@@ -19295,8 +19504,11 @@ function TransitoForm({ envio, productos, onSave }) {
       representanteChina: Number(representanteChina) || 0,
       flete: Number(flete) || 0,
       comisionFlete: Number(comisionFlete) || 0,
+      comisionShiny: Number(comisionShiny) || 0,
       despacho: Number(despacho) || 0,
       seguro: Number(seguro) || 0,
+      fleteInterno: Number(fleteInterno) || 0,
+      montacargas: Number(montacargas) || 0,
     });
   };
 
@@ -19342,9 +19554,14 @@ function TransitoForm({ envio, productos, onSave }) {
         </Field>
       </div>
       <p className="text-xs mb-3" style={{ color: MUTED }}>La comisión se sugiere sola (4,71% del flete) y se puede pisar a mano.</p>
+      <Field label="Comisión Shiny U$S"><TextInput type="number" value={comisionShiny} onChange={(e) => setComisionShiny(e.target.value)} placeholder="Inspección de mercadería + carga del contenedor" /></Field>
       <div className="flex gap-2">
         <Field label="Despacho U$S"><TextInput type="number" value={despacho} onChange={(e) => setDespacho(e.target.value)} placeholder="Opcional" /></Field>
         <Field label="Seguro U$S"><TextInput type="number" value={seguro} onChange={(e) => setSeguro(e.target.value)} placeholder="Opcional" /></Field>
+      </div>
+      <div className="flex gap-2">
+        <Field label="Flete interno U$S"><TextInput type="number" value={fleteInterno} onChange={(e) => setFleteInterno(e.target.value)} placeholder="Puerto → depósito" /></Field>
+        <Field label="Montacargas U$S"><TextInput type="number" value={montacargas} onChange={(e) => setMontacargas(e.target.value)} placeholder="Opcional" /></Field>
       </div>
       <p className="text-xs mb-3" style={{ color: MUTED }}>Costo total del envío: U$S {costoTotal.toLocaleString("es-PY")}</p>
 

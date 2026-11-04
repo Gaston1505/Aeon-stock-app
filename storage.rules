@@ -1,0 +1,26 @@
+rules_version = '2';
+
+// AEON Stock App — Firebase Storage. Mismo esquema de rol que firestore.rules (usuarios/{uid}.rol),
+// leído desde acá vía firestore.get(). Por ahora el único uso es el comprobante de cada etapa del
+// cronograma de Tránsito (ver ETAPAS_CRONOGRAMA_TRANSITO en App.jsx), bajo
+// transito/{envioId}/{etapaKey}/{fileName} — mismo alcance "solo admin" que la colección
+// "transito" en Firestore.
+//
+// IMPORTANTE: este archivo no se despliega solo — no hay paso de CI para Storage Rules (ver
+// .github/workflows/deploy.yml, que solo construye y publica el sitio). Hay que pegar este
+// contenido a mano en Firebase Console → Storage → Rules, igual que ya se hace con
+// firestore.rules.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function esAdmin() {
+      return request.auth != null && (
+        !firestore.exists(/databases/(default)/documents/usuarios/$(request.auth.uid)) ||
+        firestore.get(/databases/(default)/documents/usuarios/$(request.auth.uid)).data.rol == "admin"
+      );
+    }
+
+    match /transito/{envioId}/{etapaKey}/{fileName} {
+      allow read, write: if esAdmin();
+    }
+  }
+}

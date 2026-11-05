@@ -6,7 +6,11 @@ rules_version = '2';
 //   App.jsx), bajo transito/{envioId}/{etapaKey}/{fileName}.
 // - Contrato de provisión ya firmado por el cliente (fuera de la app), subido como comprobante
 //   bajo contratos/{cotizacionId}/{fileName} (ver ContratoForm/subirContratoFirmado en App.jsx).
-// Mismo alcance "solo admin" para ambos, igual que las colecciones "transito" y "cotizaciones"
+// - PDF de respaldo de una fábrica competidora de origen (China) cargada en el comparador de
+//   costos, bajo fabricasCompetencia/{fabricaId}/{fileName} (ver ComparadorFabricas/
+//   subirPdfFabricaCompetencia en App.jsx). Es solo un adjunto de consulta — los costos se tipean
+//   a mano, no se leen del PDF.
+// Mismo alcance "solo admin" para todos, igual que las colecciones "transito" y "cotizaciones"
 // en Firestore.
 //
 // IMPORTANTE: este archivo no se despliega solo — no hay paso de CI para Storage Rules (ver
@@ -27,6 +31,10 @@ service firebase.storage {
     }
 
     match /contratos/{cotizacionId}/{fileName} {
+      allow read, write: if esAdmin();
+    }
+
+    match /fabricasCompetencia/{fabricaId}/{fileName} {
       allow read, write: if esAdmin();
     }
   }

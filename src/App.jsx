@@ -14189,7 +14189,7 @@ function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
           <thead>
             <tr style={{ backgroundColor: "#FAFBFC" }}>
               <th className="text-left font-medium px-2 py-1" style={{ color: MUTED }}>Etapa</th>
-              <th className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>Nuestro</th>
+              <th className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>Midea</th>
               {fabricasConDato.map((f) => {
                 const info = porFabrica.get(f.id);
                 return (
@@ -14242,7 +14242,7 @@ function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
       Categoría: fila.categoria || "Otros",
       Tipo: fila.producto?.subcategoria2 || "",
       Modelo: fila.label,
-      Nuestro: fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "",
+      Midea: fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "",
     };
     fabricasSeleccionadas.forEach((f) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
@@ -14264,7 +14264,7 @@ async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
     { key: "categoria", label: "CATEGORÍA" },
     { key: "tipo", label: "TIPO" },
     { key: "modelo", label: "MODELO" },
-    { key: "nuestro", label: "NUESTRO" },
+    { key: "nuestro", label: "MIDEA" },
     ...fabricasSeleccionadas.map((f, i) => ({ key: `fab${i}`, label: f.nombre.toUpperCase() })),
   ];
   const filasPdf = filas.map((fila) => {
@@ -14600,7 +14600,7 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                   <thead>
                     <tr style={{ backgroundColor: "#FAFBFC" }}>
                       <th className="text-left font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Modelo</th>
-                      <th className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Nuestro</th>
+                      <th className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Midea</th>
                       {fabricasSeleccionadas.map((f) => (
                         <th key={f.id} className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>{f.nombre}</th>
                       ))}

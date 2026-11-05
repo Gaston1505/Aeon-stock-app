@@ -14685,7 +14685,10 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                           {fila.nuestro != null ? (
                                             <>
                                               <div><span className="text-[10px]" style={{ color: MUTED }}>Compra </span>{usd(fila.nuestro)}</div>
-                                              <div className="text-[10px]" style={{ color: MUTED }}>Venta {fila.nuestroVenta != null ? usd(fila.nuestroVenta) : "—"}</div>
+                                              <div>
+                                                <span className="text-[10px]" style={{ color: MUTED }}>Venta </span>
+                                                <span className="text-sm font-bold" style={{ color: INK }}>{fila.nuestroVenta != null ? usd(fila.nuestroVenta) : "—"}</span>
+                                              </div>
                                             </>
                                           ) : "—"}
                                         </td>
@@ -14703,7 +14706,10 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                                       <span className="font-medium ml-1" style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
                                                     )}
                                                   </div>
-                                                  <div className="text-[10px]" style={{ color: MUTED }}>Venta {venta != null ? usd(venta) : "—"}</div>
+                                                  <div>
+                                                    <span className="text-[10px]" style={{ color: MUTED }}>Venta </span>
+                                                    <span className="text-sm font-bold" style={{ color: INK }}>{venta != null ? usd(venta) : "—"}</span>
+                                                  </div>
                                                 </>
                                               ) : "—"}
                                             </td>

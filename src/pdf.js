@@ -3587,7 +3587,13 @@ export async function downloadListadoProductosPdf(secciones, fecha, conFoto = fa
 // ---------- Lista genérica (exportación contextual por pestaña) ----------
 // `columnas`: [{ key, label, width? }] — sin width, se reparte el ancho disponible por partes iguales.
 // `filas`: array de objetos planos, cada uno con esas keys.
-export async function generateListaPdf(titulo, columnas, filas, fecha) {
+export async function generateListaPdf(titulo, columnas, filas, fecha, opts = {}) {
+  // landscape: para tablas con muchas columnas (ej. el comparativo de fábricas, con compra y
+  // venta por cada una) — en vertical, con 8+ columnas, el texto se superpone entre celdas.
+  const pageW = opts.landscape ? PAGE_H : PAGE_W;
+  const pageH = opts.landscape ? PAGE_W : PAGE_H;
+  const contentW = pageW - MARGIN * 2;
+
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -3598,21 +3604,30 @@ export async function generateListaPdf(titulo, columnas, filas, fecha) {
 
   const anchoFijo = columnas.reduce((acc, c) => acc + (c.width || 0), 0);
   const sinAncho = columnas.filter((c) => !c.width).length;
-  const anchoAuto = sinAncho > 0 ? (CONTENT_W - anchoFijo) / sinAncho : 0;
+  const anchoAuto = sinAncho > 0 ? (contentW - anchoFijo) / sinAncho : 0;
   const cols = columnas.map((c) => ({ ...c, width: c.width || anchoAuto }));
 
-  let page = pdf.addPage([PAGE_W, PAGE_H]);
-  let y = PAGE_H - MARGIN;
+  let page = pdf.addPage([pageW, pageH]);
+  let y = pageH - MARGIN;
 
   function newPage() {
-    page = pdf.addPage([PAGE_W, PAGE_H]);
-    y = PAGE_H - MARGIN;
+    page = pdf.addPage([pageW, pageH]);
+    y = pageH - MARGIN;
   }
   function ensureSpace(h) {
     if (y - h < MARGIN) newPage();
   }
   function text(t, x, yy, opts = {}) {
     page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  // Recorta con "…" lo que no entra en el ancho de su celda — sin esto, un valor largo (ej. "U$S
+  // 165,00 (-18,2%)") se dibuja igual y se superpone con la celda de al lado en vez de cortarse.
+  function textoAjustado(t, maxWidth, size) {
+    const str = String(t ?? "");
+    if (font.widthOfTextAtSize(str, size) <= maxWidth) return str;
+    let s = str;
+    while (s.length > 1 && font.widthOfTextAtSize(`${s}…`, size) > maxWidth) s = s.slice(0, -1);
+    return `${s}…`;
   }
   function rect(x, yy, w, h, opts = {}) {
     page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
@@ -3634,22 +3649,23 @@ export async function generateListaPdf(titulo, columnas, filas, fecha) {
   y -= 9;
   text(COMPANY.emails, MARGIN, y, { size: 7.5, color: MUTED });
 
-  text("Fecha:", PAGE_W - MARGIN - 110, PAGE_H - MARGIN, { bold: true, size: 8 });
-  text(fmtFecha(fecha), PAGE_W - MARGIN - 60, PAGE_H - MARGIN, { size: 8 });
+  text("Fecha:", pageW - MARGIN - 110, pageH - MARGIN, { bold: true, size: 8 });
+  text(fmtFecha(fecha), pageW - MARGIN - 60, pageH - MARGIN, { size: 8 });
 
   y -= 14;
-  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  rect(MARGIN, y - 18, contentW, 18, { fill: ACCENT });
   const titleW = bold.widthOfTextAtSize(titulo, 9.5);
-  text(titulo, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
+  text(titulo, MARGIN + contentW / 2 - titleW / 2, y - 13, { bold: true, size: 9.5, color: WHITE });
   y -= 18;
   y -= 6;
 
   function drawHeader() {
-    rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
+    rect(MARGIN, y - 18, contentW, 18, { fill: ACCENT_LIGHT });
     let cx = MARGIN;
     cols.forEach((c) => {
-      const lw = bold.widthOfTextAtSize(c.label, 6.5);
-      text(c.label, cx + c.width / 2 - lw / 2, y - 12, { bold: true, size: 6.5, color: ACCENT });
+      const label = textoAjustado(c.label, c.width - 4, 6.5);
+      const lw = bold.widthOfTextAtSize(label, 6.5);
+      text(label, cx + c.width / 2 - lw / 2, y - 12, { bold: true, size: 6.5, color: ACCENT });
       cx += c.width;
     });
     y -= 18;
@@ -3659,12 +3675,13 @@ export async function generateListaPdf(titulo, columnas, filas, fecha) {
   for (const fila of filas) {
     const rowH = 16;
     ensureSpace(rowH + 18);
-    if (y === PAGE_H - MARGIN) drawHeader();
+    if (y === pageH - MARGIN) drawHeader();
     let cx = MARGIN;
     cols.forEach((c) => {
       rect(cx, y - rowH, c.width, rowH, { border: BORDER });
       const val = fila[c.key];
-      text(val === undefined || val === null || val === "" ? "—" : String(val), cx + 3, y - rowH / 2 - 3, { size: 6 });
+      const str = val === undefined || val === null || val === "" ? "—" : String(val);
+      text(textoAjustado(str, c.width - 6, 6), cx + 3, y - rowH / 2 - 3, { size: 6 });
       cx += c.width;
     });
     y -= rowH;
@@ -3680,7 +3697,7 @@ export function nombreArchivoLista(prefijo, fecha) {
   return `${prefijo}_${fecha || ""}.pdf`;
 }
 
-export async function downloadListaPdf(titulo, columnas, filas, fecha, prefijoArchivo) {
-  const bytes = await generateListaPdf(titulo, columnas, filas, fecha);
+export async function downloadListaPdf(titulo, columnas, filas, fecha, prefijoArchivo, opts = {}) {
+  const bytes = await generateListaPdf(titulo, columnas, filas, fecha, opts);
   downloadBlob(bytes, nombreArchivoLista(prefijoArchivo, fecha), "application/pdf");
 }

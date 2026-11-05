@@ -14312,7 +14312,7 @@ async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
     });
     return row;
   });
-  await downloadListaPdf("COMPARATIVO DE COSTO DE ORIGEN POR FÁBRICA", columnas, filasPdf, todayISO(), "Comparativo_fabricas_origen");
+  await downloadListaPdf("COMPARATIVO DE COSTO DE ORIGEN POR FÁBRICA", columnas, filasPdf, todayISO(), "Comparativo_fabricas_origen", { landscape: true });
 }
 
 // Carga y edición de los modelos cotizados por UNA fábrica — costo de origen tipeado a mano
@@ -14684,10 +14684,13 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                         <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
                                           {fila.nuestro != null ? (
                                             <>
-                                              <div><span className="text-[10px]" style={{ color: MUTED }}>Compra </span>{usd(fila.nuestro)}</div>
+                                              <div>
+                                                <span className="text-[10px]" style={{ color: MUTED }}>Compra </span>
+                                                <span className="text-sm font-semibold" style={{ color: INK }}>{usd(fila.nuestro)}</span>
+                                              </div>
                                               <div>
                                                 <span className="text-[10px]" style={{ color: MUTED }}>Venta </span>
-                                                <span className="text-sm font-bold" style={{ color: INK }}>{fila.nuestroVenta != null ? usd(fila.nuestroVenta) : "—"}</span>
+                                                <span className="text-sm font-semibold" style={{ color: INK }}>{fila.nuestroVenta != null ? usd(fila.nuestroVenta) : "—"}</span>
                                               </div>
                                             </>
                                           ) : "—"}
@@ -14701,14 +14704,15 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                               {valor != null ? (
                                                 <>
                                                   <div>
-                                                    <span className="text-[10px]" style={{ color: MUTED }}>Compra </span>{usd(valor)}
+                                                    <span className="text-[10px]" style={{ color: MUTED }}>Compra </span>
+                                                    <span className="text-sm font-semibold" style={{ color: INK }}>{usd(valor)}</span>
                                                     {comp?.diferenciaPct != null && (
                                                       <span className="font-medium ml-1" style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
                                                     )}
                                                   </div>
                                                   <div>
                                                     <span className="text-[10px]" style={{ color: MUTED }}>Venta </span>
-                                                    <span className="text-sm font-bold" style={{ color: INK }}>{venta != null ? usd(venta) : "—"}</span>
+                                                    <span className="text-sm font-semibold" style={{ color: INK }}>{venta != null ? usd(venta) : "—"}</span>
                                                   </div>
                                                 </>
                                               ) : "—"}

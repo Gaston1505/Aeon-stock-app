@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
@@ -19,7 +19,15 @@ const app = initializeApp(firebaseConfig);
 
 // ignoreUndefinedProperties guards against accidental `undefined` fields
 // (Firestore rejects writes containing them, unlike localStorage/JSON).
-export const db = initializeFirestore(app, { ignoreUndefinedProperties: true });
+// localCache (IndexedDB) persiste lo ya leído entre sesiones — sin esto, cada vez que se abre la
+// app (sin importar cuántas veces ya se abrió antes en el mismo dispositivo) hay que esperar a que
+// TODAS las colecciones suscriptas bajen de cero por red antes de mostrar algo; con esto, lo que ya
+// está en el dispositivo se muestra al toque mientras Firestore sincroniza los cambios en segundo
+// plano. persistentSingleTabManager porque la app no necesita compartir el cache entre pestañas.
+export const db = initializeFirestore(app, {
+  ignoreUndefinedProperties: true,
+  localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() }),
+});
 
 export const auth = getAuth(app);
 

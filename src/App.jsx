@@ -14269,7 +14269,10 @@ function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
       row[`${f.nombre} - Compra`] = comp?.diferenciaPct != null
         ? `${fmtN(valor, 2)} (${comp.diferencia > 0 ? "+" : ""}${fmtN(comp.diferenciaPct, 1)}%)`
         : fmtN(valor, 2);
-      row[`${f.nombre} - Venta`] = venta != null ? venta : "";
+      const compVenta = fila.nuestroVenta != null && venta != null ? filaComparacion("", fila.nuestroVenta, venta) : null;
+      row[`${f.nombre} - Venta`] = venta == null ? "" : compVenta?.diferenciaPct != null
+        ? `${fmtN(venta, 2)} (${compVenta.diferencia > 0 ? "+" : ""}${fmtN(compVenta.diferenciaPct, 1)}%)`
+        : fmtN(venta, 2);
     });
     return row;
   });
@@ -14303,7 +14306,10 @@ async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
     fabricasSeleccionadas.forEach((f, i) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
       const venta = fila.ventaPorFabrica.get(f.id) ?? null;
-      row[`fab${i}Venta`] = venta != null ? usd(venta) : null;
+      const compVenta = fila.nuestroVenta != null && venta != null ? filaComparacion("", fila.nuestroVenta, venta) : null;
+      row[`fab${i}Venta`] = venta == null ? null : compVenta?.diferenciaPct != null
+        ? `${usd(venta)} (${compVenta.diferencia > 0 ? "+" : ""}${fmtN(compVenta.diferenciaPct, 1)}%)`
+        : usd(venta);
       if (valor == null) { row[`fab${i}`] = null; return; }
       const comp = fila.nuestro != null ? filaComparacion("", fila.nuestro, valor) : null;
       row[`fab${i}`] = comp?.diferenciaPct != null
@@ -14699,6 +14705,7 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                           const valor = fila.porFabrica.get(f.id) ?? null;
                                           const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
                                           const venta = fila.ventaPorFabrica.get(f.id) ?? null;
+                                          const compVenta = fila.nuestroVenta != null && venta != null ? filaComparacion("", fila.nuestroVenta, venta) : null;
                                           return (
                                             <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
                                               {valor != null ? (
@@ -14713,6 +14720,9 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                                   <div>
                                                     <span className="text-[10px]" style={{ color: MUTED }}>Venta </span>
                                                     <span className="text-sm font-semibold" style={{ color: INK }}>{venta != null ? usd(venta) : "—"}</span>
+                                                    {compVenta?.diferenciaPct != null && (
+                                                      <span className="font-medium ml-1" style={{ color: compVenta.colorDif }}>{compVenta.diferencia > 0 ? "+" : ""}{fmtN(compVenta.diferenciaPct, 1)}%</span>
+                                                    )}
                                                   </div>
                                                 </>
                                               ) : "—"}

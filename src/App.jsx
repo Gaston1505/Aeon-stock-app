@@ -194,6 +194,7 @@ const COLLECTIONS = {
   auditoriaStockItems: "auditoriaStockItems",
   reclamos: "reclamos",
   preListaPedido: "preListaPedido",
+  fabricasCompetencia: "fabricasCompetencia",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -2483,6 +2484,7 @@ export default function App() {
   const [ordenesCompra, setOrdenesCompra] = useState([]);
   const [reclamos, setReclamos] = useState([]);
   const [preListaPedido, setPreListaPedido] = useState([]);
+  const [fabricasCompetencia, setFabricasCompetencia] = useState([]);
   const [matrizCostos, setMatrizCostos] = useState(null);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
@@ -2552,6 +2554,7 @@ export default function App() {
       [COLLECTIONS.ordenesCompra]: setOrdenesCompra,
       [COLLECTIONS.reclamos]: setReclamos,
       [COLLECTIONS.preListaPedido]: setPreListaPedido,
+      [COLLECTIONS.fabricasCompetencia]: setFabricasCompetencia,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -3763,6 +3766,21 @@ export default function App() {
     updateCotizacion(cotizacion.id, { contratoFirmadoUrl: url, contratoFirmadoNombre: file.name, contratoEstado: "firmado" });
   };
 
+  // Fábricas competidoras de origen (China): costos de compra cargados a mano por el usuario a
+  // partir de las cotizaciones/PDFs que le mandan — ver ComparadorFabricas. El PDF de respaldo,
+  // cuando lo hay, es solo un adjunto de consulta; nunca se intenta leer automáticamente.
+  const addFabricaCompetencia = (data) => addItem(COLLECTIONS.fabricasCompetencia, { modelos: [], ...data });
+  const updateFabricaCompetencia = (id, patch) => updateItem(COLLECTIONS.fabricasCompetencia, id, patch);
+  const deleteFabricaCompetencia = (id) => deleteItem(COLLECTIONS.fabricasCompetencia, id);
+  const guardarModelosFabrica = (fabrica, modelos) => updateFabricaCompetencia(fabrica.id, { modelos });
+  const subirPdfFabricaCompetencia = async (fabrica, file) => {
+    const path = `fabricasCompetencia/${fabrica.id}/${Date.now()}_${file.name}`;
+    const archivoRef = storageRef(storage, path);
+    await uploadBytes(archivoRef, file);
+    const url = await getDownloadURL(archivoRef);
+    await updateFabricaCompetencia(fabrica.id, { pdfUrl: url, pdfNombre: file.name });
+  };
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -4807,6 +4825,11 @@ export default function App() {
         {tab === "simulador" && (
           <SimuladorView
             productos={productos} equipos={equipos} transito={transito} matrizCostos={matrizCostosEfectiva}
+            fabricasCompetencia={fabricasCompetencia}
+            onAddFabrica={addFabricaCompetencia}
+            onDeleteFabrica={deleteFabricaCompetencia}
+            onGuardarModelosFabrica={guardarModelosFabrica}
+            onSubirPdfFabrica={subirPdfFabricaCompetencia}
             onConfirmar={(datos) => { setCotizacionPrefill(datos); setDrawer("cotizacion"); }}
           />
         )}
@@ -14038,11 +14061,358 @@ function ComparadorCostosOrigen({ productos, matrizCostos }) {
   );
 }
 
+function normalizarNombreModelo(s) {
+  return (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Arma las filas del cuadro comparativo multi-fábrica: agrupa los modelos cargados por cada
+// fábrica seleccionada por producto equivalente nuestro cuando lo tienen, y si no por nombre de
+// modelo normalizado (así dos fábricas que cotizaron "KFR-35GW" y "kfr-35gw " caen en la misma
+// fila sin que el usuario tenga que escribirlo idéntico). "Nuestro" sale de calcularCostosProducto,
+// no de lo cargado en la fábrica — es el costo de origen real hoy en el Catálogo.
+function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, productos, matrizCostos) {
+  const grupos = new Map();
+  for (const fab of fabricasCompetencia) {
+    if (!idsSeleccionadas.has(fab.id)) continue;
+    for (const m of fab.modelos || []) {
+      const costo = Number(m.costoOrigen) || 0;
+      if (costo <= 0) continue;
+      const nombreNorm = normalizarNombreModelo(m.nombreModelo);
+      const key = m.productoId ? `p:${m.productoId}` : `t:${nombreNorm}`;
+      if (!m.productoId && !nombreNorm) continue;
+      if (!grupos.has(key)) grupos.set(key, { productoId: m.productoId || null, nombreModelo: m.nombreModelo || "", porFabrica: new Map() });
+      const g = grupos.get(key);
+      if (!g.nombreModelo && m.nombreModelo) g.nombreModelo = m.nombreModelo;
+      g.porFabrica.set(fab.id, costo);
+    }
+  }
+  return Array.from(grupos.values())
+    .map((g) => {
+      const producto = g.productoId ? productos.find((p) => p.id === g.productoId) : null;
+      const nuestro = producto ? calcularCostosProducto(producto, matrizCostos)?.origen ?? null : null;
+      return { label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, porFabrica: g.porFabrica };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, "es"));
+}
+
+function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
+  const rows = filas.map((fila) => {
+    const row = { Modelo: fila.label, Nuestro: fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "" };
+    fabricasSeleccionadas.forEach((f) => {
+      const valor = fila.porFabrica.get(f.id) ?? null;
+      if (valor == null) { row[f.nombre] = ""; return; }
+      const comp = fila.nuestro != null ? filaComparacion("", fila.nuestro, valor) : null;
+      row[f.nombre] = comp?.diferenciaPct != null
+        ? `${fmtN(valor, 2)} (${comp.diferencia > 0 ? "+" : ""}${fmtN(comp.diferenciaPct, 1)}%)`
+        : fmtN(valor, 2);
+    });
+    return row;
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheetConAnchoAuto(rows), "Comparativo fábricas");
+  XLSX.writeFile(wb, `Comparativo_fabricas_origen_${todayISO()}.xlsx`);
+}
+
+async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
+  const columnas = [
+    { key: "modelo", label: "MODELO" },
+    { key: "nuestro", label: "NUESTRO" },
+    ...fabricasSeleccionadas.map((f, i) => ({ key: `fab${i}`, label: f.nombre.toUpperCase() })),
+  ];
+  const filasPdf = filas.map((fila) => {
+    const row = { modelo: fila.label, nuestro: fila.nuestro != null ? usd(fila.nuestro) : null };
+    fabricasSeleccionadas.forEach((f, i) => {
+      const valor = fila.porFabrica.get(f.id) ?? null;
+      if (valor == null) { row[`fab${i}`] = null; return; }
+      const comp = fila.nuestro != null ? filaComparacion("", fila.nuestro, valor) : null;
+      row[`fab${i}`] = comp?.diferenciaPct != null
+        ? `${usd(valor)} (${comp.diferencia > 0 ? "+" : ""}${fmtN(comp.diferenciaPct, 1)}%)`
+        : usd(valor);
+    });
+    return row;
+  });
+  await downloadListaPdf("COMPARATIVO DE COSTO DE ORIGEN POR FÁBRICA", columnas, filasPdf, todayISO(), "Comparativo_fabricas_origen");
+}
+
+// Carga y edición de los modelos cotizados por UNA fábrica — costo de origen tipeado a mano
+// (ningún PDF de proveedor se parsea automáticamente, ver ComparadorFabricas) más, opcionalmente,
+// qué producto nuestro es su equivalente para poder agruparlo en el cuadro comparativo.
+function FabricaDetalle({ fabrica, productos, productosPorGrupo, productosDisponibles, onGuardarModelos, onSubirPdf }) {
+  const [productoId, setProductoId] = useState("");
+  const [nombreModelo, setNombreModelo] = useState("");
+  const [costoOrigen, setCostoOrigen] = useState("");
+  const [contenedorCantidad, setContenedorCantidad] = useState("");
+  const [notas, setNotas] = useState("");
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleProducto = (id) => {
+    setProductoId(id);
+    const p = productos.find((x) => x.id === id);
+    if (p) setNombreModelo(p.nombre);
+  };
+
+  const agregarModelo = () => {
+    if (!nombreModelo.trim() || !(Number(costoOrigen) > 0)) return;
+    const nuevo = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      productoId: productoId || null,
+      nombreModelo: nombreModelo.trim(),
+      costoOrigen: Number(costoOrigen),
+      contenedorCantidad: Number(contenedorCantidad) || null,
+      notas: notas.trim(),
+    };
+    onGuardarModelos(fabrica, [...(fabrica.modelos || []), nuevo]);
+    setProductoId(""); setNombreModelo(""); setCostoOrigen(""); setContenedorCantidad(""); setNotas("");
+  };
+  const quitarModelo = (id) => onGuardarModelos(fabrica, (fabrica.modelos || []).filter((m) => m.id !== id));
+
+  const subirPdf = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError("");
+    setSubiendo(true);
+    try {
+      await onSubirPdf(fabrica, file);
+    } catch (err) {
+      setError(`No se pudo subir el PDF: ${err?.message || err}`);
+    }
+    setSubiendo(false);
+  };
+
+  return (
+    <div className="rounded-xl p-3 mt-1.5 mb-2" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {fabrica.pdfUrl ? (
+          <a href={fabrica.pdfUrl} target="_blank" rel="noreferrer" className="text-xs underline inline-flex items-center gap-1" style={{ color: ACCENT }}>
+            <FileText size={13} /> {fabrica.pdfNombre || "Ver PDF de respaldo"}
+          </a>
+        ) : (
+          <span className="text-xs" style={{ color: MUTED }}>Sin PDF de respaldo cargado.</span>
+        )}
+        <label className="text-xs px-2.5 py-1 rounded border inline-flex items-center gap-1 cursor-pointer" style={{ borderColor: BORDER, color: INK }}>
+          <Upload size={12} /> {subiendo ? "Subiendo..." : fabrica.pdfUrl ? "Reemplazar PDF" : "Subir PDF"}
+          <input type="file" accept="application/pdf" className="hidden" onChange={subirPdf} disabled={subiendo} />
+        </label>
+      </div>
+      {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
+
+      <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <Field label="Producto equivalente nuestro (opcional)">
+          <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
+        </Field>
+        <Field label="Modelo (según esta fábrica)">
+          <TextInput value={nombreModelo} onChange={(e) => setNombreModelo(e.target.value)} placeholder="Ej: KFR-35GW" />
+        </Field>
+        <div className="flex gap-2">
+          <div className="flex-1"><Field label="Costo de origen (U$S)"><TextInput type="number" value={costoOrigen} onChange={(e) => setCostoOrigen(e.target.value)} /></Field></div>
+          <div className="flex-1"><Field label="Unidades por contenedor (opcional)"><TextInput type="number" value={contenedorCantidad} onChange={(e) => setContenedorCantidad(e.target.value)} /></Field></div>
+        </div>
+        <Field label="Notas (opcional)"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
+        <SecondaryButton onClick={agregarModelo} disabled={!nombreModelo.trim() || !(Number(costoOrigen) > 0)}><Plus size={14} /> Agregar modelo</SecondaryButton>
+      </div>
+
+      {(fabrica.modelos || []).length === 0 ? (
+        <p className="text-xs" style={{ color: MUTED }}>Todavía no cargaste modelos de esta fábrica.</p>
+      ) : (
+        <div className="rounded border overflow-hidden" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+          {(fabrica.modelos || []).map((m) => (
+            <div key={m.id} className="px-2.5 py-2 text-xs border-b last:border-0 flex items-center justify-between gap-2" style={{ borderColor: BORDER }}>
+              <div className="min-w-0">
+                <span className="font-medium" style={{ color: INK }}>{m.nombreModelo}</span>
+                {m.productoId && <span style={{ color: MUTED }}> · equivalente: {productos.find((p) => p.id === m.productoId)?.nombre || "—"}</span>}
+                <div style={{ color: MUTED }}>{usd(m.costoOrigen)}{m.contenedorCantidad ? ` · ${m.contenedorCantidad} u./contenedor` : ""}{m.notas ? ` · ${m.notas}` : ""}</div>
+              </div>
+              <button onClick={() => quitarModelo(m.id)} className="shrink-0"><X size={13} style={{ color: MUTED }} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Comparador multi-fábrica: a diferencia de ComparadorCostosOrigen (una sola alternativa,
+// efímera), esto persiste en Firestore cada fábrica con sus modelos para poder ir cargando, con
+// el tiempo, las cotizaciones que manden varios proveedores de China y compararlas todas juntas
+// contra lo nuestro en un solo cuadro — a demanda, con el botón "Generar cuadro comparativo".
+function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAddFabrica, onDeleteFabrica, onGuardarModelos, onSubirPdf }) {
+  const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
+  const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
+
+  const [nombreNueva, setNombreNueva] = useState("");
+  const [notasNueva, setNotasNueva] = useState("");
+  const [error, setError] = useState("");
+  const [fabricaAbiertaId, setFabricaAbiertaId] = useState(null);
+  const [deseleccionadas, setDeseleccionadas] = useState(() => new Set());
+  const [mostrarCuadro, setMostrarCuadro] = useState(false);
+  const [descargando, setDescargando] = useState("");
+
+  const crearFabrica = async () => {
+    if (!nombreNueva.trim()) { setError("Ingresá el nombre de la fábrica."); return; }
+    setError("");
+    const ref = await onAddFabrica({ nombre: nombreNueva.trim(), notas: notasNueva.trim(), pdfUrl: null, pdfNombre: null });
+    if (ref?.id) setFabricaAbiertaId(ref.id);
+    setNombreNueva("");
+    setNotasNueva("");
+  };
+
+  const toggleSeleccion = (id) => setDeseleccionadas((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const fabricasSeleccionadas = useMemo(
+    () => fabricasCompetencia.filter((f) => !deseleccionadas.has(f.id)),
+    [fabricasCompetencia, deseleccionadas]
+  );
+  const idsSeleccionadas = useMemo(() => new Set(fabricasSeleccionadas.map((f) => f.id)), [fabricasSeleccionadas]);
+  const filasCuadro = useMemo(
+    () => construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, productos, matrizCostos),
+    [fabricasCompetencia, idsSeleccionadas, productos, matrizCostos]
+  );
+
+  const descargarPdf = async () => {
+    setDescargando("pdf");
+    try {
+      await descargarPdfComparativoFabricas(filasCuadro, fabricasSeleccionadas);
+    } catch (e) {
+      setError(`No se pudo generar el PDF: ${e?.message || e}`);
+    }
+    setDescargando("");
+  };
+
+  return (
+    <div>
+      <div className="p-2.5 rounded mb-4" style={{ backgroundColor: "#F7F8FA" }}>
+        <p className="text-sm font-bold mb-2" style={{ color: ACCENT }}>Agregar fábrica</p>
+        <div className="flex gap-2">
+          <div className="flex-1"><Field label="Nombre"><TextInput value={nombreNueva} onChange={(e) => setNombreNueva(e.target.value)} placeholder="Ej: Fábrica B" /></Field></div>
+          <div className="flex-1"><Field label="Notas (opcional)"><TextInput value={notasNueva} onChange={(e) => setNotasNueva(e.target.value)} /></Field></div>
+        </div>
+        <SecondaryButton onClick={crearFabrica}><Plus size={14} /> Agregar fábrica</SecondaryButton>
+        {error && <p className="text-xs mt-1" style={{ color: "#B91C1C" }}>{error}</p>}
+      </div>
+
+      {fabricasCompetencia.length === 0 ? (
+        <EmptyState
+          icon={Building2}
+          title="Todavía no cargaste ninguna fábrica"
+          subtitle="Agregá una fábrica, subí su PDF de respaldo si tenés, y cargá a mano el costo de origen de cada modelo que cotizó."
+        />
+      ) : (
+        <div className="space-y-2 mb-4">
+          {fabricasCompetencia.map((f) => (
+            <div key={f.id}>
+              <div className="rounded-lg px-3 py-2 flex items-center justify-between gap-2" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+                <label className="flex items-center gap-2 min-w-0 cursor-pointer">
+                  <input type="checkbox" checked={!deseleccionadas.has(f.id)} onChange={() => toggleSeleccion(f.id)} />
+                  <Building2 size={15} style={{ color: MUTED }} className="shrink-0" />
+                  <span className="text-sm font-medium truncate" style={{ color: INK }}>{f.nombre}</span>
+                  <span className="text-xs shrink-0" style={{ color: MUTED }}>{(f.modelos || []).length} modelo(s)</span>
+                </label>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => setFabricaAbiertaId(fabricaAbiertaId === f.id ? null : f.id)} className="text-xs underline" style={{ color: ACCENT }}>
+                    {fabricaAbiertaId === f.id ? "Cerrar" : "Cargar modelos"}
+                  </button>
+                  <button onClick={() => onDeleteFabrica(f.id)}><Trash2 size={14} style={{ color: MUTED }} /></button>
+                </div>
+              </div>
+              {fabricaAbiertaId === f.id && (
+                <FabricaDetalle
+                  fabrica={f} productos={productos} productosPorGrupo={productosPorGrupo} productosDisponibles={productosDisponibles}
+                  onGuardarModelos={onGuardarModelos} onSubirPdf={onSubirPdf}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {fabricasCompetencia.length > 0 && (
+        <PrimaryButton onClick={() => setMostrarCuadro(true)}><Calculator size={14} /> Generar cuadro comparativo</PrimaryButton>
+      )}
+
+      {mostrarCuadro && (
+        <div className="mt-4">
+          {filasCuadro.length === 0 ? (
+            <EmptyState icon={Calculator} title="Nada para comparar todavía" subtitle="Elegí al menos una fábrica con modelos cargados." />
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <p className="text-base font-bold" style={{ color: ACCENT }}>Cuadro comparativo de costo de origen</p>
+                <div className="flex gap-2">
+                  <SecondaryButton onClick={() => descargarExcelComparativoFabricas(filasCuadro, fabricasSeleccionadas)}><Download size={14} /> Excel</SecondaryButton>
+                  <SecondaryButton onClick={descargarPdf} disabled={descargando === "pdf"}><Download size={14} /> {descargando === "pdf" ? "Generando..." : "PDF"}</SecondaryButton>
+                </div>
+              </div>
+              <div className="overflow-x-auto rounded-lg border" style={{ borderColor: BORDER }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr style={{ backgroundColor: "#FAFBFC" }}>
+                      <th className="text-left font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Modelo</th>
+                      <th className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>Nuestro</th>
+                      {fabricasSeleccionadas.map((f) => (
+                        <th key={f.id} className="text-right font-medium px-2.5 py-1.5" style={{ color: MUTED }}>{f.nombre}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filasCuadro.map((fila) => {
+                      const valores = [fila.nuestro, ...fabricasSeleccionadas.map((f) => fila.porFabrica.get(f.id) ?? null)].filter((v) => v != null);
+                      const minimo = valores.length ? Math.min(...valores) : null;
+                      return (
+                        <tr key={`${fila.productoId || ""}-${fila.label}`} style={{ borderTop: `0.5px solid ${BORDER}` }}>
+                          <td className="px-2.5 py-1.5 font-medium" style={{ color: INK }}>{fila.label}</td>
+                          <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
+                            {fila.nuestro != null ? usd(fila.nuestro) : "—"}
+                          </td>
+                          {fabricasSeleccionadas.map((f) => {
+                            const valor = fila.porFabrica.get(f.id) ?? null;
+                            const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
+                            return (
+                              <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
+                                {valor != null ? (
+                                  <>
+                                    {usd(valor)}
+                                    {comp?.diferenciaPct != null && (
+                                      <div className="font-medium">
+                                        <span style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : "—"}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[11px] mt-2" style={{ color: MUTED }}>
+                Compara el costo de compra en origen (China) cotizado por cada fábrica para el mismo modelo o su equivalente nuestro — no incluye flete, despacho ni demás logística de cada competidor, que no tenemos cargada.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Panel de simulación: un ejercicio de "si me piden esto, con qué lo cubro" contra el stock y
 // el tránsito reales — pero 100% ficticio y client-side, nada se guarda en Firestore hasta que
 // se confirma como cotización real (ver onConfirmar, que abre CotizacionForm precargado).
-function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar }) {
+function SimuladorView({
+  productos, equipos, transito, matrizCostos, onConfirmar,
+  fabricasCompetencia, onAddFabrica, onDeleteFabrica, onGuardarModelosFabrica, onSubirPdfFabrica,
+}) {
   const [modo, setModo] = useState("venta"); // "venta" (cobertura de stock) | "costos" (comparar origen vs. real)
+  const [subModoCostos, setSubModoCostos] = useState("rapida"); // "rapida" (simulación ficticia) | "fabricas" (fábricas guardadas)
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -14179,7 +14549,28 @@ function SimuladorView({ productos, equipos, transito, matrizCostos, onConfirmar
       </div>
 
       {modo === "costos" ? (
-        <ComparadorCostosOrigen productos={productos} matrizCostos={matrizCostos} />
+        <>
+          <div className="flex gap-2 mb-4">
+            {[{ key: "rapida", label: "Simulación rápida" }, { key: "fabricas", label: "Comparar fábricas" }].map((op) => (
+              <button
+                key={op.key} onClick={() => setSubModoCostos(op.key)}
+                className="text-xs px-3 py-1.5 rounded-md font-medium"
+                style={subModoCostos === op.key ? { backgroundColor: ACCENT_LIGHT, color: ACCENT } : { backgroundColor: "#F7F8FA", color: MUTED }}
+              >
+                {op.label}
+              </button>
+            ))}
+          </div>
+          {subModoCostos === "fabricas" ? (
+            <ComparadorFabricas
+              productos={productos} matrizCostos={matrizCostos} fabricasCompetencia={fabricasCompetencia}
+              onAddFabrica={onAddFabrica} onDeleteFabrica={onDeleteFabrica}
+              onGuardarModelos={onGuardarModelosFabrica} onSubirPdf={onSubirPdfFabrica}
+            />
+          ) : (
+            <ComparadorCostosOrigen productos={productos} matrizCostos={matrizCostos} />
+          )}
+        </>
       ) : (
       <>
       <div className="mb-4 px-3 py-2 rounded-lg text-sm flex items-start gap-2" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>

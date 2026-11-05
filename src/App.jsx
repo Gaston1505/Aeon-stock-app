@@ -14104,9 +14104,24 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
     .map(([key, g]) => {
       const producto = g.productoId ? productos.find((p) => p.id === g.productoId) : null;
       const nuestro = producto ? calcularCostosProducto(producto, matrizCostos)?.origen ?? null : null;
+      // Precio de venta (de lista) al lado del de compra, sin tener que abrir el detalle etapa por
+      // etapa — el nuestro sale directo de precioListaSugerido (el real, con nuestro costo de
+      // origen cargado); el de cada fábrica se simula con SU costo de origen pero nuestra misma
+      // Matriz de costos (ver DetalleFilaComparativa) — no es el precio al que vendería esa fábrica.
+      const mk = producto ? markupListaDe(producto, matrizCostos) : null;
+      const nuestroVenta = producto ? (precioListaSugerido(producto, matrizCostos)?.precio ?? null) : null;
+      const ventaPorFabrica = new Map();
+      if (producto && mk) {
+        for (const [fabId, origen] of g.porFabrica.entries()) {
+          const contenedorCantidad = g.contenedorPorFabrica.get(fabId) || Number(producto.contenedorCantidad) || 0;
+          if (!(contenedorCantidad > 0)) continue;
+          const sim = calcularCostosProducto({ ...producto, costoOrigen: origen, contenedorCantidad }, matrizCostos);
+          if (sim) ventaPorFabrica.set(fabId, Math.round(sim.costoPy * (1 + mk.pct / 100)));
+        }
+      }
       return {
-        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro,
-        porFabrica: g.porFabrica, contenedorPorFabrica: g.contenedorPorFabrica, producto,
+        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, nuestroVenta,
+        porFabrica: g.porFabrica, contenedorPorFabrica: g.contenedorPorFabrica, ventaPorFabrica, producto,
         categoria: producto?.subcategoria || null,
       };
     })
@@ -14242,15 +14257,19 @@ function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
       Categoría: fila.categoria || "Otros",
       Tipo: fila.producto?.subcategoria2 || "",
       Modelo: fila.label,
-      Midea: fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "",
+      Capacidad: fila.producto?.especValor || "",
+      "Midea - Compra": fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "",
+      "Midea - Venta": fila.nuestroVenta != null ? fila.nuestroVenta : "",
     };
     fabricasSeleccionadas.forEach((f) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
-      if (valor == null) { row[f.nombre] = ""; return; }
+      const venta = fila.ventaPorFabrica.get(f.id) ?? null;
+      if (valor == null) { row[`${f.nombre} - Compra`] = ""; row[`${f.nombre} - Venta`] = ""; return; }
       const comp = fila.nuestro != null ? filaComparacion("", fila.nuestro, valor) : null;
-      row[f.nombre] = comp?.diferenciaPct != null
+      row[`${f.nombre} - Compra`] = comp?.diferenciaPct != null
         ? `${fmtN(valor, 2)} (${comp.diferencia > 0 ? "+" : ""}${fmtN(comp.diferenciaPct, 1)}%)`
         : fmtN(valor, 2);
+      row[`${f.nombre} - Venta`] = venta != null ? venta : "";
     });
     return row;
   });
@@ -14264,18 +14283,27 @@ async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
     { key: "categoria", label: "CATEGORÍA" },
     { key: "tipo", label: "TIPO" },
     { key: "modelo", label: "MODELO" },
-    { key: "nuestro", label: "MIDEA" },
-    ...fabricasSeleccionadas.map((f, i) => ({ key: `fab${i}`, label: f.nombre.toUpperCase() })),
+    { key: "capacidad", label: "CAPACIDAD" },
+    { key: "nuestro", label: "MIDEA - COMPRA" },
+    { key: "nuestroVenta", label: "MIDEA - VENTA" },
+    ...fabricasSeleccionadas.flatMap((f, i) => ([
+      { key: `fab${i}`, label: `${f.nombre.toUpperCase()} - COMPRA` },
+      { key: `fab${i}Venta`, label: `${f.nombre.toUpperCase()} - VENTA` },
+    ])),
   ];
   const filasPdf = filas.map((fila) => {
     const row = {
       categoria: fila.categoria || "Otros",
       tipo: fila.producto?.subcategoria2 || "",
       modelo: fila.label,
+      capacidad: fila.producto?.especValor || "",
       nuestro: fila.nuestro != null ? usd(fila.nuestro) : null,
+      nuestroVenta: fila.nuestroVenta != null ? usd(fila.nuestroVenta) : null,
     };
     fabricasSeleccionadas.forEach((f, i) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
+      const venta = fila.ventaPorFabrica.get(f.id) ?? null;
+      row[`fab${i}Venta`] = venta != null ? usd(venta) : null;
       if (valor == null) { row[`fab${i}`] = null; return; }
       const comp = fila.nuestro != null ? filaComparacion("", fila.nuestro, valor) : null;
       row[`fab${i}`] = comp?.diferenciaPct != null
@@ -14647,23 +14675,35 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                               {fila.label}
                                             </button>
                                           ) : fila.label}
+                                          {fila.producto?.especValor && (
+                                            <span className="block text-[10px] font-normal" style={{ color: MUTED }}>
+                                              {fila.producto.especLabel ? `${fila.producto.especLabel}: ` : ""}{fila.producto.especValor}
+                                            </span>
+                                          )}
                                         </td>
                                         <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
-                                          {fila.nuestro != null ? usd(fila.nuestro) : "—"}
+                                          {fila.nuestro != null ? (
+                                            <>
+                                              <div><span className="text-[10px]" style={{ color: MUTED }}>Compra </span>{usd(fila.nuestro)}</div>
+                                              <div className="text-[10px]" style={{ color: MUTED }}>Venta {fila.nuestroVenta != null ? usd(fila.nuestroVenta) : "—"}</div>
+                                            </>
+                                          ) : "—"}
                                         </td>
                                         {fabricasSeleccionadas.map((f) => {
                                           const valor = fila.porFabrica.get(f.id) ?? null;
                                           const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
+                                          const venta = fila.ventaPorFabrica.get(f.id) ?? null;
                                           return (
                                             <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
                                               {valor != null ? (
                                                 <>
-                                                  {usd(valor)}
-                                                  {comp?.diferenciaPct != null && (
-                                                    <div className="font-medium">
-                                                      <span style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
-                                                    </div>
-                                                  )}
+                                                  <div>
+                                                    <span className="text-[10px]" style={{ color: MUTED }}>Compra </span>{usd(valor)}
+                                                    {comp?.diferenciaPct != null && (
+                                                      <span className="font-medium ml-1" style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
+                                                    )}
+                                                  </div>
+                                                  <div className="text-[10px]" style={{ color: MUTED }}>Venta {venta != null ? usd(venta) : "—"}</div>
                                                 </>
                                               ) : "—"}
                                             </td>
@@ -14690,7 +14730,7 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                 </table>
               </div>
               <p className="text-[11px] mt-2" style={{ color: MUTED }}>
-                Compara el costo de compra en origen (China) cotizado por cada fábrica para el mismo modelo o su equivalente nuestro — no incluye flete, despacho ni demás logística de cada competidor, que no tenemos cargada.
+                "Compra" es el costo de origen (China) cotizado por cada fábrica. "Venta" es el precio de lista sugerido (Costo PY × markup de la categoría) si compráramos a ese costo de origen con nuestra misma logística y Matriz de costos — para Midea es el real (con nuestro costo de origen); para cada fábrica es una simulación, no lo que ella cobraría. Tocá un modelo para ver el desglose etapa por etapa.
               </p>
             </>
           )}

@@ -14080,10 +14080,13 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
       const nombreNorm = normalizarNombreModelo(m.nombreModelo);
       const key = m.productoId ? `p:${m.productoId}` : `t:${nombreNorm}`;
       if (!m.productoId && !nombreNorm) continue;
-      if (!grupos.has(key)) grupos.set(key, { productoId: m.productoId || null, nombreModelo: m.nombreModelo || "", porFabrica: new Map() });
+      if (!grupos.has(key)) {
+        grupos.set(key, { productoId: m.productoId || null, nombreModelo: m.nombreModelo || "", porFabrica: new Map(), contenedorPorFabrica: new Map() });
+      }
       const g = grupos.get(key);
       if (!g.nombreModelo && m.nombreModelo) g.nombreModelo = m.nombreModelo;
       g.porFabrica.set(fab.id, costo);
+      if (Number(m.contenedorCantidad) > 0) g.contenedorPorFabrica.set(fab.id, Number(m.contenedorCantidad));
     }
   }
   // Mismo orden que el Catálogo para los aires (Split Pared, Cassette, Piso-Techo, Ducto, Multi
@@ -14102,7 +14105,8 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
       const producto = g.productoId ? productos.find((p) => p.id === g.productoId) : null;
       const nuestro = producto ? calcularCostosProducto(producto, matrizCostos)?.origen ?? null : null;
       return {
-        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, porFabrica: g.porFabrica, producto,
+        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro,
+        porFabrica: g.porFabrica, contenedorPorFabrica: g.contenedorPorFabrica, producto,
         categoria: producto?.subcategoria || null,
       };
     })
@@ -14118,6 +14122,102 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
       }
       return a.label.localeCompare(b.label, "es");
     });
+}
+
+const ETAPAS_DETALLE_FABRICA = [
+  { key: "origen", label: "Costo de origen (compra en China)" },
+  { key: "comisionAgente", label: "Comisión agente" },
+  { key: "flete", label: "Flete (por unidad)" },
+  { key: "despacho", label: "Despacho" },
+  { key: "costoPy", label: "Costo puesto en PY (origen + logística)", destacado: true },
+  { key: "comisionVenta", label: "Comisión de venta" },
+  { key: "costoFinanciero", label: "Costo financiero" },
+  { key: "costoReal", label: "Costo Real (costo total para la empresa)", destacado: true },
+];
+
+// Detalle etapa por etapa de una fila del cuadro comparativo — mismo motor que LineaComparacionCosto
+// (calcularCostosProducto con el costo de origen cotizado por ESA fábrica en vez del real), para no
+// quedarse solo con el costo de origen cuando se puede ver el impacto completo (logística, comisión,
+// costo financiero) con nuestra propia Matriz de costos. Ojo: usa NUESTRA logística — no es el costo
+// real de esa fábrica, que no conocemos, solo cuánto nos costaría a nosotros comprarle a ese precio.
+function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
+  const producto = fila.producto;
+  const real = producto ? calcularCostosProducto(producto, matrizCostos) : null;
+  const mk = producto ? markupListaDe(producto, matrizCostos) : null;
+  const fabricasConDato = fabricasSeleccionadas.filter((f) => fila.porFabrica.get(f.id) != null);
+
+  if (!producto) {
+    return (
+      <p className="text-xs px-2.5 py-2" style={{ color: MUTED }}>
+        Este modelo no tiene un producto nuestro asociado — no se puede abrir el detalle etapa por etapa (hace falta su categoría para aplicar la Matriz de costos).
+      </p>
+    );
+  }
+  if (!real || !mk || fabricasConDato.length === 0) {
+    return (
+      <p className="text-xs px-2.5 py-2" style={{ color: MUTED }}>
+        Falta algún dato (unidades por contenedor del producto, o markup de lista de su categoría en la Matriz de costos) para abrir el detalle.
+      </p>
+    );
+  }
+
+  const precioRealLista = Math.round(real.costoPy * (1 + mk.pct / 100));
+  const porFabrica = new Map(fabricasConDato.map((f) => {
+    const origen = fila.porFabrica.get(f.id);
+    const contenedorCantidad = fila.contenedorPorFabrica.get(f.id) || Number(producto.contenedorCantidad) || 0;
+    const sim = calcularCostosProducto({ ...producto, costoOrigen: origen, contenedorCantidad }, matrizCostos);
+    const precioSimLista = sim ? Math.round(sim.costoPy * (1 + mk.pct / 100)) : null;
+    return [f.id, { sim, precioSimLista }];
+  }));
+  const money = (n) => (n == null ? "—" : usd(n));
+
+  return (
+    <div className="px-2.5 py-2">
+      <p className="text-[11px] mb-2" style={{ color: MUTED }}>
+        Si le compráramos a este costo de origen, con nuestra misma logística y Matriz de costos — no es el costo real de esa fábrica, que no conocemos.
+      </p>
+      <div className="overflow-x-auto rounded border" style={{ borderColor: BORDER }}>
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr style={{ backgroundColor: "#FAFBFC" }}>
+              <th className="text-left font-medium px-2 py-1" style={{ color: MUTED }}>Etapa</th>
+              <th className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>Nuestro</th>
+              {fabricasConDato.map((f) => (
+                <th key={f.id} className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>{f.nombre}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ETAPAS_DETALLE_FABRICA.map((et) => (
+              <tr key={et.key} style={{ borderTop: `0.5px solid ${BORDER}`, backgroundColor: et.destacado ? ACCENT_LIGHT : "transparent" }}>
+                <td className="px-2 py-1" style={{ color: et.destacado ? ACCENT : INK, fontWeight: et.destacado ? 600 : 400 }}>{et.label}</td>
+                <td className="text-right px-2 py-1" style={{ color: INK, fontWeight: et.destacado ? 600 : 400 }}>{money(real[et.key])}</td>
+                {fabricasConDato.map((f) => {
+                  const { sim } = porFabrica.get(f.id);
+                  const comp = filaComparacion("", real[et.key], sim?.[et.key] ?? null);
+                  return (
+                    <td key={f.id} className="text-right px-2 py-1" style={{ color: INK, fontWeight: et.destacado ? 600 : 400 }}>
+                      {money(sim?.[et.key])}
+                      {comp.diferenciaPct != null && (
+                        <div style={{ color: comp.colorDif, fontWeight: 500 }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr style={{ borderTop: `0.5px solid ${BORDER}`, backgroundColor: ACCENT_LIGHT }}>
+              <td className="px-2 py-1 font-semibold" style={{ color: ACCENT }}>Precio de lista sugerido (referencia)</td>
+              <td className="text-right px-2 py-1 font-semibold" style={{ color: INK }}>{money(precioRealLista)}</td>
+              {fabricasConDato.map((f) => (
+                <td key={f.id} className="text-right px-2 py-1 font-semibold" style={{ color: INK }}>{money(porFabrica.get(f.id).precioSimLista)}</td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
@@ -14284,6 +14384,7 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
   const [fabricaAbiertaId, setFabricaAbiertaId] = useState(null);
   const [deseleccionadas, setDeseleccionadas] = useState(() => new Set());
   const [filasDeseleccionadas, setFilasDeseleccionadas] = useState(() => new Set());
+  const [filasExpandidas, setFilasExpandidas] = useState(() => new Set());
   const [mostrarCuadro, setMostrarCuadro] = useState(false);
   const [descargando, setDescargando] = useState("");
 
@@ -14354,6 +14455,12 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
     () => filasCuadro.filter((f) => !filasDeseleccionadas.has(f.key)),
     [filasCuadro, filasDeseleccionadas]
   );
+
+  const toggleExpandida = (key) => setFilasExpandidas((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const descargarPdf = async () => {
     setDescargando("pdf");
@@ -14509,31 +14616,52 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                 {filasTipoVisibles.map((fila) => {
                                   const valores = [fila.nuestro, ...fabricasSeleccionadas.map((f) => fila.porFabrica.get(f.id) ?? null)].filter((v) => v != null);
                                   const minimo = valores.length ? Math.min(...valores) : null;
+                                  const expandida = filasExpandidas.has(fila.key);
                                   return (
-                                    <tr key={fila.key} style={{ borderTop: `0.5px solid ${BORDER}` }}>
-                                      <td className="px-2.5 py-1.5 font-medium" style={{ color: INK }}>{fila.label}</td>
-                                      <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
-                                        {fila.nuestro != null ? usd(fila.nuestro) : "—"}
-                                      </td>
-                                      {fabricasSeleccionadas.map((f) => {
-                                        const valor = fila.porFabrica.get(f.id) ?? null;
-                                        const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
-                                        return (
-                                          <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
-                                            {valor != null ? (
-                                              <>
-                                                {usd(valor)}
-                                                {comp?.diferenciaPct != null && (
-                                                  <div className="font-medium">
-                                                    <span style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
-                                                  </div>
-                                                )}
-                                              </>
-                                            ) : "—"}
+                                    <React.Fragment key={fila.key}>
+                                      <tr style={{ borderTop: `0.5px solid ${BORDER}` }}>
+                                        <td className="px-2.5 py-1.5 font-medium" style={{ color: INK }}>
+                                          {fila.producto ? (
+                                            <button
+                                              onClick={() => toggleExpandida(fila.key)}
+                                              className="flex items-center gap-1"
+                                              title="Ver detalle etapa por etapa"
+                                            >
+                                              {expandida ? <ChevronUp size={13} style={{ color: MUTED }} /> : <ChevronDown size={13} style={{ color: MUTED }} />}
+                                              {fila.label}
+                                            </button>
+                                          ) : fila.label}
+                                        </td>
+                                        <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
+                                          {fila.nuestro != null ? usd(fila.nuestro) : "—"}
+                                        </td>
+                                        {fabricasSeleccionadas.map((f) => {
+                                          const valor = fila.porFabrica.get(f.id) ?? null;
+                                          const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
+                                          return (
+                                            <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
+                                              {valor != null ? (
+                                                <>
+                                                  {usd(valor)}
+                                                  {comp?.diferenciaPct != null && (
+                                                    <div className="font-medium">
+                                                      <span style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
+                                                    </div>
+                                                  )}
+                                                </>
+                                              ) : "—"}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                      {expandida && (
+                                        <tr>
+                                          <td colSpan={2 + fabricasSeleccionadas.length} style={{ backgroundColor: "#FAFBFC" }}>
+                                            <DetalleFilaComparativa fila={fila} fabricasSeleccionadas={fabricasSeleccionadas} matrizCostos={matrizCostos} />
                                           </td>
-                                        );
-                                      })}
-                                    </tr>
+                                        </tr>
+                                      )}
+                                    </React.Fragment>
                                   );
                                 })}
                               </React.Fragment>

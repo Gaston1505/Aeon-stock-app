@@ -31,7 +31,7 @@ import {
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
   downloadListadoProductosPdf, generateListadoProductosPdf, nombreArchivoListadoProductos,
-  downloadContratoPdf, nombreArchivoContrato,
+  downloadContratoPdf, nombreArchivoContrato, downloadContratoWord, parseContratoWordDocx, ETIQUETAS_CAMPOS_CONTRATO,
   COMPANY, fmtFecha, dataUrlToBytes,
 } from "./pdf";
 import { prepararPdfParaFirestore } from "./pdfCompress";
@@ -5953,6 +5953,38 @@ function ContratoForm({ cotizacion, grupos, onGuardarDatos, onSubirFirmado }) {
     }
     setOcupado("");
   };
+  const generarWord = async () => {
+    setMsg(null);
+    setOcupado("word");
+    try {
+      await downloadContratoWord(d);
+    } catch (e) {
+      setMsg({ tipo: "error", texto: `No se pudo generar el Word: ${e?.message || e}` });
+    }
+    setOcupado("");
+  };
+  const importarWord = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setMsg(null);
+    setOcupado("importar");
+    try {
+      const buffer = await file.arrayBuffer();
+      const { datos: extraido, noLeidos } = await parseContratoWordDocx(buffer);
+      setD((prev) => ({ ...prev, ...extraido }));
+      const campos = Object.keys(extraido);
+      const faltantes = noLeidos.filter((c) => ETIQUETAS_CAMPOS_CONTRATO[c]).map((c) => ETIQUETAS_CAMPOS_CONTRATO[c]);
+      let texto = campos.length
+        ? "Datos importados del Word del cliente — revisalos antes de generar el PDF."
+        : "No se pudo leer ningún dato del Word — revisá los campos a mano.";
+      if (faltantes.length) texto += ` No se pudo leer: ${faltantes.join(", ")}.`;
+      setMsg({ tipo: campos.length ? "ok" : "error", texto });
+    } catch (err) {
+      setMsg({ tipo: "error", texto: `No se pudo leer el Word: ${err?.message || err}` });
+    }
+    setOcupado("");
+  };
 
   return (
     <div>
@@ -6022,6 +6054,26 @@ function ContratoForm({ cotizacion, grupos, onGuardarDatos, onSubirFirmado }) {
       <div className="flex gap-2">
         <div className="flex-1"><Field label="Nombre"><TextInput value={d.aeonRepresentante} onChange={(e) => set("aeonRepresentante", e.target.value)} /></Field></div>
         <div className="flex-1"><Field label="C.I. N°"><TextInput value={d.aeonCi} onChange={(e) => set("aeonCi", e.target.value)} /></Field></div>
+      </div>
+
+      <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos del cliente por Word</p>
+      <p className="text-xs mb-2" style={{ color: MUTED }}>
+        Si no tenés todavía los datos del comprador (razón social, RUC, representante, C.I., domicilio, obra), generá
+        este Word y mandaselo al cliente para que los complete él. Cuando te lo devuelva, subilo acá: se intenta leer
+        automáticamente lo que escribió y precarga el formulario de arriba — revisalo antes de generar el PDF final.
+      </p>
+      <div className="flex gap-2 flex-wrap mb-2">
+        <SecondaryButton onClick={generarWord} disabled={!!ocupado}><Download size={14} /> {ocupado === "word" ? "Generando..." : "Generar Word para el cliente"}</SecondaryButton>
+        <label className="text-xs px-2.5 py-1.5 rounded border inline-flex items-center gap-1 cursor-pointer" style={{ borderColor: BORDER, color: INK }}>
+          <Upload size={13} /> {ocupado === "importar" ? "Leyendo..." : "Importar Word del cliente"}
+          <input
+            type="file"
+            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            className="hidden"
+            onChange={importarWord}
+            disabled={!!ocupado}
+          />
+        </label>
       </div>
 
       <div className="flex gap-2 flex-wrap mt-3">

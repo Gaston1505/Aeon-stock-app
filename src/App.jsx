@@ -14086,13 +14086,35 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
       g.porFabrica.set(fab.id, costo);
     }
   }
+  // Mismo orden que el Catálogo para los aires (Split Pared, Cassette, Piso-Techo, Ducto, Multi
+  // Split Interior, Multi Split Exterior; dentro de cada subcategoría ON-OFF antes que Inverter;
+  // y de menor a mayor capacidad vía ordenNumerico) — una fila sin producto nuestro asociado
+  // (modelo de la fábrica sin equivalente en catálogo) no tiene de dónde sacar ese orden, así que
+  // cae al final, alfabética entre sí.
+  const ordenAires = CATALOGO_TABS.find((t) => t.key === "aires")?.ordenesPorNivel || {};
+  const indiceEnOrden = (valor, orden) => {
+    if (!orden) return 999;
+    const i = orden.indexOf((valor || "").trim());
+    return i === -1 ? orden.length : i;
+  };
   return Array.from(grupos.values())
     .map((g) => {
       const producto = g.productoId ? productos.find((p) => p.id === g.productoId) : null;
       const nuestro = producto ? calcularCostosProducto(producto, matrizCostos)?.origen ?? null : null;
-      return { label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, porFabrica: g.porFabrica };
+      return { label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, porFabrica: g.porFabrica, producto };
     })
-    .sort((a, b) => a.label.localeCompare(b.label, "es"));
+    .sort((a, b) => {
+      const claveA = a.producto
+        ? [0, indiceEnOrden(a.producto.subcategoria, ordenAires[1]), indiceEnOrden(a.producto.subcategoria2, ordenAires[2]), Number(a.producto.ordenNumerico) || 0]
+        : [1, 0, 0, 0];
+      const claveB = b.producto
+        ? [0, indiceEnOrden(b.producto.subcategoria, ordenAires[1]), indiceEnOrden(b.producto.subcategoria2, ordenAires[2]), Number(b.producto.ordenNumerico) || 0]
+        : [1, 0, 0, 0];
+      for (let i = 0; i < claveA.length; i++) {
+        if (claveA[i] !== claveB[i]) return claveA[i] - claveB[i];
+      }
+      return a.label.localeCompare(b.label, "es");
+    });
 }
 
 function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {

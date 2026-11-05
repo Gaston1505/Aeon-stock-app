@@ -14162,12 +14162,18 @@ function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
   }
 
   const precioRealLista = Math.round(real.costoPy * (1 + mk.pct / 100));
+  // El flete por unidad (y todo lo que sale de ahí: despacho, Costo PY, comisión de venta, costo
+  // financiero, Costo Real) necesita las unidades por contenedor de ESA fábrica. Cuando no las
+  // cargó (hoy, Chigo) no queda otra que asumir las de nuestro propio producto equivalente — un
+  // supuesto, no un dato de la fábrica, así que se marca bien distinto para no confundirlo con un
+  // valor real como el de TCL.
   const porFabrica = new Map(fabricasConDato.map((f) => {
     const origen = fila.porFabrica.get(f.id);
-    const contenedorCantidad = fila.contenedorPorFabrica.get(f.id) || Number(producto.contenedorCantidad) || 0;
+    const contenedorReal = fila.contenedorPorFabrica.get(f.id) || null;
+    const contenedorCantidad = contenedorReal || Number(producto.contenedorCantidad) || 0;
     const sim = calcularCostosProducto({ ...producto, costoOrigen: origen, contenedorCantidad }, matrizCostos);
     const precioSimLista = sim ? Math.round(sim.costoPy * (1 + mk.pct / 100)) : null;
-    return [f.id, { sim, precioSimLista }];
+    return [f.id, { sim, precioSimLista, contenedorCantidad, contenedorEsEstimado: !contenedorReal }];
   }));
   const money = (n) => (n == null ? "—" : usd(n));
 
@@ -14175,6 +14181,8 @@ function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
     <div className="px-2.5 py-2">
       <p className="text-[11px] mb-2" style={{ color: MUTED }}>
         Si le compráramos a este costo de origen, con nuestra misma logística y Matriz de costos — no es el costo real de esa fábrica, que no conocemos.
+        {" "}<span style={{ color: "#15803D", fontWeight: 600 }}>Verde</span> = unidades por contenedor real de la fábrica.
+        {" "}<span style={{ color: "#B45309", fontWeight: 600 }}>Naranja</span> = esa fábrica no la cargó, se estimó con la de nuestro producto (el flete por unidad en adelante es aproximado).
       </p>
       <div className="overflow-x-auto rounded border" style={{ borderColor: BORDER }}>
         <table className="w-full text-[11px]">
@@ -14182,9 +14190,17 @@ function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
             <tr style={{ backgroundColor: "#FAFBFC" }}>
               <th className="text-left font-medium px-2 py-1" style={{ color: MUTED }}>Etapa</th>
               <th className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>Nuestro</th>
-              {fabricasConDato.map((f) => (
-                <th key={f.id} className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>{f.nombre}</th>
-              ))}
+              {fabricasConDato.map((f) => {
+                const info = porFabrica.get(f.id);
+                return (
+                  <th key={f.id} className="text-right font-medium px-2 py-1" style={{ color: MUTED }}>
+                    {f.nombre}
+                    <div style={{ color: info.contenedorEsEstimado ? "#B45309" : "#15803D", fontWeight: 600 }}>
+                      {info.contenedorCantidad} u./cont. {info.contenedorEsEstimado ? "(estimado)" : "(real)"}
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>

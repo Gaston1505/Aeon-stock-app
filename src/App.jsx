@@ -14097,11 +14097,14 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
     const i = orden.indexOf((valor || "").trim());
     return i === -1 ? orden.length : i;
   };
-  return Array.from(grupos.values())
-    .map((g) => {
+  return Array.from(grupos.entries())
+    .map(([key, g]) => {
       const producto = g.productoId ? productos.find((p) => p.id === g.productoId) : null;
       const nuestro = producto ? calcularCostosProducto(producto, matrizCostos)?.origen ?? null : null;
-      return { label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, porFabrica: g.porFabrica, producto };
+      return {
+        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, porFabrica: g.porFabrica, producto,
+        categoria: producto?.subcategoria || null,
+      };
     })
     .sort((a, b) => {
       const claveA = a.producto
@@ -14119,7 +14122,12 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
 
 function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
   const rows = filas.map((fila) => {
-    const row = { Modelo: fila.label, Nuestro: fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "" };
+    const row = {
+      Categoría: fila.categoria || "Otros",
+      Tipo: fila.producto?.subcategoria2 || "",
+      Modelo: fila.label,
+      Nuestro: fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "",
+    };
     fabricasSeleccionadas.forEach((f) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
       if (valor == null) { row[f.nombre] = ""; return; }
@@ -14137,12 +14145,19 @@ function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
 
 async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
   const columnas = [
+    { key: "categoria", label: "CATEGORÍA" },
+    { key: "tipo", label: "TIPO" },
     { key: "modelo", label: "MODELO" },
     { key: "nuestro", label: "NUESTRO" },
     ...fabricasSeleccionadas.map((f, i) => ({ key: `fab${i}`, label: f.nombre.toUpperCase() })),
   ];
   const filasPdf = filas.map((fila) => {
-    const row = { modelo: fila.label, nuestro: fila.nuestro != null ? usd(fila.nuestro) : null };
+    const row = {
+      categoria: fila.categoria || "Otros",
+      tipo: fila.producto?.subcategoria2 || "",
+      modelo: fila.label,
+      nuestro: fila.nuestro != null ? usd(fila.nuestro) : null,
+    };
     fabricasSeleccionadas.forEach((f, i) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
       if (valor == null) { row[`fab${i}`] = null; return; }
@@ -14268,6 +14283,7 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
   const [error, setError] = useState("");
   const [fabricaAbiertaId, setFabricaAbiertaId] = useState(null);
   const [deseleccionadas, setDeseleccionadas] = useState(() => new Set());
+  const [filasDeseleccionadas, setFilasDeseleccionadas] = useState(() => new Set());
   const [mostrarCuadro, setMostrarCuadro] = useState(false);
   const [descargando, setDescargando] = useState("");
 
@@ -14296,10 +14312,53 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
     [fabricasCompetencia, idsSeleccionadas, productos, matrizCostos]
   );
 
+  // Mismo agrupado categoría → tipo que el Catálogo (Split Pared, Cassette, Piso-Techo, Ducto,
+  // Multi Split...; adentro, ON-OFF antes que Inverter) para que elegir qué modelos entran al
+  // cuadro sea tan claro como navegar el Catálogo — filasCuadro ya viene ordenado así, alcanza con
+  // detectar dónde cambia la categoría/el tipo para cortar en grupos, sin volver a ordenar.
+  const gruposVisuales = useMemo(() => {
+    const grupos = [];
+    let catActual, tipoActual, catGrupo, tipoGrupo;
+    for (const fila of filasCuadro) {
+      const categoria = fila.categoria || "Otros";
+      const tipo = fila.producto?.subcategoria2 || null;
+      if (categoria !== catActual) {
+        catGrupo = { categoria, tipos: [] };
+        grupos.push(catGrupo);
+        catActual = categoria;
+        tipoActual = undefined;
+      }
+      if (tipo !== tipoActual) {
+        tipoGrupo = { tipo, filas: [] };
+        catGrupo.tipos.push(tipoGrupo);
+        tipoActual = tipo;
+      }
+      tipoGrupo.filas.push(fila);
+    }
+    return grupos;
+  }, [filasCuadro]);
+
+  const toggleFila = (key) => setFilasDeseleccionadas((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const toggleGrupoFilas = (filas) => setFilasDeseleccionadas((prev) => {
+    const next = new Set(prev);
+    const todasSeleccionadas = filas.every((f) => !prev.has(f.key));
+    filas.forEach((f) => (todasSeleccionadas ? next.add(f.key) : next.delete(f.key)));
+    return next;
+  });
+
+  const filasVisibles = useMemo(
+    () => filasCuadro.filter((f) => !filasDeseleccionadas.has(f.key)),
+    [filasCuadro, filasDeseleccionadas]
+  );
+
   const descargarPdf = async () => {
     setDescargando("pdf");
     try {
-      await descargarPdfComparativoFabricas(filasCuadro, fabricasSeleccionadas);
+      await descargarPdfComparativoFabricas(filasVisibles, fabricasSeleccionadas);
     } catch (e) {
       setError(`No se pudo generar el PDF: ${e?.message || e}`);
     }
@@ -14353,20 +14412,63 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
         </div>
       )}
 
+      {filasCuadro.length > 0 && (
+        <div className="mb-4">
+          <p className="text-sm font-bold mb-2" style={{ color: ACCENT }}>Modelos a incluir en el cuadro</p>
+          <div className="rounded-lg border divide-y" style={{ borderColor: BORDER }}>
+            {gruposVisuales.map((catGrupo) => {
+              const todasFilasCat = catGrupo.tipos.flatMap((t) => t.filas);
+              const catSeleccionada = todasFilasCat.every((f) => !filasDeseleccionadas.has(f.key));
+              return (
+                <div key={catGrupo.categoria} className="p-2">
+                  <label className="flex items-center gap-2 cursor-pointer mb-1">
+                    <input type="checkbox" checked={catSeleccionada} onChange={() => toggleGrupoFilas(todasFilasCat)} />
+                    <span className="text-sm font-semibold" style={{ color: INK }}>{catGrupo.categoria}</span>
+                  </label>
+                  <div className="pl-5 space-y-1">
+                    {catGrupo.tipos.map((tipoGrupo) => {
+                      const tipoSeleccionado = tipoGrupo.filas.every((f) => !filasDeseleccionadas.has(f.key));
+                      return (
+                        <div key={tipoGrupo.tipo || "sin-tipo"}>
+                          {tipoGrupo.tipo && (
+                            <label className="flex items-center gap-2 cursor-pointer mb-1">
+                              <input type="checkbox" checked={tipoSeleccionado} onChange={() => toggleGrupoFilas(tipoGrupo.filas)} />
+                              <span className="text-xs font-medium" style={{ color: MUTED }}>{tipoGrupo.tipo}</span>
+                            </label>
+                          )}
+                          <div className={tipoGrupo.tipo ? "pl-5 space-y-0.5" : "space-y-0.5"}>
+                            {tipoGrupo.filas.map((fila) => (
+                              <label key={fila.key} className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" checked={!filasDeseleccionadas.has(fila.key)} onChange={() => toggleFila(fila.key)} />
+                                <span className="text-xs" style={{ color: INK }}>{fila.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {fabricasCompetencia.length > 0 && (
         <PrimaryButton onClick={() => setMostrarCuadro(true)}><Calculator size={14} /> Generar cuadro comparativo</PrimaryButton>
       )}
 
       {mostrarCuadro && (
         <div className="mt-4">
-          {filasCuadro.length === 0 ? (
-            <EmptyState icon={Calculator} title="Nada para comparar todavía" subtitle="Elegí al menos una fábrica con modelos cargados." />
+          {filasVisibles.length === 0 ? (
+            <EmptyState icon={Calculator} title="Nada para comparar todavía" subtitle="Elegí al menos una fábrica con modelos cargados y tildá al menos un modelo arriba." />
           ) : (
             <>
               <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                 <p className="text-base font-bold" style={{ color: ACCENT }}>Cuadro comparativo de costo de origen</p>
                 <div className="flex gap-2">
-                  <SecondaryButton onClick={() => descargarExcelComparativoFabricas(filasCuadro, fabricasSeleccionadas)}><Download size={14} /> Excel</SecondaryButton>
+                  <SecondaryButton onClick={() => descargarExcelComparativoFabricas(filasVisibles, fabricasSeleccionadas)}><Download size={14} /> Excel</SecondaryButton>
                   <SecondaryButton onClick={descargarPdf} disabled={descargando === "pdf"}><Download size={14} /> {descargando === "pdf" ? "Generando..." : "PDF"}</SecondaryButton>
                 </div>
               </div>
@@ -14382,34 +14484,62 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                     </tr>
                   </thead>
                   <tbody>
-                    {filasCuadro.map((fila) => {
-                      const valores = [fila.nuestro, ...fabricasSeleccionadas.map((f) => fila.porFabrica.get(f.id) ?? null)].filter((v) => v != null);
-                      const minimo = valores.length ? Math.min(...valores) : null;
+                    {gruposVisuales.map((catGrupo) => {
+                      const filasCatVisibles = catGrupo.tipos.flatMap((t) => t.filas).filter((f) => !filasDeseleccionadas.has(f.key));
+                      if (filasCatVisibles.length === 0) return null;
                       return (
-                        <tr key={`${fila.productoId || ""}-${fila.label}`} style={{ borderTop: `0.5px solid ${BORDER}` }}>
-                          <td className="px-2.5 py-1.5 font-medium" style={{ color: INK }}>{fila.label}</td>
-                          <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
-                            {fila.nuestro != null ? usd(fila.nuestro) : "—"}
-                          </td>
-                          {fabricasSeleccionadas.map((f) => {
-                            const valor = fila.porFabrica.get(f.id) ?? null;
-                            const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
+                        <React.Fragment key={catGrupo.categoria}>
+                          <tr style={{ backgroundColor: ACCENT_LIGHT }}>
+                            <td colSpan={2 + fabricasSeleccionadas.length} className="px-2.5 py-1 font-semibold" style={{ color: ACCENT }}>
+                              {catGrupo.categoria}
+                            </td>
+                          </tr>
+                          {catGrupo.tipos.map((tipoGrupo) => {
+                            const filasTipoVisibles = tipoGrupo.filas.filter((f) => !filasDeseleccionadas.has(f.key));
+                            if (filasTipoVisibles.length === 0) return null;
                             return (
-                              <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
-                                {valor != null ? (
-                                  <>
-                                    {usd(valor)}
-                                    {comp?.diferenciaPct != null && (
-                                      <div className="font-medium">
-                                        <span style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
-                                      </div>
-                                    )}
-                                  </>
-                                ) : "—"}
-                              </td>
+                              <React.Fragment key={tipoGrupo.tipo || "sin-tipo"}>
+                                {tipoGrupo.tipo && (
+                                  <tr>
+                                    <td colSpan={2 + fabricasSeleccionadas.length} className="px-2.5 py-1 text-[11px] font-medium" style={{ color: MUTED, backgroundColor: "#FAFBFC" }}>
+                                      {tipoGrupo.tipo}
+                                    </td>
+                                  </tr>
+                                )}
+                                {filasTipoVisibles.map((fila) => {
+                                  const valores = [fila.nuestro, ...fabricasSeleccionadas.map((f) => fila.porFabrica.get(f.id) ?? null)].filter((v) => v != null);
+                                  const minimo = valores.length ? Math.min(...valores) : null;
+                                  return (
+                                    <tr key={fila.key} style={{ borderTop: `0.5px solid ${BORDER}` }}>
+                                      <td className="px-2.5 py-1.5 font-medium" style={{ color: INK }}>{fila.label}</td>
+                                      <td className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: fila.nuestro != null && fila.nuestro === minimo ? "#E9F7EF" : "transparent" }}>
+                                        {fila.nuestro != null ? usd(fila.nuestro) : "—"}
+                                      </td>
+                                      {fabricasSeleccionadas.map((f) => {
+                                        const valor = fila.porFabrica.get(f.id) ?? null;
+                                        const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
+                                        return (
+                                          <td key={f.id} className="text-right px-2.5 py-1.5" style={{ color: INK, backgroundColor: valor != null && valor === minimo ? "#E9F7EF" : "transparent" }}>
+                                            {valor != null ? (
+                                              <>
+                                                {usd(valor)}
+                                                {comp?.diferenciaPct != null && (
+                                                  <div className="font-medium">
+                                                    <span style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
+                                                  </div>
+                                                )}
+                                              </>
+                                            ) : "—"}
+                                          </td>
+                                        );
+                                      })}
+                                    </tr>
+                                  );
+                                })}
+                              </React.Fragment>
                             );
                           })}
-                        </tr>
+                        </React.Fragment>
                       );
                     })}
                   </tbody>

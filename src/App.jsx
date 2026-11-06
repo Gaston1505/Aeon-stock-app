@@ -14103,25 +14103,39 @@ function construirFilasComparativas(fabricasCompetencia, idsSeleccionadas, produ
   return Array.from(grupos.entries())
     .map(([key, g]) => {
       const producto = g.productoId ? productos.find((p) => p.id === g.productoId) : null;
-      const nuestro = producto ? calcularCostosProducto(producto, matrizCostos)?.origen ?? null : null;
+      const real = producto ? calcularCostosProducto(producto, matrizCostos) : null;
+      const nuestro = real?.origen ?? null;
+      // Costo PY y Costo Real (punto de equilibrio: lo mínimo a lo que se podría vender sin perder
+      // plata) van entre Compra y Venta en el resumen visual — mismo motor que el desglose etapa
+      // por etapa (DetalleFilaComparativa), solo que acá no hace falta expandir para verlos.
+      const nuestroCostoPy = real?.costoPy ?? null;
+      const nuestroCostoReal = real?.costoReal ?? null;
       // Precio de venta (de lista) al lado del de compra, sin tener que abrir el detalle etapa por
       // etapa — el nuestro sale directo de precioListaSugerido (el real, con nuestro costo de
       // origen cargado); el de cada fábrica se simula con SU costo de origen pero nuestra misma
       // Matriz de costos (ver DetalleFilaComparativa) — no es el precio al que vendería esa fábrica.
       const mk = producto ? markupListaDe(producto, matrizCostos) : null;
       const nuestroVenta = producto ? (precioListaSugerido(producto, matrizCostos)?.precio ?? null) : null;
+      const costoPyPorFabrica = new Map();
+      const costoRealPorFabrica = new Map();
       const ventaPorFabrica = new Map();
       if (producto && mk) {
         for (const [fabId, origen] of g.porFabrica.entries()) {
           const contenedorCantidad = g.contenedorPorFabrica.get(fabId) || Number(producto.contenedorCantidad) || 0;
           if (!(contenedorCantidad > 0)) continue;
           const sim = calcularCostosProducto({ ...producto, costoOrigen: origen, contenedorCantidad }, matrizCostos);
-          if (sim) ventaPorFabrica.set(fabId, Math.round(sim.costoPy * (1 + mk.pct / 100)));
+          if (sim) {
+            costoPyPorFabrica.set(fabId, sim.costoPy);
+            costoRealPorFabrica.set(fabId, sim.costoReal);
+            ventaPorFabrica.set(fabId, Math.round(sim.costoPy * (1 + mk.pct / 100)));
+          }
         }
       }
       return {
-        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId, nuestro, nuestroVenta,
-        porFabrica: g.porFabrica, contenedorPorFabrica: g.contenedorPorFabrica, ventaPorFabrica, producto,
+        key, label: producto ? producto.nombre : g.nombreModelo, productoId: g.productoId,
+        nuestro, nuestroCostoPy, nuestroCostoReal, nuestroVenta,
+        porFabrica: g.porFabrica, contenedorPorFabrica: g.contenedorPorFabrica,
+        costoPyPorFabrica, costoRealPorFabrica, ventaPorFabrica, producto,
         categoria: producto?.subcategoria || null,
       };
     })
@@ -14177,6 +14191,7 @@ function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
   }
 
   const precioRealLista = Math.round(real.costoPy * (1 + mk.pct / 100));
+  const gananciaReal = precioRealLista - real.costoReal;
   // El flete por unidad (y todo lo que sale de ahí: despacho, Costo PY, comisión de venta, costo
   // financiero, Costo Real) necesita las unidades por contenedor de ESA fábrica. Cuando no las
   // cargó (hoy, Chigo) no queda otra que asumir las de nuestro propio producto equivalente — un
@@ -14244,6 +14259,23 @@ function DetalleFilaComparativa({ fila, fabricasSeleccionadas, matrizCostos }) {
                 <td key={f.id} className="text-right px-2 py-1 font-semibold" style={{ color: INK }}>{money(porFabrica.get(f.id).precioSimLista)}</td>
               ))}
             </tr>
+            <tr style={{ borderTop: `0.5px solid ${BORDER}` }}>
+              <td className="px-2 py-1 font-semibold" style={{ color: INK }}>Ganancia (precio de lista − Costo Real)</td>
+              <td className="text-right px-2 py-1 font-semibold" style={{ color: INK }}>{money(gananciaReal)}</td>
+              {fabricasConDato.map((f) => {
+                const info = porFabrica.get(f.id);
+                const gananciaSim = info.sim && info.precioSimLista != null ? info.precioSimLista - info.sim.costoReal : null;
+                const comp = filaComparacion("", gananciaReal, gananciaSim);
+                return (
+                  <td key={f.id} className="text-right px-2 py-1 font-semibold" style={{ color: INK }}>
+                    {money(gananciaSim)}
+                    {comp.diferenciaPct != null && (
+                      <div className="font-medium" style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
           </tbody>
         </table>
       </div>
@@ -14259,16 +14291,31 @@ function descargarExcelComparativoFabricas(filas, fabricasSeleccionadas) {
       Modelo: fila.label,
       Capacidad: fila.producto?.especValor || "",
       "Midea - Compra": fila.nuestro != null ? Number(fila.nuestro.toFixed(2)) : "",
+      "Midea - Costo PY": fila.nuestroCostoPy != null ? Number(fila.nuestroCostoPy.toFixed(2)) : "",
+      "Midea - Costo Real": fila.nuestroCostoReal != null ? Number(fila.nuestroCostoReal.toFixed(2)) : "",
       "Midea - Venta": fila.nuestroVenta != null ? fila.nuestroVenta : "",
     };
     fabricasSeleccionadas.forEach((f) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
+      const costoPy = fila.costoPyPorFabrica.get(f.id) ?? null;
+      const costoReal = fila.costoRealPorFabrica.get(f.id) ?? null;
       const venta = fila.ventaPorFabrica.get(f.id) ?? null;
-      if (valor == null) { row[`${f.nombre} - Compra`] = ""; row[`${f.nombre} - Venta`] = ""; return; }
+      if (valor == null) {
+        row[`${f.nombre} - Compra`] = ""; row[`${f.nombre} - Costo PY`] = ""; row[`${f.nombre} - Costo Real`] = ""; row[`${f.nombre} - Venta`] = "";
+        return;
+      }
       const comp = fila.nuestro != null ? filaComparacion("", fila.nuestro, valor) : null;
       row[`${f.nombre} - Compra`] = comp?.diferenciaPct != null
         ? `${fmtN(valor, 2)} (${comp.diferencia > 0 ? "+" : ""}${fmtN(comp.diferenciaPct, 1)}%)`
         : fmtN(valor, 2);
+      const compCostoPy = fila.nuestroCostoPy != null && costoPy != null ? filaComparacion("", fila.nuestroCostoPy, costoPy) : null;
+      row[`${f.nombre} - Costo PY`] = costoPy == null ? "" : compCostoPy?.diferenciaPct != null
+        ? `${fmtN(costoPy, 2)} (${compCostoPy.diferencia > 0 ? "+" : ""}${fmtN(compCostoPy.diferenciaPct, 1)}%)`
+        : fmtN(costoPy, 2);
+      const compCostoReal = fila.nuestroCostoReal != null && costoReal != null ? filaComparacion("", fila.nuestroCostoReal, costoReal) : null;
+      row[`${f.nombre} - Costo Real`] = costoReal == null ? "" : compCostoReal?.diferenciaPct != null
+        ? `${fmtN(costoReal, 2)} (${compCostoReal.diferencia > 0 ? "+" : ""}${fmtN(compCostoReal.diferenciaPct, 1)}%)`
+        : fmtN(costoReal, 2);
       const compVenta = fila.nuestroVenta != null && venta != null ? filaComparacion("", fila.nuestroVenta, venta) : null;
       row[`${f.nombre} - Venta`] = venta == null ? "" : compVenta?.diferenciaPct != null
         ? `${fmtN(venta, 2)} (${compVenta.diferencia > 0 ? "+" : ""}${fmtN(compVenta.diferenciaPct, 1)}%)`
@@ -14288,9 +14335,13 @@ async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
     { key: "modelo", label: "MODELO" },
     { key: "capacidad", label: "CAPACIDAD" },
     { key: "nuestro", label: "MIDEA - COMPRA" },
+    { key: "nuestroCostoPy", label: "MIDEA - COSTO PY" },
+    { key: "nuestroCostoReal", label: "MIDEA - COSTO REAL" },
     { key: "nuestroVenta", label: "MIDEA - VENTA" },
     ...fabricasSeleccionadas.flatMap((f, i) => ([
       { key: `fab${i}`, label: `${f.nombre.toUpperCase()} - COMPRA` },
+      { key: `fab${i}CostoPy`, label: `${f.nombre.toUpperCase()} - COSTO PY` },
+      { key: `fab${i}CostoReal`, label: `${f.nombre.toUpperCase()} - COSTO REAL` },
       { key: `fab${i}Venta`, label: `${f.nombre.toUpperCase()} - VENTA` },
     ])),
   ];
@@ -14301,11 +14352,23 @@ async function descargarPdfComparativoFabricas(filas, fabricasSeleccionadas) {
       modelo: fila.label,
       capacidad: fila.producto?.especValor || "",
       nuestro: fila.nuestro != null ? usd(fila.nuestro) : null,
+      nuestroCostoPy: fila.nuestroCostoPy != null ? usd(fila.nuestroCostoPy) : null,
+      nuestroCostoReal: fila.nuestroCostoReal != null ? usd(fila.nuestroCostoReal) : null,
       nuestroVenta: fila.nuestroVenta != null ? usd(fila.nuestroVenta) : null,
     };
     fabricasSeleccionadas.forEach((f, i) => {
       const valor = fila.porFabrica.get(f.id) ?? null;
+      const costoPy = fila.costoPyPorFabrica.get(f.id) ?? null;
+      const costoReal = fila.costoRealPorFabrica.get(f.id) ?? null;
       const venta = fila.ventaPorFabrica.get(f.id) ?? null;
+      const compCostoPy = fila.nuestroCostoPy != null && costoPy != null ? filaComparacion("", fila.nuestroCostoPy, costoPy) : null;
+      row[`fab${i}CostoPy`] = costoPy == null ? null : compCostoPy?.diferenciaPct != null
+        ? `${usd(costoPy)} (${compCostoPy.diferencia > 0 ? "+" : ""}${fmtN(compCostoPy.diferenciaPct, 1)}%)`
+        : usd(costoPy);
+      const compCostoReal = fila.nuestroCostoReal != null && costoReal != null ? filaComparacion("", fila.nuestroCostoReal, costoReal) : null;
+      row[`fab${i}CostoReal`] = costoReal == null ? null : compCostoReal?.diferenciaPct != null
+        ? `${usd(costoReal)} (${compCostoReal.diferencia > 0 ? "+" : ""}${fmtN(compCostoReal.diferenciaPct, 1)}%)`
+        : usd(costoReal);
       const compVenta = fila.nuestroVenta != null && venta != null ? filaComparacion("", fila.nuestroVenta, venta) : null;
       row[`fab${i}Venta`] = venta == null ? null : compVenta?.diferenciaPct != null
         ? `${usd(venta)} (${compVenta.diferencia > 0 ? "+" : ""}${fmtN(compVenta.diferenciaPct, 1)}%)`
@@ -14695,6 +14758,14 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                                 <span className="text-sm font-semibold" style={{ color: INK }}>{usd(fila.nuestro)}</span>
                                               </div>
                                               <div>
+                                                <span className="text-[10px]" style={{ color: MUTED }}>Costo PY </span>
+                                                <span className="text-sm font-semibold" style={{ color: INK }}>{fila.nuestroCostoPy != null ? usd(fila.nuestroCostoPy) : "—"}</span>
+                                              </div>
+                                              <div>
+                                                <span className="text-[10px]" style={{ color: MUTED }}>Costo Real </span>
+                                                <span className="text-sm font-semibold" style={{ color: INK }}>{fila.nuestroCostoReal != null ? usd(fila.nuestroCostoReal) : "—"}</span>
+                                              </div>
+                                              <div>
                                                 <span className="text-[10px]" style={{ color: MUTED }}>Venta </span>
                                                 <span className="text-sm font-semibold" style={{ color: INK }}>{fila.nuestroVenta != null ? usd(fila.nuestroVenta) : "—"}</span>
                                               </div>
@@ -14704,6 +14775,10 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                         {fabricasSeleccionadas.map((f) => {
                                           const valor = fila.porFabrica.get(f.id) ?? null;
                                           const comp = fila.nuestro != null && valor != null ? filaComparacion("", fila.nuestro, valor) : null;
+                                          const costoPy = fila.costoPyPorFabrica.get(f.id) ?? null;
+                                          const compCostoPy = fila.nuestroCostoPy != null && costoPy != null ? filaComparacion("", fila.nuestroCostoPy, costoPy) : null;
+                                          const costoReal = fila.costoRealPorFabrica.get(f.id) ?? null;
+                                          const compCostoReal = fila.nuestroCostoReal != null && costoReal != null ? filaComparacion("", fila.nuestroCostoReal, costoReal) : null;
                                           const venta = fila.ventaPorFabrica.get(f.id) ?? null;
                                           const compVenta = fila.nuestroVenta != null && venta != null ? filaComparacion("", fila.nuestroVenta, venta) : null;
                                           return (
@@ -14715,6 +14790,20 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                                                     <span className="text-sm font-semibold" style={{ color: INK }}>{usd(valor)}</span>
                                                     {comp?.diferenciaPct != null && (
                                                       <span className="font-medium ml-1" style={{ color: comp.colorDif }}>{comp.diferencia > 0 ? "+" : ""}{fmtN(comp.diferenciaPct, 1)}%</span>
+                                                    )}
+                                                  </div>
+                                                  <div>
+                                                    <span className="text-[10px]" style={{ color: MUTED }}>Costo PY </span>
+                                                    <span className="text-sm font-semibold" style={{ color: INK }}>{costoPy != null ? usd(costoPy) : "—"}</span>
+                                                    {compCostoPy?.diferenciaPct != null && (
+                                                      <span className="font-medium ml-1" style={{ color: compCostoPy.colorDif }}>{compCostoPy.diferencia > 0 ? "+" : ""}{fmtN(compCostoPy.diferenciaPct, 1)}%</span>
+                                                    )}
+                                                  </div>
+                                                  <div>
+                                                    <span className="text-[10px]" style={{ color: MUTED }}>Costo Real </span>
+                                                    <span className="text-sm font-semibold" style={{ color: INK }}>{costoReal != null ? usd(costoReal) : "—"}</span>
+                                                    {compCostoReal?.diferenciaPct != null && (
+                                                      <span className="font-medium ml-1" style={{ color: compCostoReal.colorDif }}>{compCostoReal.diferencia > 0 ? "+" : ""}{fmtN(compCostoReal.diferenciaPct, 1)}%</span>
                                                     )}
                                                   </div>
                                                   <div>
@@ -14750,7 +14839,7 @@ function ComparadorFabricas({ productos, matrizCostos, fabricasCompetencia, onAd
                 </table>
               </div>
               <p className="text-[11px] mt-2" style={{ color: MUTED }}>
-                "Compra" es el costo de origen (China) cotizado por cada fábrica. "Venta" es el precio de lista sugerido (Costo PY × markup de la categoría) si compráramos a ese costo de origen con nuestra misma logística y Matriz de costos — para Midea es el real (con nuestro costo de origen); para cada fábrica es una simulación, no lo que ella cobraría. Tocá un modelo para ver el desglose etapa por etapa.
+                "Compra" es el costo de origen (China) cotizado por cada fábrica. "Costo PY" es compra + logística (comisión de agente, flete, despacho) puesta en Paraguay. "Costo Real" es el costo total para la empresa (Costo PY + comisión de venta + costo financiero) — el punto de equilibrio: vender por debajo es perder plata. "Venta" es el precio de lista sugerido (Costo PY × markup de la categoría). Para Midea estos 4 valores son los reales (con nuestro costo de origen); para cada fábrica son una simulación con nuestra misma logística y Matriz de costos, no lo que ella cobraría ni le costaría a ella. Tocá un modelo para ver el desglose etapa por etapa, con la ganancia (Venta − Costo Real) de cada caso.
               </p>
             </>
           )}
@@ -14768,7 +14857,19 @@ function SimuladorView({
   fabricasCompetencia, onAddFabrica, onDeleteFabrica, onGuardarModelosFabrica, onSubirPdfFabrica,
 }) {
   const [modo, setModo] = useState("venta"); // "venta" (cobertura de stock) | "costos" (comparar origen vs. real)
-  const [subModoCostos, setSubModoCostos] = useState("rapida"); // "rapida" (simulación ficticia) | "fabricas" (fábricas guardadas)
+  const [subModoCostos, setSubModoCostos] = useState("rapida"); // "rapida" | "fabricas" | "matriz" (matriz de costos simulada)
+  // Matriz de costos simulada: una copia local de la real para "jugar con precios en China"
+  // (flete, despacho, comisiones, markups) sin tocar nunca la real ni Firestore — ver
+  // MatrizCostosSimView. usarMatrizSimulada decide si Comparar fábricas / Simulación rápida de
+  // costos calculan con esta copia o con la matriz real de toda la empresa. conMatrizCompleta
+  // completa markupLista con los valores por defecto si la matriz real es de antes de que
+  // existieran (mismo resguardo que MatrizCostosView), para que la copia simulada nunca tenga
+  // una clave de markup faltante.
+  const conMatrizCompleta = (m) => ({ ...(m || MATRIZ_COSTOS_DEFAULT), markupLista: { ...MATRIZ_COSTOS_DEFAULT.markupLista, ...((m || MATRIZ_COSTOS_DEFAULT).markupLista || {}) } });
+  const [matrizSimulada, setMatrizSimulada] = useState(() => structuredClone(conMatrizCompleta(matrizCostos)));
+  const [usarMatrizSimulada, setUsarMatrizSimulada] = useState(false);
+  const restablecerMatrizSimulada = () => setMatrizSimulada(structuredClone(conMatrizCompleta(matrizCostos)));
+  const matrizParaCostos = usarMatrizSimulada ? matrizSimulada : matrizCostos;
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -14907,7 +15008,7 @@ function SimuladorView({
       {modo === "costos" ? (
         <>
           <div className="flex gap-2 mb-4">
-            {[{ key: "rapida", label: "Simulación rápida" }, { key: "fabricas", label: "Comparar fábricas" }].map((op) => (
+            {[{ key: "rapida", label: "Simulación rápida" }, { key: "fabricas", label: "Comparar fábricas" }, { key: "matriz", label: "Matriz de costos (simulación)" }].map((op) => (
               <button
                 key={op.key} onClick={() => setSubModoCostos(op.key)}
                 className="text-xs px-3 py-1.5 rounded-md font-medium"
@@ -14917,14 +15018,40 @@ function SimuladorView({
               </button>
             ))}
           </div>
+          {(subModoCostos === "rapida" || subModoCostos === "fabricas") && (
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-xs" style={{ color: MUTED }}>Matriz de costos usada acá:</span>
+              <button
+                onClick={() => setUsarMatrizSimulada(false)}
+                className="text-xs px-2.5 py-1 rounded-md font-medium"
+                style={!usarMatrizSimulada ? { backgroundColor: ACCENT_LIGHT, color: ACCENT } : { backgroundColor: "#F7F8FA", color: MUTED }}
+              >
+                Real
+              </button>
+              <button
+                onClick={() => setUsarMatrizSimulada(true)}
+                className="text-xs px-2.5 py-1 rounded-md font-medium"
+                style={usarMatrizSimulada ? { backgroundColor: "#FEF3C7", color: "#B45309" } : { backgroundColor: "#F7F8FA", color: MUTED }}
+              >
+                Simulada
+              </button>
+              {usarMatrizSimulada && (
+                <span className="text-xs" style={{ color: "#B45309" }}>
+                  Editala en la pestaña "Matriz de costos (simulación)" — nunca afecta la real.
+                </span>
+              )}
+            </div>
+          )}
           {subModoCostos === "fabricas" ? (
             <ComparadorFabricas
-              productos={productos} matrizCostos={matrizCostos} fabricasCompetencia={fabricasCompetencia}
+              productos={productos} matrizCostos={matrizParaCostos} fabricasCompetencia={fabricasCompetencia}
               onAddFabrica={onAddFabrica} onDeleteFabrica={onDeleteFabrica}
               onGuardarModelos={onGuardarModelosFabrica} onSubirPdf={onSubirPdfFabrica}
             />
+          ) : subModoCostos === "matriz" ? (
+            <MatrizCostosSimView matrizSimulada={matrizSimulada} matrizReal={matrizCostos} onChange={setMatrizSimulada} onRestablecer={restablecerMatrizSimulada} />
           ) : (
-            <ComparadorCostosOrigen productos={productos} matrizCostos={matrizCostos} />
+            <ComparadorCostosOrigen productos={productos} matrizCostos={matrizParaCostos} />
           )}
         </>
       ) : (
@@ -18338,62 +18465,12 @@ function agruparPreciosMercado(registros) {
 // Matriz de costos: único lugar donde se editan las variables globales del motor de costo (ver
 // calcularCostosProducto) — todo lo demás (Costo PY, Costo Real, etc.) sale calculado de acá +
 // costo origen/cantidad por contenedor de cada producto, nunca se carga a mano en otro lado.
-function MatrizCostosView({ matrizCostos, onUpdate }) {
-  // Una matriz guardada antes de que existieran los markups de lista no los trae: se completan con los de fábrica.
-  const conMarkups = (m) => ({ ...m, markupLista: { ...MATRIZ_COSTOS_DEFAULT.markupLista, ...(m.markupLista || {}) } });
-  const [form, setForm] = useState(() => conMarkups(matrizCostos));
-  const [guardado, setGuardado] = useState(false);
-
-  // El doc real puede llegar después del primer render (onSnapshot es async) — sin esto, el
-  // formulario se quedaría pegado en MATRIZ_COSTOS_DEFAULT aunque ya exista un doc guardado.
-  useEffect(() => { setForm(conMarkups(matrizCostos)); setGuardado(false); }, [matrizCostos]);
-
-  const set = (path, value) => {
-    setGuardado(false);
-    setForm((prev) => {
-      const next = structuredClone(prev);
-      let obj = next;
-      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
-      obj[path[path.length - 1]] = value;
-      return next;
-    });
-  };
-  const num = (path) => path.reduce((o, k) => o?.[k], form);
-
-  const guardar = () => {
-    onUpdate({
-      comisionAgentePct: Number(form.comisionAgentePct) || 0,
-      costoFinancieroPct: Number(form.costoFinancieroPct) || 0,
-      despachoPct: Number(form.despachoPct) || 0,
-      contenedores: Object.fromEntries(Object.entries(form.contenedores).map(([tipo, v]) => [
-        tipo, { m3: Number(v.m3) || 0, ...(v.fleteUsd != null ? { fleteUsd: Number(v.fleteUsd) || 0 } : {}) },
-      ])),
-      categorias: Object.fromEntries(Object.entries(form.categorias).map(([cat, v]) => [
-        cat, {
-          comisionVentaPct: Number(v.comisionVentaPct) || 0, despachoPct: Number(v.despachoPct) || 0,
-          margenMinimoPct: Number(v.margenMinimoPct) || 0,
-          margenIdealMinPct: Number(v.margenIdealMinPct) || 0, margenIdealMaxPct: Number(v.margenIdealMaxPct) || 0,
-        },
-      ])),
-      markupLista: Object.fromEntries(Object.keys(MATRIZ_COSTOS_DEFAULT.markupLista).map((k) => [
-        k, Number((form.markupLista || {})[k] ?? MATRIZ_COSTOS_DEFAULT.markupLista[k]) || 0,
-      ])),
-    });
-    setGuardado(true);
-  };
-
+// Campos de la Matriz de costos, compartidos entre la vista real (MatrizCostosView, con guardado en
+// Firestore) y la versión simulada del Panel de simulación (MatrizCostosSimView, 100% local) — mismos
+// campos, mismo orden, para que "jugar" con la matriz en simulación se sienta idéntico a editar la real.
+function MatrizCostosCampos({ form, set, num }) {
   return (
-    <div>
-      <div className="mb-4">
-        <h2 className="text-xl font-bold" style={{ color: INK }}>Matriz de costos</h2>
-        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-          Estas son las únicas variables que se editan a mano — el Costo Real de cada producto (Catálogo → Datos internos de costo) sale de acá + su costo origen y unidades por contenedor.
-        </p>
-        <p className="text-sm mt-1" style={{ color: MUTED }}>
-          El margen mínimo/ideal de cada categoría es <b>markup sobre Costo PY</b> (precio = Costo PY × (1 + markup)) — igual que arma los precios Armado de Precios en Excel. El límite real de descuento sale de restarle a ese markup la comisión de venta y el costo financiero: si el markup cae por debajo de esa suma, ya se está vendiendo bajo Costo Real.
-        </p>
-      </div>
-
+    <>
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Variables generales</p>
       <div className="flex gap-2">
         <Field label="Comisión agente % (sobre costo origen)">
@@ -18457,9 +18534,140 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
           <TextInput type="number" step="0.1" value={(form.markupLista || {})[k] ?? MATRIZ_COSTOS_DEFAULT.markupLista[k]} onChange={(e) => set(["markupLista", k], e.target.value)} />
         </Field>
       ))}
+    </>
+  );
+}
+
+function MatrizCostosView({ matrizCostos, onUpdate }) {
+  // Una matriz guardada antes de que existieran los markups de lista no los trae: se completan con los de fábrica.
+  const conMarkups = (m) => ({ ...m, markupLista: { ...MATRIZ_COSTOS_DEFAULT.markupLista, ...(m.markupLista || {}) } });
+  const [form, setForm] = useState(() => conMarkups(matrizCostos));
+  const [guardado, setGuardado] = useState(false);
+  // Bloqueada por default — son los costos reales de toda la empresa (de acá sale el Costo Real y
+  // el precio de lista de todo el Catálogo), así que un toque de más no debería poder tocarlos.
+  // Se vuelve a bloquear sola después de cada guardado.
+  const [desbloqueado, setDesbloqueado] = useState(false);
+
+  // El doc real puede llegar después del primer render (onSnapshot es async) — sin esto, el
+  // formulario se quedaría pegado en MATRIZ_COSTOS_DEFAULT aunque ya exista un doc guardado.
+  useEffect(() => { setForm(conMarkups(matrizCostos)); setGuardado(false); }, [matrizCostos]);
+
+  const set = (path, value) => {
+    setGuardado(false);
+    setForm((prev) => {
+      const next = structuredClone(prev);
+      let obj = next;
+      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      obj[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+  const num = (path) => path.reduce((o, k) => o?.[k], form);
+
+  const desbloquear = async () => {
+    const msg = "¿Desbloquear la Matriz de costos para editarla? Son los costos reales de toda la empresa — de acá sale el Costo Real y el precio de lista de todo el Catálogo.";
+    const ok = confirmBridge ? await confirmBridge(msg) : window.confirm(msg);
+    if (ok) setDesbloqueado(true);
+  };
+
+  const guardar = () => {
+    onUpdate({
+      comisionAgentePct: Number(form.comisionAgentePct) || 0,
+      costoFinancieroPct: Number(form.costoFinancieroPct) || 0,
+      despachoPct: Number(form.despachoPct) || 0,
+      contenedores: Object.fromEntries(Object.entries(form.contenedores).map(([tipo, v]) => [
+        tipo, { m3: Number(v.m3) || 0, ...(v.fleteUsd != null ? { fleteUsd: Number(v.fleteUsd) || 0 } : {}) },
+      ])),
+      categorias: Object.fromEntries(Object.entries(form.categorias).map(([cat, v]) => [
+        cat, {
+          comisionVentaPct: Number(v.comisionVentaPct) || 0, despachoPct: Number(v.despachoPct) || 0,
+          margenMinimoPct: Number(v.margenMinimoPct) || 0,
+          margenIdealMinPct: Number(v.margenIdealMinPct) || 0, margenIdealMaxPct: Number(v.margenIdealMaxPct) || 0,
+        },
+      ])),
+      markupLista: Object.fromEntries(Object.keys(MATRIZ_COSTOS_DEFAULT.markupLista).map((k) => [
+        k, Number((form.markupLista || {})[k] ?? MATRIZ_COSTOS_DEFAULT.markupLista[k]) || 0,
+      ])),
+    });
+    setGuardado(true);
+    setDesbloqueado(false);
+  };
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-xl font-bold" style={{ color: INK }}>Matriz de costos</h2>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+          Estas son las únicas variables que se editan a mano — el Costo Real de cada producto (Catálogo → Datos internos de costo) sale de acá + su costo origen y unidades por contenedor.
+        </p>
+        <p className="text-sm mt-1" style={{ color: MUTED }}>
+          El margen mínimo/ideal de cada categoría es <b>markup sobre Costo PY</b> (precio = Costo PY × (1 + markup)) — igual que arma los precios Armado de Precios en Excel. El límite real de descuento sale de restarle a ese markup la comisión de venta y el costo financiero: si el markup cae por debajo de esa suma, ya se está vendiendo bajo Costo Real.
+        </p>
+      </div>
+
+      <div className="mb-4 p-3 rounded-md flex items-center justify-between gap-3" style={{ backgroundColor: desbloqueado ? "#FEF3C7" : "#F7F8FA", border: `1px solid ${desbloqueado ? "#F59E0B" : "#E5E7EB"}` }}>
+        <div className="flex items-center gap-2">
+          <Lock size={16} style={{ color: desbloqueado ? "#B45309" : MUTED }} />
+          <p className="text-sm" style={{ color: desbloqueado ? "#B45309" : MUTED }}>
+            {desbloqueado
+              ? "Desbloqueada — estás editando los costos reales de toda la empresa. Se vuelve a bloquear sola al guardar."
+              : "Bloqueada — desbloqueá para poder editar los costos reales de toda la empresa."}
+          </p>
+        </div>
+        {!desbloqueado && (
+          <button onClick={desbloquear} className="text-sm px-3 py-1.5 rounded-md font-medium shrink-0" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
+            Desbloquear para editar
+          </button>
+        )}
+      </div>
+
+      <fieldset disabled={!desbloqueado} style={{ opacity: desbloqueado ? 1 : 0.55 }}>
+        <MatrizCostosCampos form={form} set={set} num={num} />
+      </fieldset>
 
       {guardado && <p className="text-xs mb-2" style={{ color: "#15803D" }}>Guardado — ya se está usando en todo el catálogo.</p>}
-      <PrimaryButton onClick={guardar}>Guardar matriz</PrimaryButton>
+      {desbloqueado && <PrimaryButton onClick={guardar}>Guardar matriz</PrimaryButton>}
+    </div>
+  );
+}
+
+// Copia 100% local (nunca se guarda en Firestore) de la Matriz de costos, para "jugar con precios
+// en China" — flete, despacho, comisiones, markups — dentro del Panel de simulación, sin ningún
+// riesgo de tocar los costos reales. El estado vive en SimuladorView (persiste si se cambia de
+// pestaña dentro del panel) y acá solo se edita vía onChange.
+function MatrizCostosSimView({ matrizSimulada, matrizReal, onChange, onRestablecer }) {
+  const set = (path, value) => {
+    onChange((prev) => {
+      const next = structuredClone(prev);
+      let obj = next;
+      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      obj[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+  const num = (path) => path.reduce((o, k) => o?.[k], matrizSimulada);
+  const huboCambios = JSON.stringify(matrizSimulada) !== JSON.stringify(matrizReal || MATRIZ_COSTOS_DEFAULT);
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-xl font-bold" style={{ color: INK }}>Matriz de costos (simulación)</h2>
+        <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+          Una copia de la Matriz de costos real para jugar con otros números — comisión de agente, flete, despacho, comisión de venta, costo financiero, markups de lista — sin tocar nada real.
+          Nunca se guarda en Firestore ni afecta el Costo Real ni el precio de lista de ningún producto. Activá "Simulada" arriba, en "Comparar fábricas" o "Simulación rápida", para que esos cálculos usen esta copia en vez de la matriz real.
+        </p>
+      </div>
+
+      <div className="mb-4 p-3 rounded-md flex items-center justify-between gap-3" style={{ backgroundColor: "#FEF3C7", border: "1px solid #F59E0B" }}>
+        <p className="text-sm" style={{ color: "#B45309" }}>
+          {huboCambios ? "Tenés cambios simulados — nunca se aplican solos a la matriz real." : "Todavía igual a la matriz real — cambiá lo que quieras para simular."}
+        </p>
+        <button onClick={onRestablecer} className="text-sm px-3 py-1.5 rounded-md font-medium shrink-0" style={{ backgroundColor: "#FFFFFF", color: "#B45309", border: "1px solid #F59E0B" }}>
+          Restablecer a la matriz real
+        </button>
+      </div>
+
+      <MatrizCostosCampos form={matrizSimulada} set={set} num={num} />
     </div>
   );
 }

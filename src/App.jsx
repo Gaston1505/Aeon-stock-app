@@ -14868,7 +14868,21 @@ function SimuladorView({
   const conMatrizCompleta = (m) => ({ ...(m || MATRIZ_COSTOS_DEFAULT), markupLista: { ...MATRIZ_COSTOS_DEFAULT.markupLista, ...((m || MATRIZ_COSTOS_DEFAULT).markupLista || {}) } });
   const [matrizSimulada, setMatrizSimulada] = useState(() => structuredClone(conMatrizCompleta(matrizCostos)));
   const [usarMatrizSimulada, setUsarMatrizSimulada] = useState(false);
-  const restablecerMatrizSimulada = () => setMatrizSimulada(structuredClone(conMatrizCompleta(matrizCostos)));
+  // matrizCostos puede llegar en null/MATRIZ_COSTOS_DEFAULT en el primer render (onSnapshot es
+  // async) y recién después resolver a la real — mientras el usuario no haya tocado nada acá,
+  // seguimos esa actualización en vez de quedarnos pegados a los valores por defecto.
+  const matrizSimuladaTocada = useRef(false);
+  useEffect(() => {
+    if (!matrizSimuladaTocada.current) setMatrizSimulada(structuredClone(conMatrizCompleta(matrizCostos)));
+  }, [matrizCostos]);
+  const actualizarMatrizSimulada = (updater) => {
+    matrizSimuladaTocada.current = true;
+    setMatrizSimulada(updater);
+  };
+  const restablecerMatrizSimulada = () => {
+    matrizSimuladaTocada.current = false;
+    setMatrizSimulada(structuredClone(conMatrizCompleta(matrizCostos)));
+  };
   const matrizParaCostos = usarMatrizSimulada ? matrizSimulada : matrizCostos;
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
@@ -15049,7 +15063,7 @@ function SimuladorView({
               onGuardarModelos={onGuardarModelosFabrica} onSubirPdf={onSubirPdfFabrica}
             />
           ) : subModoCostos === "matriz" ? (
-            <MatrizCostosSimView matrizSimulada={matrizSimulada} matrizReal={matrizCostos} onChange={setMatrizSimulada} onRestablecer={restablecerMatrizSimulada} />
+            <MatrizCostosSimView matrizSimulada={matrizSimulada} matrizReal={matrizCostos} onChange={actualizarMatrizSimulada} onRestablecer={restablecerMatrizSimulada} />
           ) : (
             <ComparadorCostosOrigen productos={productos} matrizCostos={matrizParaCostos} />
           )}

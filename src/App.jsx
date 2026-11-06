@@ -18564,10 +18564,12 @@ function MatrizCostosView({ matrizCostos, onUpdate }) {
   };
   const num = (path) => path.reduce((o, k) => o?.[k], form);
 
-  const desbloquear = async () => {
+  // No usa confirmBridge a propósito: ese diálogo está armado para confirmaciones de borrado
+  // (botón rojo "Eliminar", ver ConfirmDialog) y acá no se borra nada — el confirm nativo del
+  // navegador evita ese mensaje engañoso.
+  const desbloquear = () => {
     const msg = "¿Desbloquear la Matriz de costos para editarla? Son los costos reales de toda la empresa — de acá sale el Costo Real y el precio de lista de todo el Catálogo.";
-    const ok = confirmBridge ? await confirmBridge(msg) : window.confirm(msg);
-    if (ok) setDesbloqueado(true);
+    if (window.confirm(msg)) setDesbloqueado(true);
   };
 
   const guardar = () => {

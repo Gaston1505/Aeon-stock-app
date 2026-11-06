@@ -15063,7 +15063,7 @@ function SimuladorView({
               onGuardarModelos={onGuardarModelosFabrica} onSubirPdf={onSubirPdfFabrica}
             />
           ) : subModoCostos === "matriz" ? (
-            <MatrizCostosSimView matrizSimulada={matrizSimulada} matrizReal={matrizCostos} onChange={actualizarMatrizSimulada} onRestablecer={restablecerMatrizSimulada} />
+            <MatrizCostosSimView matrizSimulada={matrizSimulada} matrizReal={conMatrizCompleta(matrizCostos)} onChange={actualizarMatrizSimulada} onRestablecer={restablecerMatrizSimulada} />
           ) : (
             <ComparadorCostosOrigen productos={productos} matrizCostos={matrizParaCostos} />
           )}

@@ -69,6 +69,8 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
 
   const cols = [
     { key: "edificio", width: 22 },
+    { key: "administracion", width: 22 },
+    { key: "telAdministracion", width: 16 },
     { key: "apartamento", width: 12 },
     { key: "cliente", width: 24 },
     { key: "equipos", width: 34 },
@@ -113,7 +115,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
   sheet.getRow(r).height = 22;
   r += 2;
 
-  const headers = ["Edificio", "Apartamento", "Cliente", "Equipos instalados", "Situación", "Fecha de venta", "Service 12 meses", "Service 24 meses", "Último informe técnico", "Ganancia AEON acumulada"];
+  const headers = ["Edificio", "Administración", "Tel. administración", "Apartamento", "Cliente", "Equipos instalados", "Situación", "Fecha de venta", "Service 12 meses", "Service 24 meses", "Último informe técnico", "Ganancia AEON acumulada"];
   headers.forEach((h, i) => {
     const cell = sheet.getCell(r, i + 1);
     cell.value = h;
@@ -142,12 +144,17 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
     const gananciaTotal = entregas.reduce((a, e) => a + ((Number(e.montoCliente) || 0) - (Number(e.montoInstalador) || 0)) / 2, 0);
     const s12 = estadoHito(u, 12);
     const s24 = estadoHito(u, 24);
-    const equiposTexto = (u.equipos?.length ? u.equipos : u.equipo ? [{ modelo: u.equipo, capacidad: u.capacidad }] : [])
-      .map((eq) => `${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`)
+    const equiposTexto = (u.equipos?.length ? u.equipos : u.equipo ? [{ modelo: u.equipo, capacidad: u.capacidad, cantidad: 1 }] : [])
+      .map((eq) => {
+        const cant = Number(eq.cantidad) || 1;
+        return `${cant > 1 ? `${cant}× ` : ""}${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`;
+      })
       .join(", ") || "s/d";
 
     const row = [
       edificio?.nombre || "(edificio borrado)",
+      edificio?.empresaAdministracion || "",
+      edificio?.telefonoAdministracion || "",
       u.apartamento || "",
       u.cliente || "",
       equiposTexto,
@@ -162,9 +169,9 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
       const cell = sheet.getCell(r, i + 1);
       cell.value = val;
       const opts = { wrap: true };
-      if (i === 6) Object.assign(opts, { fill: s12.fill, color: s12.color, align: "center" });
-      else if (i === 7) Object.assign(opts, { fill: s24.fill, color: s24.color, align: "center" });
-      else if (i === 1 || i === 4 || i === 5) opts.align = "center";
+      if (i === 8) Object.assign(opts, { fill: s12.fill, color: s12.color, align: "center" });
+      else if (i === 9) Object.assign(opts, { fill: s24.fill, color: s24.color, align: "center" });
+      else if (i === 2 || i === 3 || i === 6 || i === 7) opts.align = "center";
       styleCell(cell, opts);
     });
     r += 1;

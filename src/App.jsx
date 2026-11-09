@@ -12071,13 +12071,18 @@ function SelectorEquipo({ equiposDisponibles, productos, comprometidas, value, o
 // del modelo como texto suelto (no un productoId) — Ventas y garantías, Tránsito. Mantiene la
 // carga manual como alternativa (un modelo que todavía no está cargado en el Catálogo), con un
 // link para pasar de un modo al otro.
-function SelectorModeloOTexto({ productos, value, onChange, placeholder }) {
+function SelectorModeloOTexto({ productos, value, onChange, placeholder, modelosExtra }) {
   const [modoManual, setModoManual] = useState(false);
   const datalistId = useRef(`selector-modelo-${Math.random().toString(36).slice(2)}`).current;
   const productosDisponibles = useMemo(() => (productos || []).filter((p) => !p.noDisponible), [productos]);
   const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
   const productoSel = productosDisponibles.find((p) => p.nombre === value);
-  const modelosCatalogo = useMemo(() => [...new Set((productos || []).map((p) => p.nombre))].sort(), [productos]);
+  // modelosExtra: modelos que no están (ni van a estar) en el Catálogo real, pero igual tienen que
+  // poder tipearse con autocompletado acá — ver MODELOS_POSTVENTA_LEGADO.
+  const modelosCatalogo = useMemo(
+    () => [...new Set([...(productos || []).map((p) => p.nombre), ...(modelosExtra || [])])].sort(),
+    [productos, modelosExtra]
+  );
 
   if (modoManual) {
     return (
@@ -19926,14 +19931,24 @@ function gananciaAeonService(montoCliente, montoInstalador) {
 // quedó algún registro viejo guardado antes de este cambio.
 function equiposDeUnidad(u) {
   if (u?.equipos?.length) return u.equipos;
-  if (u?.equipo) return [{ modelo: u.equipo, capacidad: u.capacidad || "" }];
+  if (u?.equipo) return [{ modelo: u.equipo, capacidad: u.capacidad || "", cantidad: 1 }];
   return [];
 }
 function textoEquiposUnidad(u) {
   const lista = equiposDeUnidad(u);
   if (lista.length === 0) return "s/d";
-  return lista.map((eq) => `${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`).join(", ");
+  return lista
+    .map((eq) => {
+      const cant = Number(eq.cantidad) || 1;
+      return `${cant > 1 ? `${cant}× ` : ""}${eq.modelo || "modelo s/d"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`;
+    })
+    .join(", ");
 }
+
+// Split Pared ON-OFF 9.000 BTU se vendía antes pero ya no se importa — no va al Catálogo de
+// productos real (no se vuelve a traer), pero sigue instalado en varios edificios vendidos antes
+// de este cambio, así que tiene que poder elegirse acá en Mantenimiento postventa.
+const MODELOS_POSTVENTA_LEGADO = ["Split Pared ON-OFF 9.000 BTU"];
 
 // Texto sugerido de garantía/próximo service para el recibo del cliente, según el hito que cerró
 // este service — solo una sugerencia editable: para unidades de "obra activa" (sin hito, arreglo
@@ -19958,16 +19973,17 @@ function defaultsReciboServicio(hito) {
 // filas con el modelo elegido del catálogo o a mano).
 function EquiposUnidadLineas({ equipos, productos, onChange }) {
   const set = (i, patch) => onChange(equipos.map((eq, j) => (j === i ? { ...eq, ...patch } : eq)));
-  const agregar = () => onChange([...equipos, { modelo: "", capacidad: "" }]);
+  const agregar = () => onChange([...equipos, { modelo: "", capacidad: "", cantidad: 1 }]);
   const quitar = (i) => onChange(equipos.filter((_, j) => j !== i));
   return (
     <div className="space-y-2 mb-2">
       {equipos.map((eq, i) => (
         <div key={i} className="flex items-start gap-2 flex-wrap p-2 rounded border" style={{ borderColor: BORDER }}>
           <div style={{ minWidth: 200, flex: 1 }}>
-            <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={eq.modelo} onChange={(v) => set(i, { modelo: v })} placeholder="Modelo instalado" /></Field>
+            <Field label="Modelo"><SelectorModeloOTexto productos={productos} modelosExtra={MODELOS_POSTVENTA_LEGADO} value={eq.modelo} onChange={(v) => set(i, { modelo: v })} placeholder="Modelo instalado" /></Field>
           </div>
           <div style={{ width: 140 }}><Field label="Capacidad"><TextInput value={eq.capacidad} onChange={(e) => set(i, { capacidad: e.target.value })} placeholder="Ej: 12.000 BTU" /></Field></div>
+          <div style={{ width: 80 }}><Field label="Cantidad"><TextInput type="number" min="1" value={eq.cantidad ?? 1} onChange={(e) => set(i, { cantidad: e.target.value })} /></Field></div>
           {equipos.length > 1 && (
             <button type="button" onClick={() => quitar(i)} className="p-1.5 rounded hover:bg-gray-100 mt-5"><Trash2 size={14} style={{ color: MUTED }} /></button>
           )}
@@ -19981,6 +19997,8 @@ function EquiposUnidadLineas({ equipos, productos, onChange }) {
 function EdificioForm({ edificio, onGuardar, onCancelar }) {
   const [nombre, setNombre] = useState(edificio?.nombre || "");
   const [direccion, setDireccion] = useState(edificio?.direccion || "");
+  const [empresaAdministracion, setEmpresaAdministracion] = useState(edificio?.empresaAdministracion || "");
+  const [telefonoAdministracion, setTelefonoAdministracion] = useState(edificio?.telefonoAdministracion || "");
   const [notas, setNotas] = useState(edificio?.notas || "");
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -19988,7 +20006,12 @@ function EdificioForm({ edificio, onGuardar, onCancelar }) {
     if (!nombre.trim()) { setMsg("Cargá el nombre del edificio."); return; }
     setOcupado(true);
     try {
-      await onGuardar({ ...(edificio?.id ? { id: edificio.id } : {}), nombre: nombre.trim(), direccion: direccion.trim(), notas: notas.trim() });
+      await onGuardar({
+        ...(edificio?.id ? { id: edificio.id } : {}),
+        nombre: nombre.trim(), direccion: direccion.trim(),
+        empresaAdministracion: empresaAdministracion.trim(), telefonoAdministracion: telefonoAdministracion.trim(),
+        notas: notas.trim(),
+      });
       onCancelar();
     } catch (e) { setMsg(textoErrorFirestore(e, "edificiosPostventa")); }
     setOcupado(false);
@@ -19998,6 +20021,10 @@ function EdificioForm({ edificio, onGuardar, onCancelar }) {
       <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{edificio?.id ? "Editar edificio" : "Nuevo edificio"}</p>
       <Field label="Nombre"><TextInput value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Torres del Lago" /></Field>
       <Field label="Dirección (opcional)"><TextInput value={direccion} onChange={(e) => setDireccion(e.target.value)} /></Field>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="Empresa de administración (opcional)"><TextInput value={empresaAdministracion} onChange={(e) => setEmpresaAdministracion(e.target.value)} placeholder="Ej: Administradora XYZ" /></Field>
+        <Field label="Teléfono de la administración (opcional)"><TextInput value={telefonoAdministracion} onChange={(e) => setTelefonoAdministracion(e.target.value)} /></Field>
+      </div>
       <Field label="Notas (opcional)"><Textarea value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
       <div className="flex gap-2">
         <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
@@ -20014,7 +20041,7 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
   const [telefono, setTelefono] = useState(unidad?.telefono || "");
   const [equipos, setEquipos] = useState(() => {
     const existentes = equiposDeUnidad(unidad);
-    return existentes.length ? existentes : [{ modelo: "", capacidad: "" }];
+    return existentes.length ? existentes : [{ modelo: "", capacidad: "", cantidad: 1 }];
   });
   const [tipoObra, setTipoObra] = useState(unidad?.tipoObra || "ventaCero");
   const [fechaVenta, setFechaVenta] = useState(unidad?.fechaVenta || todayISO());
@@ -20023,7 +20050,9 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
   const guardar = async () => {
     if (!apartamento.trim()) { setMsg("Cargá el número de apartamento."); return; }
     if (!cliente.trim()) { setMsg("Cargá el nombre del cliente."); return; }
-    const equiposValidos = equipos.filter((eq) => eq.modelo.trim()).map((eq) => ({ modelo: eq.modelo.trim(), capacidad: eq.capacidad.trim() }));
+    const equiposValidos = equipos
+      .filter((eq) => eq.modelo.trim())
+      .map((eq) => ({ modelo: eq.modelo.trim(), capacidad: eq.capacidad.trim(), cantidad: Math.max(1, Number(eq.cantidad) || 1) }));
     if (equiposValidos.length === 0) { setMsg("Cargá al menos un equipo con su modelo."); return; }
     setOcupado(true);
     try {
@@ -20337,6 +20366,11 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
           <div>
             <h2 className="text-xl font-bold" style={{ color: INK }}>{edificio.nombre}</h2>
             {edificio.direccion && <p className="text-sm" style={{ color: MUTED }}>{edificio.direccion}</p>}
+            {(edificio.empresaAdministracion || edificio.telefonoAdministracion) && (
+              <p className="text-xs mt-0.5" style={{ color: INK }}>
+                <b>Administración:</b> {edificio.empresaAdministracion || "s/d"}{edificio.telefonoAdministracion ? ` · Tel. ${edificio.telefonoAdministracion}` : ""}
+              </p>
+            )}
             {edificio.notas && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{edificio.notas}</p>}
           </div>
           <div className="flex gap-2 shrink-0">

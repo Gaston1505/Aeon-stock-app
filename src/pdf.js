@@ -1245,8 +1245,9 @@ export async function generateReciboServicioPdf(datos) {
     equipos.forEach((eq) => {
       ensureSpace(16);
       const h = 16;
+      const cant = Number(eq.cantidad) || 1;
       rect(MARGIN, y - h, colModelo, h, { border: BORDER });
-      text(eq.modelo || "", MARGIN + 4, y - 11, { size: 7.5 });
+      text(`${cant > 1 ? `${cant}× ` : ""}${eq.modelo || ""}`, MARGIN + 4, y - 11, { size: 7.5 });
       rect(MARGIN + colModelo, y - h, colCapacidad, h, { border: BORDER });
       centerText(eq.capacidad || "—", MARGIN + colModelo, y, colCapacidad, h, { size: 7.5 });
       y -= h;

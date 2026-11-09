@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck,
+  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth, storage } from "./firebase";
@@ -4349,12 +4349,15 @@ export default function App() {
     { key: "entradas", label: pendientesEntrada > 0 ? `Entradas (${pendientesEntrada})` : "Entradas", icon: ArrowDownToLine, section: "Movimientos" },
     { key: "movimientos", label: pendientesSalida > 0 ? `Salidas (${pendientesSalida})` : "Salidas", icon: ArrowUpFromLine, section: "Movimientos" },
     // Ventas — en orden de embudo: primero se arma la combinación (para proyectos de multi-split),
-    // se chequea en el Panel de simulación, y recién ahí se manda la Cotización. Después queda
-    // comprometida (reservada) y al cerrarse pasa a Garantías (ficha de service). Presupuestos de
-    // reparación es un flujo aparte, va al final del bloque.
+    // se chequea en el Panel de simulación, y recién ahí se manda la Cotización. Apenas se marca
+    // Ganada ya cuenta como Venta (sin pedir salida de depósito) — ver VentasGanadasView. Después
+    // puede quedar comprometida (reservada) y, cuando entregás en serio, pasar a Garantías (ficha
+    // de service), que es un paso aparte y opcional. Presupuestos de reparación es un flujo
+    // aparte, va al final del bloque.
     { key: "armado-combinaciones", label: "Armado de combinaciones", icon: Layers, section: "Ventas" },
     { key: "simulador", label: "Panel de simulación", icon: FlaskConical, section: "Ventas" },
     { key: "cotizaciones", label: "Cotizaciones", icon: FileSignature, section: "Ventas" },
+    { key: "ventas-ganadas", label: "Ventas", icon: BadgeDollarSign, section: "Ventas" },
     { key: "comprometidas", label: "Ventas comprometidas", icon: Lock, section: "Ventas" },
     { key: "ventas", label: "Garantías", icon: ShieldCheck, section: "Ventas" },
     { key: "mantenimiento-postventa", label: "Mantenimiento postventa", icon: Building, section: "Ventas" },
@@ -4819,6 +4822,15 @@ export default function App() {
             onGenerarContrato={esAdmin ? ((c) => { setContratoTarget(c); setDrawer("contrato"); }) : undefined}
             descargandoId={descargandoId}
             pdfError={pdfError}
+          />
+        )}
+
+        {tab === "ventas-ganadas" && (
+          <VentasGanadasView
+            cotizaciones={filteredCotizaciones} productos={productos} ventas={ventas} movimientos={movimientos}
+            query={query} onQuery={setQuery}
+            cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
+            onGenerarFicha={(c) => { setCotizacionParaVenta(c); setDrawer("venta-cotizacion"); }}
           />
         )}
 
@@ -16184,6 +16196,114 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------- Ventas (Ganadas) ----------
+// Separada de Garantías a pedido del usuario: antes, una cotización Ganada recién "contaba" como
+// venta cuando alguien generaba a mano su ficha de venta y garantía en Garantías — y eso pedía
+// que ya hubiera salido mercadería real del depósito. Pero hay casos en los que se puede marcar
+// Ganada sin necesitar sacar nada todavía. Acá se lista TODA cotización Ganada apenas se marca
+// así (mismo criterio Ganada/En curso/Cobrada que en Cotizaciones — ver cotizacionEstadoGanadaVisual),
+// sin pedir salida ni ficha. Garantías sigue exactamente igual que antes: el service de 12/24
+// meses, que es un paso aparte y opcional, y sigue necesitando una entrega real.
+function VentasGanadasView({ cotizaciones, productos, ventas, movimientos, query, onQuery, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, onGenerarFicha }) {
+  const ganadas = useMemo(() => cotizaciones.filter((c) => c.estado === "Ganada"), [cotizaciones]);
+  const grupos = useMemo(() => agruparCotizaciones(ganadas), [ganadas]);
+  const [detalle, setDetalle] = useState(null);
+
+  const filas = useMemo(() => {
+    return listarCotizacionesQueCuentan(grupos)
+      .map((f) => {
+        const cuenta = cuentaPorCotizacionId?.get(f.c.id);
+        const movimientoPropio = movimientoPropioPorCotizacionId?.get(f.c.id);
+        const estado = cotizacionEstadoGanadaVisual(f.c, cuenta, movimientoPropio);
+        const salida = estadoSalidaCotizacion(f.c);
+        const tieneEntrega = movimientos.some((m) => m.cotizacionId === f.c.id);
+        const tieneFicha = ventas.some((v) => v.cotizacionId === f.c.id);
+        return { ...f, estado, salida, tieneEntrega, tieneFicha };
+      })
+      .sort((a, b) => calcularTotalCotizacion(b.c) - calcularTotalCotizacion(a.c));
+  }, [grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, movimientos, ventas]);
+
+  const totales = useMemo(() => {
+    const out = { total: 0, Ganada: { n: 0, total: 0 }, "En curso": { n: 0, total: 0 }, Cobrada: { n: 0, total: 0 } };
+    for (const f of filas) {
+      const monto = calcularTotalCotizacion(f.c);
+      out.total += monto;
+      out[f.estado].n += 1;
+      out[f.estado].total += monto;
+    }
+    return out;
+  }, [filas]);
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold" style={{ color: INK }}>Ventas</h2>
+          <p className="text-sm mt-0.5" style={{ color: MUTED }}>
+            Toda cotización marcada <strong>Ganada</strong>, apenas se marca — no hace falta que salga mercadería del depósito. La ficha de garantía (service a 12/24 meses) es un paso aparte y opcional, en "Garantías", y esa sí sigue necesitando una entrega real.
+          </p>
+        </div>
+        <SearchBox value={query} onChange={onQuery} />
+      </div>
+
+      {filas.length === 0 ? (
+        <EmptyState icon={BadgeDollarSign} title="Todavía no hay ninguna cotización Ganada" subtitle="En cuanto marques una como Ganada en Cotizaciones, va a aparecer acá." />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+            <div className="rounded-lg px-3 py-2" style={{ backgroundColor: ACCENT_LIGHT }}>
+              <p className="text-xs" style={{ color: ACCENT }}>Total vendido</p>
+              <p className="text-sm font-semibold" style={{ color: ACCENT }}>U$S {totales.total.toLocaleString("es-PY")}</p>
+            </div>
+            {["Ganada", "En curso", "Cobrada"].map((estado) => (
+              <div key={estado} className="rounded-lg px-3 py-2" style={{ backgroundColor: ESTADO_COTIZACION_BADGE[estado].bg }}>
+                <p className="text-xs" style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>{estado} ({totales[estado].n})</p>
+                <p className="text-sm font-semibold" style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>U$S {totales[estado].total.toLocaleString("es-PY")}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-1.5">
+            {filas.map((f) => (
+              <div key={f.c.id} className="rounded-lg border p-3" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+                <button type="button" onClick={() => setDetalle(f.c)} className="w-full flex items-center justify-between gap-2 text-left">
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold truncate" style={{ color: INK }}>{f.cliente}{f.obra ? ` — ${f.obra}` : ""}</span>
+                    <span className="block text-xs" style={{ color: MUTED }}>{f.rubro}{f.c.nombre ? ` · ${f.c.nombre}` : ""} · {fmtDate(f.c.fecha)} · {(f.c.lineas || []).length} producto(s)</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 shrink-0 text-sm font-semibold" style={{ color: ACCENT }}>
+                    U$S {calcularTotalCotizacion(f.c).toLocaleString("es-PY")}
+                    <Eye size={14} style={{ color: MUTED }} />
+                  </span>
+                </button>
+                <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: ESTADO_COTIZACION_BADGE[f.estado].bg, color: ESTADO_COTIZACION_BADGE[f.estado].color }}>{f.estado}</span>
+                  {f.salida && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: SALIDA_COTIZACION_BADGE[f.salida].bg, color: SALIDA_COTIZACION_BADGE[f.salida].color }}>{SALIDA_COTIZACION_BADGE[f.salida].label}</span>
+                  )}
+                  {f.tieneFicha ? (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E8EEFB", color: "#1D4ED8" }}>Ficha de garantía generada</span>
+                  ) : f.tieneEntrega ? (
+                    onGenerarFicha && (
+                      <button type="button" onClick={() => onGenerarFicha(f.c)} className="text-[11px] px-2 py-0.5 rounded-full font-medium underline" style={{ color: "#1D4ED8" }}>
+                        Generar ficha de garantía
+                      </button>
+                    )
+                  ) : (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#F2F3F4", color: "#686D73" }}>Sin ficha de garantía (todavía no salió mercadería)</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {detalle && <CotizacionDetalleModal c={detalle} productos={productos} onClose={() => setDetalle(null)} />}
     </div>
   );
 }

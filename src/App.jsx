@@ -4541,6 +4541,7 @@ export default function App() {
         {tab === "resumen" && (
           <Resumen
             equipos={equipos} transito={transito} cotizaciones={cotizaciones} comprometidas={comprometidas}
+            cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
             clientes={clientes} cuentasObras={listaObrasCuenta}
             proximosServices={proximosServices} alertasContacto={alertasContacto}
             seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
@@ -6663,9 +6664,12 @@ function VentasCerradasPanel({ ventasCerradas, onPago }) {
   return (
     <div className="rounded-xl p-4 mt-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <TrendingUp size={15} style={{ color: ACCENT }} />
-          <h3 className="text-base font-bold" style={{ color: INK }}>Ventas cerradas</h3>
+        <div>
+          <div className="flex items-center gap-2">
+            <TrendingUp size={15} style={{ color: ACCENT }} />
+            <h3 className="text-base font-bold" style={{ color: INK }}>Ventas cerradas</h3>
+            <InfoTip><p>Historial de lo que ya salió físicamente del depósito como venta (remito por remito), con cuánto se cobró y cuánto queda de saldo. Es el detalle, mercadería por mercadería, de las obras que en "Cobranza por obra" ya figuran con algo entregado.</p></InfoTip>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div style={{ width: 130 }}>
@@ -6830,7 +6834,7 @@ function CuentaObrasTabla({ lista, onNavigate }) {
   );
 }
 
-function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion, onPagoVenta }) {
+function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion, onPagoVenta }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
 
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
@@ -6840,8 +6844,15 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
     [transitoEnCamino, productos]
   );
 
+  // Mismo desglose Pendiente/Ganada/En curso/Cobrada/Perdida que en la pestaña Cotizaciones (ver
+  // ResumenCotizaciones) — antes acá se llamaba resumirCotizaciones sin los mapas de cuenta/
+  // movimiento, así que todo lo Ganado quedaba mezclado en un solo balde sin distinguir qué ya se
+  // entregó o cobró. Es justamente lo que hacía que en Resumen "no se viera lo que se ganó".
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
-  const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
+  const resumenCot = useMemo(
+    () => resumirCotizaciones(gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId),
+    [gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]
+  );
   const resumenVentas = useMemo(() => totalVentas(cotizaciones, comprometidas), [cotizaciones, comprometidas]);
   const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
 
@@ -6875,7 +6886,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
     {
       // "Entregado sin pagar" es plata de una venta ya concretada (se entregó mercadería) —
       // pertenece acá, no a Cotizaciones, que es solo lo que todavía se está negociando.
-      label: "Ventas", icon: ShieldCheck, tab: "comprometidas",
+      label: "Ventas", icon: ShieldCheck, tab: "ventas-ganadas",
       value: `U$S ${resumenVentas.total.toLocaleString("es-PY")}`,
       sub: totalCobranza.entregadoNoPagado > 0
         ? `Entregado sin pagar: U$S ${totalCobranza.entregadoNoPagado.toLocaleString("es-PY")}`
@@ -6883,7 +6894,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
       subColor: totalCobranza.entregadoNoPagado > 0 ? "#B91C1C" : undefined,
     },
     {
-      label: "Cotizaciones", icon: FileSignature, tab: "cotizaciones",
+      label: "Cotizaciones pendientes", icon: FileSignature, tab: "cotizaciones",
       value: `U$S ${resumenCot.Pendiente.total.toLocaleString("es-PY")}`,
       sub: `${resumenCot.Pendiente.n} pendiente(s) de definir`,
     },
@@ -6950,6 +6961,31 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
         ))}
       </div>
 
+      {/* Visión contable de toda la cartera: cuánto está Pendiente, Ganada (todavía sin mover
+          nada), En curso (ya arrancó la entrega y/o el cobro), Cobrada (venta cerrada de verdad)
+          y Perdida — con el detalle de cada cotización un click abajo. Mismo componente que en
+          Cotizaciones, para no tener dos lógicas separadas mostrando números distintos. */}
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <BadgeDollarSign size={15} style={{ color: ACCENT }} />
+            <h3 className="text-base font-bold" style={{ color: INK }}>Cómo viene la cartera</h3>
+            <InfoTip>
+              <p><strong>Pendiente</strong>: todavía no se definió si se gana o se pierde.</p>
+              <p><strong>Ganada</strong>: se ganó, pero todavía no se movió nada — ni entrega ni cobro.</p>
+              <p><strong>En curso</strong>: ya arrancó algo (entrega y/o cobro parcial), falta terminar de cobrar.</p>
+              <p><strong>Cobrada</strong>: ya se cobró todo lo que corresponde — es la venta cerrada de verdad.</p>
+              <p><strong>Perdida</strong>: se perdió, con su motivo cargado.</p>
+            </InfoTip>
+          </div>
+          <button type="button" onClick={() => onNavigate("cotizaciones")} className="text-xs underline" style={{ color: ACCENT }}>Ver todas en Cotizaciones</button>
+        </div>
+        <ResumenCotizaciones
+          resumen={resumenCot} grupos={gruposCotizacion} productos={productos}
+          cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
+        />
+      </div>
+
       <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
         <div className="flex items-center gap-2 mb-3">
           <Clock size={15} style={{ color: ACCENT }} />
@@ -7010,7 +7046,8 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, clientes, cue
             <TrendingUp size={15} style={{ color: ACCENT }} />
             <h3 className="text-base font-bold" style={{ color: INK }}>Cobranza por obra</h3>
             <InfoTip>
-              <p>Sale de la ficha de cada cliente (Clientes → obra): lo cerrado por contrato, lo entregado en mercadería, lo cobrado y lo que se entregó sin que esté pagado.</p>
+              <p>Una fila por cada obra Ganada (incluye las que están En curso y las ya Cobradas): lo cerrado por contrato (= total cotizado de esa obra), el adelanto pactado, lo entregado en mercadería, lo cobrado y lo que se entregó sin que esté pagado.</p>
+              <p>El total de abajo de todo es justamente eso: total cotizado, adelantos, mercadería entregada y cuánto falta cobrar — sumado entre todas las obras.</p>
               <p>Los pagos se cargan en la ficha de la obra; los de Ventas comprometidas se suman solos.</p>
             </InfoTip>
           </div>

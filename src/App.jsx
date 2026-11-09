@@ -8395,17 +8395,25 @@ function EquipoForm({ equipos, productos, onSave }) {
 
       {lineas.length > 0 && (
         <div className="mt-3 mb-1 rounded-lg border divide-y" style={{ borderColor: BORDER }}>
-          {lineas.map((l, idx) => (
-            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-              <div className="min-w-0">
-                <CodigoNombre registro={l} mostrarInterno />
-                <span className="text-xs ml-1.5" style={{ color: MUTED }}>{l.cantidad}× · {l.estado}</span>
+          {lineas.map((l, idx) => {
+            const existe = (productos || []).some((p) => p.nombre === l.modelo);
+            return (
+              <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <CodigoNombre registro={l} mostrarInterno />
+                  <span className="text-xs ml-1.5" style={{ color: MUTED }}>{l.cantidad}× · {l.estado}</span>
+                  {!existe && (
+                    <span className="text-[11px] ml-1.5 px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>
+                      "{l.modelo}" no está en el Catálogo
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                  <X size={14} style={{ color: MUTED }} />
+                </button>
               </div>
-              <button onClick={() => quitarLinea(idx)} className="p-1 rounded hover:bg-gray-100 shrink-0">
-                <X size={14} style={{ color: MUTED }} />
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -8573,6 +8581,11 @@ function EscaneoUnidadesForm({ productos, onSave }) {
         para cuando lleguen productos con serie propia por caja.
       </p>
       <Field label="Modelo"><SelectorModeloOTexto productos={productos} value={modelo} onChange={setModelo} placeholder="Ej: AE-AK630-9M-3G-CS-ON" /></Field>
+      {modelo.trim() && !(productos || []).some((p) => p.nombre === modelo.trim()) && (
+        <p className="text-xs -mt-2 mb-2" style={{ color: "#B91C1C" }}>
+          "{modelo.trim()}" no está en el Catálogo — revisá que esté bien escrito, si no el stock de esta tanda va a quedar sin valorizar.
+        </p>
+      )}
       <Field label="Estado inicial">
         <Select value={estado} onChange={(e) => setEstado(e.target.value)}>
           {ESTADOS.filter((s) => s !== "Dado de baja").map((s) => <option key={s}>{s}</option>)}
@@ -9905,6 +9918,10 @@ function VentaForm({ productos, onSave }) {
   const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
 
+  // Si el modelo no matchea letra por letra con el Catálogo, serviciosDeVenta no encuentra la
+  // categoría y el service de garantía (12/24 meses) puede calcularse mal o no calcularse.
+  const modeloExisteEnCatalogo = (modelo) => (productos || []).some((p) => p.nombre === modelo);
+
   const agregarLinea = () => {
     if (!modeloNuevo.trim()) {
       setError("Ingresá el modelo.");
@@ -9946,12 +9963,22 @@ function VentaForm({ productos, onSave }) {
       </div>
       {lineas.length > 0 && (
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
-          {lineas.map((l, i) => (
-            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <span style={{ color: INK }}>{l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}</span>
-              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
-            </div>
-          ))}
+          {lineas.map((l, i) => {
+            const existe = modeloExisteEnCatalogo(l.modelo);
+            return (
+              <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+                <span style={{ color: INK }}>
+                  {l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}
+                  {!existe && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>
+                      No está en el Catálogo — el service de garantía puede calcularse mal
+                    </span>
+                  )}
+                </span>
+                <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -20990,6 +21017,12 @@ function TransitoForm({ envio, productos, onSave }) {
     }
   };
 
+  // Cuando este envío llega (darLlegadaTransito), cada línea se vuelca TAL CUAL a un equipo
+  // nuevo en Maestro de equipos — si el modelo no matchea letra por letra con el Catálogo, ese
+  // equipo nuevo nace roto (stock en 0, sin valorizar en Reporte para Seguro). Avisar acá, antes
+  // de que llegue el contenedor, es mucho más barato que corregirlo después.
+  const modeloExisteEnCatalogo = (modelo) => (productos || []).some((p) => p.nombre === modelo);
+
   const agregarLinea = () => {
     if (!modeloNuevo.trim()) {
       setError("Ingresá el modelo.");
@@ -21044,12 +21077,22 @@ function TransitoForm({ envio, productos, onSave }) {
       </div>
       {lineas.length > 0 && (
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>
-          {lineas.map((l, i) => (
-            <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
-              <span style={{ color: INK }}>{l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}</span>
-              <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
-            </div>
-          ))}
+          {lineas.map((l, i) => {
+            const existe = modeloExisteEnCatalogo(l.modelo);
+            return (
+              <div key={i} className="flex items-center justify-between px-2.5 py-2 text-xs border-b last:border-0" style={{ borderColor: BORDER }}>
+                <span style={{ color: INK }}>
+                  {l.modelo} <ProductoNombre codigo={l.modelo} style={{ color: MUTED }} /> · cant. {l.cantidad}
+                  {!existe && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>
+                      No está en el Catálogo — revisar antes de que llegue
+                    </span>
+                  )}
+                </span>
+                <button onClick={() => quitarLinea(i)}><X size={13} style={{ color: MUTED }} /></button>
+              </div>
+            );
+          })}
         </div>
       )}
 

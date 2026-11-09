@@ -5484,6 +5484,24 @@ function agruparPorRemito(filas, claveRespaldo, cantidadDe, rubroDe) {
   return Array.from(map.values());
 }
 
+// Reparte el "cobrado" de una obra (que es una bolsa única por obra — pago cargado a mano en la
+// ficha del cliente, pago puntual del remito, o el check "Pagado" del Pedido de facturación, ver
+// calcularCuentaObra — nunca atado a un remito en particular) entre sus remisiones individuales,
+// para poder mostrar cobrado/saldo remito por remito en "Ventas cerradas" (Resumen). Mismo criterio
+// que una cuenta corriente real: el pago se aplica primero a lo entregado más viejo, así que si
+// falta algo, es la entrega más reciente la que queda con saldo.
+function saldoPorRemitoDeCuenta(cuenta) {
+  const map = new Map();
+  const ordenadas = [...(cuenta.remisiones || [])].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
+  let pool = Number(cuenta.cobrado) || 0;
+  for (const r of ordenadas) {
+    const monto = Number(r.monto) || 0;
+    if (pool >= monto) { map.set(r.key, 0); pool -= monto; }
+    else { map.set(r.key, Math.round((monto - Math.max(0, pool)) * 100) / 100); pool = 0; }
+  }
+  return map;
+}
+
 function resumenRemito(g, unidadSingular, unidadPlural) {
   const rubros = Array.from(g.rubros.entries()).map(([r, n]) => `${r} ${n}`).join(" · ");
   return `${g.items.length} línea${g.items.length !== 1 ? "s" : ""} · ${g.unidades} ${g.unidades !== 1 ? unidadPlural : unidadSingular}${rubros ? " · " + rubros : ""}`;
@@ -6613,7 +6631,7 @@ function ComprometidaPagoBox({ comprometidas }) {
   );
 }
 
-function VentasCerradasPanel({ ventasCerradas, onPago }) {
+function VentasCerradasPanel({ ventasCerradas, onPago, saldoPorRemitoKey }) {
   const [q, setQ] = useState("");
   const anioActual = String(new Date().getFullYear());
   const anios = useMemo(() => {
@@ -6642,11 +6660,17 @@ function VentasCerradasPanel({ ventasCerradas, onPago }) {
   const gruposConMonto = useMemo(() => grupos.map((g) => {
     const m0 = g.items[0];
     const monto = g.items.reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
-    const cobrado = (m0.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+    // Si la obra de este remito tiene un cobrado calculado (ficha del cliente, pago puntual del
+    // remito, o Pedido de facturación pagado — ver saldoPorRemitoDeCuenta), usamos ese; si no se
+    // pudo resolver la obra, caemos al pago puntual del remito como antes.
+    const saldoObra = saldoPorRemitoKey?.get(g.key);
+    const cobrado = saldoObra != null
+      ? Math.max(0, monto - saldoObra)
+      : (m0.pagos || []).reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
     const porModelo = new Map();
     g.items.forEach((m) => porModelo.set(m.modelo || "—", (porModelo.get(m.modelo || "—") || 0) + (Number(m.cantidad) || 0)));
     return { ...g, m0, monto, cobrado, saldo: Math.max(0, monto - cobrado), porModelo: Array.from(porModelo.entries()) };
-  }), [grupos]);
+  }), [grupos, saldoPorRemitoKey]);
   const totalCobrado = gruposConMonto.reduce((acc, g) => acc + g.cobrado, 0);
   const totalSaldo = gruposConMonto.reduce((acc, g) => acc + g.saldo, 0);
 
@@ -6668,7 +6692,7 @@ function VentasCerradasPanel({ ventasCerradas, onPago }) {
           <div className="flex items-center gap-2">
             <TrendingUp size={15} style={{ color: ACCENT }} />
             <h3 className="text-base font-bold" style={{ color: INK }}>Ventas cerradas</h3>
-            <InfoTip><p>Historial de lo que ya salió físicamente del depósito como venta (remito por remito), con cuánto se cobró y cuánto queda de saldo. Es el detalle, mercadería por mercadería, de las obras que en "Cobranza por obra" ya figuran con algo entregado.</p></InfoTip>
+            <InfoTip><p>Historial de lo que ya salió físicamente del depósito como venta (remito por remito), con cuánto se cobró y cuánto queda de saldo. Es el detalle, mercadería por mercadería, de las obras que en "Cobranza por obra" ya figuran con algo entregado.</p><p>El cobrado toma en cuenta cualquier pago registrado, sea el pago puntual de este remito, uno cargado a mano en la ficha del cliente, o el Pedido de facturación marcado "Pagado" — si la obra entera ya está cobrada, acá también figura así aunque el pago no se haya cargado remito por remito.</p></InfoTip>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -6855,6 +6879,15 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
   );
   const resumenVentas = useMemo(() => totalVentas(cotizaciones, comprometidas), [cotizaciones, comprometidas]);
   const totalCobranza = useMemo(() => totalesCuentasObras(cuentasObras), [cuentasObras]);
+  // Para que "Ventas cerradas" (abajo) muestre el mismo cobrado/saldo que ya calcula bien
+  // "Cobranza por obra" — antes esa tabla solo miraba el pago puntual guardado en el propio
+  // remito y podía mostrar saldo pendiente en ventas que ya estaban cobradas por otro lado
+  // (ficha del cliente o Pedido de facturación marcado "Pagado"). Ver saldoPorRemitoDeCuenta.
+  const saldoPorRemitoKey = useMemo(() => {
+    const map = new Map();
+    for (const fila of cuentasObras) for (const [k, v] of saldoPorRemitoDeCuenta(fila.cuenta)) map.set(k, v);
+    return map;
+  }, [cuentasObras]);
 
   // Ventas comprometidas con fecha de retiro cargada, todavía con saldo por retirar — para avisar
   // con anticipación en qué fecha se va a liberar esa mercadería y, si el producto ya está en
@@ -7060,7 +7093,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
         )}
       </div>
 
-      <VentasCerradasPanel ventasCerradas={ventasCerradas} onPago={onPagoVenta} />
+      <VentasCerradasPanel ventasCerradas={ventasCerradas} onPago={onPagoVenta} saldoPorRemitoKey={saldoPorRemitoKey} />
 
       {/* Acceso rápido: crear una cotización sin tener que ir primero a esa pestaña. */}
       <button

@@ -2379,6 +2379,28 @@ function tituloPeriodo(periodo) {
 function enPrimeraSemanaDelMes() {
   return new Date().getDate() <= 7;
 }
+// Mes calendario completo más reciente (si hoy es cualquier día de noviembre, es octubre) — el
+// corte por defecto del Reporte para Seguro: nunca incluye días de un mes todavía en curso.
+function ultimoMesCompletoISO() {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// Opciones de mes para el selector de cierre del Reporte para Seguro — los últimos N meses
+// completos (sin incluir el mes en curso), más allá de si ese mes tiene o no una auditoría
+// cerrada: elegir un mes sin auditoría es válido, el reporte cae al estado actual en vivo con un
+// aviso (ver ReporteSeguroView) en vez de bloquearse.
+function ultimosMesesParaSelector(cantidad = 12) {
+  const out = [];
+  const hoy = new Date();
+  for (let i = 1; i <= cantidad; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+    const periodo = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    out.push({ value: periodo, label: tituloPeriodo(periodo) });
+  }
+  return out;
+}
 
 // Una fila lista para exportar (PDF o Excel) a partir de un ítem de auditoriaStockItems. La
 // diferencia usa el conteo de admin si existe, si no el de depósito — el mismo criterio que usa
@@ -5077,7 +5099,7 @@ export default function App() {
         )}
 
         {tab === "reporte-seguro" && (
-          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguayCosto} comprometidas={comprometidas} />
+          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguayCosto} comprometidas={comprometidas} productos={productos} auditoriasStock={auditoriasStock} />
         )}
 
         {tab === "reporte-joel" && (
@@ -21551,18 +21573,65 @@ function TransitoForm({ envio, productos, onSave }) {
 
 // Reporte de mercadería física en Paraguay para el seguro — equipos activos, repuestos y lo que
 // está en Zona de playa sin clasificar, agrupado por modelo con su valor de lista.
-function ReporteSeguroView({ mercaderia, comprometidas }) {
+function ReporteSeguroView({ mercaderia, comprometidas, productos, auditoriasStock }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [error, setError] = useState("");
-  const filas = useMemo(() => agruparMercaderia(mercaderia), [mercaderia]);
+  // Corte por defecto: el último mes calendario COMPLETO (ver ultimoMesCompletoISO) — un seguro no
+  // debería cubrirse con datos de un mes todavía en curso. "actual" es el escape para ver el
+  // estado de ahora mismo en vivo (el comportamiento de antes de este selector).
+  const mesesSelector = useMemo(() => ultimosMesesParaSelector(12), []);
+  const [periodo, setPeriodo] = useState(() => ultimoMesCompletoISO());
+  const [itemsPeriodo, setItemsPeriodo] = useState(null);
+  const [cargandoPeriodo, setCargandoPeriodo] = useState(false);
+
+  const auditoriaCerradaDelPeriodo = useMemo(
+    () => (auditoriasStock || []).find((a) => a.estado === "Cerrada" && a.periodo === periodo) || null,
+    [auditoriasStock, periodo]
+  );
+
+  // Los ítems de una auditoría cerrada no viven en el estado global de la app (serían 200+ docs
+  // por mes, solo para un reporte que se pide de vez en cuando) — se piden una sola vez acá, igual
+  // que al exportar el historial de auditorías (ver obtenerItemsAuditoria).
+  useEffect(() => {
+    if (!auditoriaCerradaDelPeriodo) { setItemsPeriodo(null); return; }
+    let cancelado = false;
+    setCargandoPeriodo(true);
+    obtenerItemsAuditoria(auditoriaCerradaDelPeriodo.id).then((items) => {
+      if (!cancelado) { setItemsPeriodo(items); setCargandoPeriodo(false); }
+    });
+    return () => { cancelado = true; };
+  }, [auditoriaCerradaDelPeriodo]);
+
+  // Si se eligió un mes cerrado y ya cargaron sus ítems: se arma a partir del conteo físico real
+  // de esa auditoría (admin si lo cargó, si no depósito, si no la foto del sistema al abrir — ver
+  // resolverDiferenciaAuditoria, mismo criterio). Valorizado con el Costo PY de HOY del Catálogo,
+  // porque el costo histórico de esa fecha no queda guardado en ningún lado. Si se eligió "Ahora
+  // mismo (en vivo)", o un mes SIN auditoría cerrada (no se bloquea el reporte, cae acá con el
+  // aviso de abajo), se usa el estado actual de siempre.
+  const mercaderiaEfectiva = useMemo(() => {
+    if (!auditoriaCerradaDelPeriodo || !itemsPeriodo) return mercaderia;
+    const buscarCosto = (codigo) => Number((productos || []).find((p) => p.nombre === codigo)?.costoPy) || 0;
+    return itemsPeriodo.map((i) => {
+      const contadoFinal = i.contadoAdmin != null ? i.contadoAdmin : (i.contadoDeposito != null ? i.contadoDeposito : i.sistemaAlAbrir);
+      return {
+        modelo: i.codigo, categoria: i.esRepuesto ? "Repuestos" : "Equipos",
+        cantidad: Math.max(0, Number(contadoFinal) || 0), valorUnitario: buscarCosto(i.codigo),
+      };
+    });
+  }, [auditoriaCerradaDelPeriodo, itemsPeriodo, mercaderia, productos]);
+
+  const usandoRespaldoEnVivo = periodo !== "actual" && !auditoriaCerradaDelPeriodo;
+  const periodoLabel = periodo === "actual" ? "Ahora mismo (en vivo)" : tituloPeriodo(periodo);
+  const filas = useMemo(() => agruparMercaderia(mercaderiaEfectiva), [mercaderiaEfectiva]);
   const totalCant = filas.reduce((acc, f) => acc + f.cantidad, 0);
   const totalValor = filas.reduce((acc, f) => acc + f.cantidad * f.valorUnitario, 0);
+  const tituloConPeriodo = `REPORTE PARA SEGURO — MERCADERÍA FÍSICA EN PARAGUAY — ${periodoLabel.toUpperCase()}`;
 
   const handleExcel = () => {
     const encabezado = [
       [COMPANY.razonSocial], [COMPANY.direccion], [COMPANY.direccion2],
       [COMPANY.telefonos], [COMPANY.emails], [],
-      ["REPORTE PARA SEGURO — MERCADERÍA FÍSICA EN PARAGUAY"],
+      [tituloConPeriodo],
       ["Fecha:", fmtFecha(todayISO())], [],
     ];
     const columnas = ["Categoría", "Modelo", "Cantidad", "Valor unit. U$S", "Valor total U$S"];
@@ -21584,14 +21653,14 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Reporte Seguro");
-    XLSX.writeFile(wb, `Reporte_Seguro_Paraguay_${todayISO()}.xlsx`);
+    XLSX.writeFile(wb, `Reporte_Seguro_Paraguay_${periodo === "actual" ? todayISO() : periodo}.xlsx`);
   };
 
   const handlePdf = async () => {
     setGenerandoPdf(true);
     setError("");
     try {
-      await downloadReporteFisicoPdf(filas, todayISO(), "REPORTE PARA SEGURO — MERCADERÍA FÍSICA EN PARAGUAY");
+      await downloadReporteFisicoPdf(filas, todayISO(), tituloConPeriodo);
     } catch (e) {
       console.error("Error generando reporte de seguro", e);
       setError("No se pudo generar el PDF. Probá de nuevo.");
@@ -21609,20 +21678,35 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
               <p>Cuenta TODA la mercadería física en Paraguay, sin importar si está comprometida a una venta o no:</p>
               <p><strong>Equipos:</strong> todos, salvo Vendido y Dado de baja (ya salieron del circuito).</p>
               <p><strong>Repuestos:</strong> el Stock disponible cargado en cada uno del Catálogo.</p>
-              <p><strong>Zona de playa:</strong> todo lo que todavía no se clasificó.</p>
+              <p><strong>Zona de playa:</strong> todo lo que todavía no se clasificó (solo en la vista "Ahora mismo en vivo" — la auditoría mensual no releva Zona de playa).</p>
               <p>El valor de cada fila sale del Costo puesto en PY del Catálogo — un seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla. Si el modelo no matchea exacto, queda sin valor ("—") en vez de inventar un precio.</p>
+              <p><strong>Cierre de mes:</strong> usa el conteo físico real de la Auditoría de stock cerrada de ese mes (no un recálculo en vivo) — es la foto más confiable de lo que de verdad había en el depósito en esa fecha. El costo con el que se valoriza siempre es el de HOY del Catálogo, no el histórico.</p>
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            Toda la mercadería física en Paraguay — equipos activos, repuestos y Zona de playa sin clasificar.
+            {periodo === "actual" ? "Toda la mercadería física en Paraguay, ahora mismo" : `Mercadería física en Paraguay al cierre de ${periodoLabel}`} — equipos activos, repuestos{periodo === "actual" ? " y Zona de playa sin clasificar" : ""}.
             {" "}{filas.length} modelo(s) · {totalCant} unidad(es) · U$S {totalValor.toLocaleString("es-PY")}.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <div style={{ width: 170 }}>
+            <Select value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
+              <option value="actual">Ahora mismo (en vivo)</option>
+              {mesesSelector.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </Select>
+          </div>
           <SecondaryButton onClick={handleExcel}><Download size={14} /> Reporte Excel</SecondaryButton>
           <SecondaryButton onClick={handlePdf}><Download size={14} /> {generandoPdf ? "Generando..." : "Reporte PDF"}</SecondaryButton>
         </div>
       </div>
+      {cargandoPeriodo && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>Cargando la auditoría de {periodoLabel}...</div>
+      )}
+      {usandoRespaldoEnVivo && !cargandoPeriodo && (
+        <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FDF1E0", color: "#92400E" }}>
+          No hay una auditoría de stock cerrada para {periodoLabel} — mostrando el estado actual en vivo en su lugar, que no corresponde exactamente a esa fecha. Para un corte exacto de ese mes, hace falta abrir y cerrar la Auditoría de stock correspondiente.
+        </div>
+      )}
       {error && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: "#FBEAEA", color: "#B91C1C" }}>{error}</div>
       )}

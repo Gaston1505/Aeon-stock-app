@@ -195,6 +195,7 @@ const COLLECTIONS = {
   reclamos: "reclamos",
   preListaPedido: "preListaPedido",
   fabricasCompetencia: "fabricasCompetencia",
+  recordatorios: "recordatorios",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -2499,6 +2500,7 @@ export default function App() {
   const [reclamos, setReclamos] = useState([]);
   const [preListaPedido, setPreListaPedido] = useState([]);
   const [fabricasCompetencia, setFabricasCompetencia] = useState([]);
+  const [recordatorios, setRecordatorios] = useState([]);
   const [matrizCostos, setMatrizCostos] = useState(null);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
@@ -2521,6 +2523,7 @@ export default function App() {
   const [cotizacionParaVenta, setCotizacionParaVenta] = useState(null);
   const [productoEditando, setProductoEditando] = useState(null);
   const [envioEditando, setEnvioEditando] = useState(null);
+  const [recordatorioEditando, setRecordatorioEditando] = useState(null);
   const [comprometerTarget, setComprometerTarget] = useState(null);
   const [llegadaTarget, setLlegadaTarget] = useState(null);
   const [repuestoTarget, setRepuestoTarget] = useState(null);
@@ -2569,6 +2572,7 @@ export default function App() {
       [COLLECTIONS.reclamos]: setReclamos,
       [COLLECTIONS.preListaPedido]: setPreListaPedido,
       [COLLECTIONS.fabricasCompetencia]: setFabricasCompetencia,
+      [COLLECTIONS.recordatorios]: setRecordatorios,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -3830,6 +3834,15 @@ export default function App() {
     await updateFabricaCompetencia(fabrica.id, { pdfUrl: url, pdfNombre: file.name });
   };
 
+  // Recordatorios manuales: a diferencia de las alertas automáticas (servicios, retiros, tránsito,
+  // stock bajo — ver construirAlertasAutomaticas), estos los carga el usuario a mano, con fecha
+  // propia y, opcionalmente, vinculados a un cliente/obra, cotización o envío de tránsito (ver
+  // RecordatorioForm).
+  const addRecordatorio = (data) => addItem(COLLECTIONS.recordatorios, { hecho: false, ...data });
+  const updateRecordatorio = (id, patch) => updateItem(COLLECTIONS.recordatorios, id, patch);
+  const deleteRecordatorio = (id) => deleteItem(COLLECTIONS.recordatorios, id);
+  const marcarHechoRecordatorio = (id, hecho) => updateItem(COLLECTIONS.recordatorios, id, { hecho, fechaHecho: hecho ? todayISO() : null });
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -4330,6 +4343,61 @@ export default function App() {
       .sort((a, b) => (a.actual - a.minimo) - (b.actual - b.minimo));
   }, [productos, equipos]);
 
+  // Ventas comprometidas con fecha de retiro cargada, todavía con saldo por retirar — vive acá
+  // (no solo dentro de Resumen) para que Recordatorios pueda mostrar la misma lista sin
+  // recalcularla aparte (ver RecordatoriosView).
+  const proximosRetiros = useMemo(() => {
+    return (comprometidas || [])
+      .filter((c) => c.estado === "Comprometida" && c.fechaEntrega)
+      .map((c) => ({ ...c, pendiente: Math.max(0, (Number(c.cantidad) || 0) - (Number(c.cantidadRetirada) || 0)) }))
+      .filter((c) => c.pendiente > 0)
+      .map((c) => ({ ...c, dias: daysUntil(c.fechaEntrega), bajoStock: stockBajo.some((r) => r.producto.nombre === c.modelo) }))
+      .sort((a, b) => a.fechaEntrega.localeCompare(b.fechaEntrega));
+  }, [comprometidas, stockBajo]);
+
+  // Envíos de Tránsito con alguna etapa del cronograma vencida (ver cronogramaTieneVencido, que
+  // ya arma el badge de nav) — una fila por etapa vencida, para Recordatorios.
+  const transitoCronogramaVencido = useMemo(() => {
+    const hoy = todayISO();
+    const items = [];
+    for (const t of transito) {
+      if (t.estado === "Llegado") continue;
+      const cronograma = t.cronograma || {};
+      for (const et of ETAPAS_CRONOGRAMA_TRANSITO) {
+        const entrada = cronograma[et.key];
+        if (!entrada?.hecho && entrada?.fechaEstimada && entrada.fechaEstimada < hoy) {
+          items.push({
+            transitoId: t.id, contenedor: t.contenedor || "Sin contenedor / referencia",
+            etapaLabel: et.label, fechaEstimada: entrada.fechaEstimada, dias: daysUntil(entrada.fechaEstimada),
+          });
+        }
+      }
+    }
+    return items.sort((a, b) => a.fechaEstimada.localeCompare(b.fechaEstimada));
+  }, [transito]);
+
+  // Montos estimados de un envío con fecha cargada, todavía sin marcar "Hecho" (ver "Próximos
+  // pagos previstos" en TransitoView, misma lógica, para que Recordatorios la pueda mostrar junto
+  // con el resto de las alertas automáticas en vez de quedar solo dentro de Tránsito.
+  const transitoProximosPagos = useMemo(() => {
+    const filas = [];
+    transito.filter((t) => t.estado !== "Llegado").forEach((t) => {
+      const cronograma = t.cronograma || {};
+      ETAPAS_CRONOGRAMA_TRANSITO.forEach((etapa) => {
+        if (etapa.sinMonto) return;
+        const entrada = cronograma[etapa.key];
+        const montoEstimado = Number(entrada?.montoEstimado) || 0;
+        if (entrada?.hecho || !entrada?.fechaEstimada || montoEstimado <= 0) return;
+        filas.push({
+          transitoId: t.id, fecha: entrada.fechaEstimada, dias: daysUntil(entrada.fechaEstimada),
+          contenedor: t.contenedor || "Sin contenedor / referencia",
+          etapaLabel: etapa.label, monto: montoEstimado, moneda: entrada.moneda || etapa.monedaDefault || "USD",
+        });
+      });
+    });
+    return filas.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [transito]);
+
   // Aviso proactivo al entrar a la app: en vez de depender de que alguien note la campanita
   // sola, se lo mostramos de una apenas termina de cargar todo — una vez por apertura de la app.
   const [mostrarAvisos, setMostrarAvisos] = useState(false);
@@ -4381,6 +4449,7 @@ export default function App() {
   // sección (antes era una lista plana sin separación visual, por eso se veía "todo mezclado").
   const NAV_TODO = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard, section: null },
+    { key: "recordatorios", label: "Recordatorios", icon: Bell, section: null },
     // Stock / inventario
     { key: "deposito", label: "Depósito", icon: Warehouse, section: "Stock e inventario" },
     { key: "transito", label: pendientesCronogramaTransito > 0 ? `Tránsito (${pendientesCronogramaTransito})` : "Tránsito", icon: Ship, section: "Stock e inventario" },
@@ -4593,13 +4662,29 @@ export default function App() {
             cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
             clientes={clientes} cuentasObras={listaObrasCuenta}
             proximosServices={proximosServices} alertasContacto={alertasContacto}
-            seguimientosPendientes={seguimientosPendientes} recuperables={recuperables}
+            seguimientosPendientes={seguimientosPendientes} proximosRetiros={proximosRetiros} recuperables={recuperables}
             playa={playa} muestras={muestras} productos={productos} ventasCerradas={ventasCerradas}
             stockBajo={stockBajo}
             esAdmin={esAdmin} auditoriaAbierta={auditoriaAbierta}
             onNavigate={navigateTo}
             onNuevaCotizacion={() => { navigateTo("cotizaciones"); setDrawer("cotizacion"); }}
             onPagoVenta={(key) => setPagoVentaTarget(key)}
+          />
+        )}
+
+        {tab === "recordatorios" && (
+          <RecordatoriosView
+            recordatorios={recordatorios}
+            proximosServices={proximosServices} seguimientosPendientes={seguimientosPendientes}
+            proximosRetiros={proximosRetiros}
+            transitoCronogramaVencido={transitoCronogramaVencido} transitoProximosPagos={transitoProximosPagos}
+            stockBajo={stockBajo}
+            query={query} onQuery={setQuery}
+            onNavigate={navigateTo}
+            onNuevo={() => { setRecordatorioEditando(null); setDrawer("recordatorio"); }}
+            onEditar={(r) => { setRecordatorioEditando(r); setDrawer("recordatorio"); }}
+            onMarcarHecho={marcarHechoRecordatorio}
+            onEliminar={deleteRecordatorio}
           />
         )}
 
@@ -5127,6 +5212,19 @@ export default function App() {
       </Drawer>
       <Drawer open={drawer === "reclamo"} onClose={() => { setDrawer(null); setReclamoPrefill(null); }} title="Nuevo reclamo">
         <ReclamoForm equipos={equipos} productos={productos} prefill={reclamoPrefill} onSave={(d) => { addReclamo(d); setDrawer(null); setReclamoPrefill(null); }} />
+      </Drawer>
+      <Drawer
+        open={drawer === "recordatorio"} onClose={() => { setDrawer(null); setRecordatorioEditando(null); }}
+        title={recordatorioEditando ? "Editar recordatorio" : "Nuevo recordatorio"}
+      >
+        <RecordatorioForm
+          recordatorio={recordatorioEditando} cuentasObras={listaObrasCuenta} cotizaciones={cotizaciones} transito={transito}
+          onGuardar={async (d) => {
+            if (recordatorioEditando) await updateRecordatorio(recordatorioEditando.id, d);
+            else await addRecordatorio(d);
+          }}
+          onCancelar={() => { setDrawer(null); setRecordatorioEditando(null); }}
+        />
       </Drawer>
       <Drawer
         open={drawer === "transito"} onClose={() => { setDrawer(null); setEnvioEditando(null); }}
@@ -6836,6 +6934,260 @@ function VentasCerradasPanel({ ventasCerradas, onPago, saldoPorRemitoKey }) {
   );
 }
 
+// ---------- Recordatorios ----------
+// Arma una sola lista de alertas automáticas — servicios de postventa, retiros de ventas
+// comprometidas, cronograma de tránsito vencido, próximos pagos previstos de tránsito y stock
+// bajo — para mostrarlas "todo junto" en Recordatorios, en vez de que cada una viva aparte en su
+// propia pantalla sin que nadie las vea todas de una. Cada alerta ya se calculaba en otro lado
+// (proximosServices, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo,
+// todas a nivel App) — acá solo se normalizan a una forma común ({ tipo, titulo, detalle, dias,
+// navTab, navFiltro }), no se recalculan.
+const TIPO_ALERTA_AUTOMATICA = {
+  postventa: { label: "Mantenimiento postventa", icon: Building, color: "#9333EA", bg: "#F3E8FF" },
+  comprometida: { label: "Ventas comprometidas", icon: Lock, color: "#B45309", bg: "#FDF1E0" },
+  transito: { label: "Tránsito", icon: Ship, color: "#1D4ED8", bg: "#E8EEFB" },
+  stock: { label: "Stock bajo", icon: Boxes, color: "#B91C1C", bg: "#FBEAEA" },
+};
+function construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo }) {
+  const items = [];
+  (proximosServices || []).forEach((s) => {
+    const pendienteSeguimiento = (seguimientosPendientes || []).includes(s);
+    items.push({
+      id: `service-${s.id}-${s.label}`, tipo: "postventa",
+      titulo: `${s.cliente || "Cliente s/d"} — ${s.label}`,
+      detalle: `${s.obra || ""}${!s.contactado ? " · Falta contactar" : pendienteSeguimiento ? " · Seguimiento pendiente" : ""}`.trim(),
+      fecha: s.date, dias: s.dias, navTab: "ventas", navFiltro: s.cliente || "",
+    });
+  });
+  (proximosRetiros || []).forEach((c) => {
+    items.push({
+      id: `retiro-${c.id}`, tipo: "comprometida",
+      titulo: `${c.razonSocial || "Cliente s/d"} — retiro pendiente`,
+      detalle: `${c.obra || ""} · ${c.pendiente} unidad(es) de ${c.modelo}${c.bajoStock ? " · Stock bajo" : ""}`,
+      fecha: c.fechaEntrega, dias: c.dias, navTab: "comprometidas", navFiltro: c.razonSocial || "",
+    });
+  });
+  (transitoCronogramaVencido || []).forEach((t, i) => {
+    items.push({
+      id: `transito-etapa-${t.transitoId}-${i}`, tipo: "transito",
+      titulo: `Tránsito ${t.contenedor} — ${t.etapaLabel}`,
+      detalle: "Etapa del cronograma vencida", fecha: t.fechaEstimada, dias: t.dias,
+      navTab: "transito", navFiltro: "",
+    });
+  });
+  (transitoProximosPagos || []).forEach((t, i) => {
+    items.push({
+      id: `transito-pago-${t.transitoId}-${i}`, tipo: "transito",
+      titulo: `Tránsito ${t.contenedor} — ${t.etapaLabel}`,
+      detalle: `Pago previsto: ${t.moneda} ${Number(t.monto).toLocaleString("es-PY")}`,
+      fecha: t.fecha, dias: t.dias, navTab: "transito", navFiltro: "",
+    });
+  });
+  (stockBajo || []).forEach((r) => {
+    items.push({
+      id: `stock-${r.producto.id}`, tipo: "stock",
+      titulo: `Stock bajo — ${nombreProducto(r.producto)}`,
+      detalle: `${r.actual} disponible(s), mínimo ${r.minimo}`,
+      fecha: null, dias: null, navTab: "catalogo", navFiltro: r.producto.nombre,
+    });
+  });
+  return items.sort((a, b) => {
+    if (a.dias == null && b.dias == null) return 0;
+    if (a.dias == null) return -1;
+    if (b.dias == null) return 1;
+    return a.dias - b.dias;
+  });
+}
+function FechaAlerta({ dias }) {
+  if (dias == null) return <span style={{ color: "#B91C1C" }}>Atención ahora</span>;
+  if (dias < 0) return <span style={{ color: "#B91C1C" }}>Vencido hace {Math.abs(dias)}d</span>;
+  if (dias === 0) return <span style={{ color: "#B45309" }}>Hoy</span>;
+  return <span style={{ color: dias <= 7 ? "#B45309" : MUTED }}>En {dias}d</span>;
+}
+function RecordatoriosView({ recordatorios, proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, query, onQuery, onNavigate, onNuevo, onEditar, onMarcarHecho, onEliminar }) {
+  const [verHechos, setVerHechos] = useState(false);
+  const alertas = useMemo(
+    () => construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo }),
+    [proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo]
+  );
+  const propios = useMemo(() => {
+    const q = (query || "").toLowerCase();
+    return (recordatorios || [])
+      .filter((r) => !q || [r.titulo, r.notas, r.vinculoLabel].some((v) => (v || "").toLowerCase().includes(q)))
+      .filter((r) => verHechos || !r.hecho)
+      .map((r) => ({ ...r, dias: r.fecha ? daysUntil(r.fecha) : null }))
+      .sort((a, b) => {
+        if (!!a.hecho !== !!b.hecho) return a.hecho ? 1 : -1;
+        return (a.fecha || "").localeCompare(b.fecha || "");
+      });
+  }, [recordatorios, query, verHechos]);
+
+  return (
+    <Section
+      title="Recordatorios"
+      subtitle="Todo lo que necesita tu atención con fecha, junto en un solo lugar: alertas automáticas de toda la app y tus propios recordatorios."
+      query={query} onQuery={onQuery}
+      onNew={onNuevo} newLabel="Nuevo recordatorio"
+    >
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Bell size={15} style={{ color: ACCENT }} />
+          <h3 className="text-base font-bold" style={{ color: INK }}>Automáticos</h3>
+          <InfoTip><p>Se recalculan solos a partir de lo que ya cargaste en el resto de la app (postventa, ventas comprometidas, tránsito, stock mínimo) — no se cargan ni se cierran a mano.</p></InfoTip>
+        </div>
+        {alertas.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>No hay ninguna alerta automática activa por ahora.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {alertas.map((a) => {
+              const cfg = TIPO_ALERTA_AUTOMATICA[a.tipo];
+              const Icon = cfg.icon;
+              return (
+                <div key={a.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg" style={{ backgroundColor: "#FAFBFC" }}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="p-1.5 rounded-lg shrink-0" style={{ backgroundColor: cfg.bg }}><Icon size={13} style={{ color: cfg.color }} /></span>
+                    <div className="min-w-0">
+                      <p className="text-sm truncate" style={{ color: INK }}>{a.titulo}</p>
+                      {a.detalle && <p className="text-xs truncate" style={{ color: MUTED }}>{a.detalle}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs whitespace-nowrap"><FechaAlerta dias={a.dias} /></span>
+                    <button onClick={() => onNavigate(a.navTab, a.navFiltro)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
+                      Ver
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <CalendarCheck size={15} style={{ color: ACCENT }} />
+            <h3 className="text-base font-bold" style={{ color: INK }}>Tuyos</h3>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs" style={{ color: MUTED }}>
+            <input type="checkbox" checked={verHechos} onChange={(e) => setVerHechos(e.target.checked)} /> Ver hechos
+          </label>
+        </div>
+        {propios.length === 0 ? (
+          <EmptyState icon={CalendarCheck} title="No hay recordatorios cargados" subtitle="Usá “Nuevo recordatorio” para anotar algo con fecha, suelto o vinculado a un cliente, cotización o envío." />
+        ) : (
+          <div className="space-y-1.5">
+            {propios.map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg" style={{ backgroundColor: r.hecho ? "#FAFBFC" : "#FFFFFF", border: `0.5px solid ${BORDER}`, opacity: r.hecho ? 0.6 : 1 }}>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button onClick={() => onMarcarHecho(r.id, !r.hecho)} title={r.hecho ? "Marcar como pendiente" : "Marcar como hecho"} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                    <CheckCircle2 size={18} style={{ color: r.hecho ? "#15803D" : BORDER }} />
+                  </button>
+                  <div className="min-w-0">
+                    <p className="text-sm truncate" style={{ color: INK, textDecoration: r.hecho ? "line-through" : "none" }}>{r.titulo}</p>
+                    <p className="text-xs truncate" style={{ color: MUTED }}>
+                      {fmtDate(r.fecha)}{r.notas ? ` · ${r.notas}` : ""}{r.vinculoLabel ? ` · ${r.vinculoLabel}` : ""}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!r.hecho && <span className="text-xs whitespace-nowrap"><FechaAlerta dias={r.dias} /></span>}
+                  {r.vinculoNavTab && (
+                    <button onClick={() => onNavigate(r.vinculoNavTab, r.vinculoNavFiltro)} className="text-xs px-2 py-1 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>
+                      Ver
+                    </button>
+                  )}
+                  <button onClick={() => onEditar(r)} className="p-1 rounded hover:bg-gray-100"><Pencil size={13} style={{ color: MUTED }} /></button>
+                  <button onClick={() => onEliminar(r.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={13} style={{ color: MUTED }} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+const VINCULO_TIPOS_RECORDATORIO = [
+  { key: "", label: "Ninguno (recordatorio suelto)" },
+  { key: "cliente", label: "Cliente / obra" },
+  { key: "cotizacion", label: "Cotización" },
+  { key: "transito", label: "Envío (Tránsito)" },
+];
+function RecordatorioForm({ recordatorio, cuentasObras, cotizaciones, transito, onGuardar, onCancelar }) {
+  const [titulo, setTitulo] = useState(recordatorio?.titulo || "");
+  const [fecha, setFecha] = useState(recordatorio?.fecha || todayISO());
+  const [notas, setNotas] = useState(recordatorio?.notas || "");
+  const [vinculoTipo, setVinculoTipo] = useState(recordatorio?.vinculoTipo || "");
+  const [vinculoKey, setVinculoKey] = useState(recordatorio?.vinculoKey || "");
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const opcionesVinculo = useMemo(() => {
+    if (vinculoTipo === "cliente") {
+      return (cuentasObras || []).map((f) => ({ key: `${f.cliente}|${f.obra}`, label: `${f.cliente} — ${f.obra}`, navTab: "clientes", navFiltro: f.cliente }));
+    }
+    if (vinculoTipo === "cotizacion") {
+      return (cotizaciones || [])
+        .filter((c) => c.estado !== "Sin efecto")
+        .map((c) => ({ key: c.id, label: `${c.cliente} — ${c.obra} (U$S ${Math.round(calcularTotalCotizacion(c)).toLocaleString("es-PY")})`, navTab: "cotizaciones", navFiltro: c.cliente }));
+    }
+    if (vinculoTipo === "transito") {
+      return (transito || []).filter((t) => t.estado !== "Llegado").map((t) => ({ key: t.id, label: t.contenedor || "Sin contenedor / referencia", navTab: "transito", navFiltro: "" }));
+    }
+    return [];
+  }, [vinculoTipo, cuentasObras, cotizaciones, transito]);
+
+  const guardar = async () => {
+    if (!titulo.trim()) { setError("Ingresá un título."); return; }
+    if (!fecha) { setError("Ingresá una fecha."); return; }
+    const elegido = opcionesVinculo.find((o) => o.key === vinculoKey);
+    setGuardando(true);
+    try {
+      await onGuardar({
+        titulo: titulo.trim(), fecha, notas: notas.trim(),
+        vinculoTipo: elegido ? vinculoTipo : "",
+        vinculoKey: elegido ? vinculoKey : "",
+        vinculoLabel: elegido ? elegido.label : "",
+        vinculoNavTab: elegido ? elegido.navTab : "",
+        vinculoNavFiltro: elegido ? (elegido.navFiltro || "") : "",
+      });
+      onCancelar();
+    } catch (e) { setError(e?.message || "No se pudo guardar."); }
+    setGuardando(false);
+  };
+
+  return (
+    <div className="space-y-3">
+      <Field label="Título"><TextInput value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Llamar a Federico por el saldo" /></Field>
+      <Field label="Fecha"><TextInput type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+      <Field label="Notas (opcional)">
+        <Textarea value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Detalle opcional..." />
+      </Field>
+      <Field label="Vincular a">
+        <Select value={vinculoTipo} onChange={(e) => { setVinculoTipo(e.target.value); setVinculoKey(""); }}>
+          {VINCULO_TIPOS_RECORDATORIO.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+        </Select>
+      </Field>
+      {vinculoTipo && (
+        <Field label="Elegir">
+          <Select value={vinculoKey} onChange={(e) => setVinculoKey(e.target.value)}>
+            <option value="">Seleccionar...</option>
+            {opcionesVinculo.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </Select>
+        </Field>
+      )}
+      {error && <p className="text-xs" style={{ color: "#B91C1C" }}>{error}</p>}
+      <div className="flex gap-2 pt-1">
+        <PrimaryButton onClick={guardar} disabled={guardando}>{guardando ? "Guardando..." : "Guardar"}</PrimaryButton>
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+      </div>
+    </div>
+  );
+}
+
 // Cuenta por obra para los resúmenes: una fila por obra con contrato, entregado, cobrado y lo entregado
 // sin pagar, más el total. Viene de las fichas de Clientes (contrato, pagos y facturas de cada obra).
 function totalesCuentasObras(lista) {
@@ -6909,7 +7261,7 @@ function CuentaObrasTabla({ lista, onNavigate }) {
   );
 }
 
-function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion, onPagoVenta }) {
+function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, clientes, cuentasObras, proximosServices, alertasContacto, seguimientosPendientes, proximosRetiros, recuperables, playa, muestras, productos, ventasCerradas, stockBajo, esAdmin, auditoriaAbierta, onNavigate, onNuevaCotizacion, onPagoVenta }) {
   const totalUnidades = sumCantidad(equipos.filter((e) => e.estado !== "Dado de baja"));
 
   const transitoEnCamino = useMemo(() => (transito || []).filter((t) => t.estado !== "Llegado"), [transito]);
@@ -6939,19 +7291,6 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
     for (const fila of cuentasObras) for (const [k, v] of saldoPorRemitoDeCuenta(fila.cuenta)) map.set(k, v);
     return map;
   }, [cuentasObras]);
-
-  // Ventas comprometidas con fecha de retiro cargada, todavía con saldo por retirar — para avisar
-  // con anticipación en qué fecha se va a liberar esa mercadería y, si el producto ya está en
-  // stockBajo, que ese retiro puntual es de los que lo llevan ahí (stockBajo ya descuenta lo
-  // comprometido, así que no hay que recalcular el stock a futuro, solo ordenar por fecha).
-  const proximosRetiros = useMemo(() => {
-    return (comprometidas || [])
-      .filter((c) => c.estado === "Comprometida" && c.fechaEntrega)
-      .map((c) => ({ ...c, pendiente: Math.max(0, (Number(c.cantidad) || 0) - (Number(c.cantidadRetirada) || 0)) }))
-      .filter((c) => c.pendiente > 0)
-      .map((c) => ({ ...c, dias: daysUntil(c.fechaEntrega), bajoStock: stockBajo.some((r) => r.producto.nombre === c.modelo) }))
-      .sort((a, b) => a.fechaEntrega.localeCompare(b.fechaEntrega));
-  }, [comprometidas, stockBajo]);
 
   // Un mini-resumen por cada área de la barra de menú, para navegar directo — los números
   // grandes (stock, historial, detalle) viven en su propia pestaña, acá solo el estado general.

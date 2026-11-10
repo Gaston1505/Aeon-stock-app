@@ -3046,8 +3046,14 @@ export default function App() {
     if (!c) return;
     if (c.estado === "Comprometida") {
       const equipo = equipos.find((e) => e.id === c.equipoId);
+      // Libera lo que todavía está reservado para ESTA comprometida — cantidad menos lo ya
+      // retirado, no la cantidad original pedida. Hoy "Cancelar" solo se ofrece sin ningún retiro
+      // (ver ComprometidaCard), así que da lo mismo, pero si el mismo lote tiene más de una
+      // reserva activa (lo soporta el modelo de datos) liberar de más dejaría "disponible" stock
+      // que en realidad sigue reservado para otro cliente.
+      const saldo = Math.max(0, (Number(c.cantidad) || 0) - (Number(c.cantidadRetirada) || 0));
       if (equipo) {
-        updateItem(COLLECTIONS.equipos, equipo.id, { comprometido: Math.max(0, (Number(equipo.comprometido) || 0) - Number(c.cantidad)) });
+        updateItem(COLLECTIONS.equipos, equipo.id, { comprometido: Math.max(0, (Number(equipo.comprometido) || 0) - saldo) });
       }
     }
     deleteItem(COLLECTIONS.ventasComprometidas, id);

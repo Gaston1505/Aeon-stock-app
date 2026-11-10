@@ -1392,6 +1392,24 @@ function codigoDePlaya(descripcion) {
   return match ? match[1].trim() : "";
 }
 
+// Zona de playa no se releva en la auditoría mensual de stock, así que para un cierre de mes hay
+// que reconstruirla con lo que de verdad cambió en el sistema: 1) lo que sigue en playa hoy con
+// fecha de ingreso anterior o igual al corte (todavía no se derivó, sigue estando), más 2) lo que
+// para esa fecha TODAVÍA estaba en playa pero después se derivó a otro destino (ver derivarPlaya) —
+// cada derivación deja su propia Entrada con fecha real de cuándo pasó, así que si esa fecha es
+// POSTERIOR al corte, el ítem seguía en playa al momento del corte.
+function playaReconstruidaAlCorte(playaActual, entradas, equipos, corteISO) {
+  const siguenEnPlaya = (playaActual || [])
+    .filter((p) => (p.fecha || "") <= corteISO)
+    .map((p) => ({ descripcion: p.descripcion, cantidad: Number(p.cantidad) || 1 }));
+  const derivadosDespuesDelCorte = (entradas || [])
+    .filter((e) => (e.origen || "").startsWith("Zona de playa (") && (e.fecha || "") > corteISO)
+    .map((e) => (equipos || []).find((eq) => eq.codigo === e.codigo))
+    .filter((eq) => eq && (eq.fechaIngreso || "") <= corteISO)
+    .map((eq) => ({ descripcion: eq.modelo, cantidad: Number(eq.cantidad) || 1 }));
+  return [...siguenEnPlaya, ...derivadosDespuesDelCorte];
+}
+
 // Para los reportes: en vez del código interno crudo ("AE-ACV-T62B 60CM-ON-Rep-1"), mostrar
 // qué es y para qué modelo — subcategoria2 guarda el equipo asociado (o "Sirve para todos los
 // codigos" para los repuestos universales).
@@ -2386,6 +2404,14 @@ function ultimoMesCompletoISO() {
   d.setDate(1);
   d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// Último día calendario de un período "YYYY-MM" — la fecha de corte real para reconstruir Zona de
+// playa al cierre de ese mes (ver playaReconstruidaAlCorte).
+function finDeMesISO(periodo) {
+  const [y, m] = (periodo || "").split("-").map(Number);
+  if (!y || !m) return "";
+  const d = new Date(y, m, 0); // día 0 del mes siguiente = último día de este mes
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 // Opciones de mes para el selector de cierre del Reporte para Seguro — los últimos N meses
 // completos (sin incluir el mes en curso), más allá de si ese mes tiene o no una auditoría
@@ -5099,7 +5125,10 @@ export default function App() {
         )}
 
         {tab === "reporte-seguro" && (
-          <ReporteSeguroView mercaderia={mercaderiaFisicaParaguayCosto} comprometidas={comprometidas} productos={productos} auditoriasStock={auditoriasStock} />
+          <ReporteSeguroView
+            mercaderia={mercaderiaFisicaParaguayCosto} comprometidas={comprometidas} productos={productos}
+            auditoriasStock={auditoriasStock} playa={playa} entradas={entradas} equipos={equipos}
+          />
         )}
 
         {tab === "reporte-joel" && (
@@ -21573,7 +21602,7 @@ function TransitoForm({ envio, productos, onSave }) {
 
 // Reporte de mercadería física en Paraguay para el seguro — equipos activos, repuestos y lo que
 // está en Zona de playa sin clasificar, agrupado por modelo con su valor de lista.
-function ReporteSeguroView({ mercaderia, comprometidas, productos, auditoriasStock }) {
+function ReporteSeguroView({ mercaderia, comprometidas, productos, auditoriasStock, playa, entradas, equipos }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [error, setError] = useState("");
   // Corte por defecto: el último mes calendario COMPLETO (ver ultimoMesCompletoISO) — un seguro no
@@ -21611,14 +21640,22 @@ function ReporteSeguroView({ mercaderia, comprometidas, productos, auditoriasSto
   const mercaderiaEfectiva = useMemo(() => {
     if (!auditoriaCerradaDelPeriodo || !itemsPeriodo) return mercaderia;
     const buscarCosto = (codigo) => Number((productos || []).find((p) => p.nombre === codigo)?.costoPy) || 0;
-    return itemsPeriodo.map((i) => {
+    const deEquiposYRepuestos = itemsPeriodo.map((i) => {
       const contadoFinal = i.contadoAdmin != null ? i.contadoAdmin : (i.contadoDeposito != null ? i.contadoDeposito : i.sistemaAlAbrir);
       return {
         modelo: i.codigo, categoria: i.esRepuesto ? "Repuestos" : "Equipos",
         cantidad: Math.max(0, Number(contadoFinal) || 0), valorUnitario: buscarCosto(i.codigo),
       };
     });
-  }, [auditoriaCerradaDelPeriodo, itemsPeriodo, mercaderia, productos]);
+    // Zona de playa no se releva en la auditoría — se reconstruye a partir de los cambios reales
+    // del sistema y sus fechas (ver playaReconstruidaAlCorte), con el mismo criterio de valorización
+    // (código entre paréntesis al final de la descripción) que usa la vista en vivo.
+    const corteISO = finDeMesISO(auditoriaCerradaDelPeriodo.periodo);
+    const dePlaya = playaReconstruidaAlCorte(playa, entradas, equipos, corteISO).map((p) => ({
+      modelo: p.descripcion, categoria: "Zona de playa", cantidad: p.cantidad, valorUnitario: buscarCosto(codigoDePlaya(p.descripcion)),
+    }));
+    return [...deEquiposYRepuestos, ...dePlaya];
+  }, [auditoriaCerradaDelPeriodo, itemsPeriodo, mercaderia, productos, playa, entradas, equipos]);
 
   const usandoRespaldoEnVivo = periodo !== "actual" && !auditoriaCerradaDelPeriodo;
   const periodoLabel = periodo === "actual" ? "Ahora mismo (en vivo)" : tituloPeriodo(periodo);
@@ -21678,13 +21715,13 @@ function ReporteSeguroView({ mercaderia, comprometidas, productos, auditoriasSto
               <p>Cuenta TODA la mercadería física en Paraguay, sin importar si está comprometida a una venta o no:</p>
               <p><strong>Equipos:</strong> todos, salvo Vendido y Dado de baja (ya salieron del circuito).</p>
               <p><strong>Repuestos:</strong> el Stock disponible cargado en cada uno del Catálogo.</p>
-              <p><strong>Zona de playa:</strong> todo lo que todavía no se clasificó (solo en la vista "Ahora mismo en vivo" — la auditoría mensual no releva Zona de playa).</p>
+              <p><strong>Zona de playa:</strong> todo lo que todavía no se clasificó. La auditoría mensual no la releva, así que en un cierre de mes se reconstruye con lo que de verdad cambió en el sistema y sus fechas: lo que sigue en playa hoy con ingreso anterior al corte, más lo que en esa fecha todavía estaba ahí pero se derivó a otro destino después (cada derivación queda registrada en Entradas con su fecha real).</p>
               <p>El valor de cada fila sale del Costo puesto en PY del Catálogo — un seguro cubre lo que costó reponer la mercadería, no la ganancia de venderla. Si el modelo no matchea exacto, queda sin valor ("—") en vez de inventar un precio.</p>
-              <p><strong>Cierre de mes:</strong> usa el conteo físico real de la Auditoría de stock cerrada de ese mes (no un recálculo en vivo) — es la foto más confiable de lo que de verdad había en el depósito en esa fecha. El costo con el que se valoriza siempre es el de HOY del Catálogo, no el histórico.</p>
+              <p><strong>Cierre de mes:</strong> usa el conteo físico real de la Auditoría de stock cerrada de ese mes (no un recálculo en vivo) para Equipos y Repuestos — es la foto más confiable de lo que de verdad había en el depósito en esa fecha. El costo con el que se valoriza siempre es el de HOY del Catálogo, no el histórico.</p>
             </InfoTip>
           </div>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>
-            {periodo === "actual" ? "Toda la mercadería física en Paraguay, ahora mismo" : `Mercadería física en Paraguay al cierre de ${periodoLabel}`} — equipos activos, repuestos{periodo === "actual" ? " y Zona de playa sin clasificar" : ""}.
+            {periodo === "actual" ? "Toda la mercadería física en Paraguay, ahora mismo" : `Mercadería física en Paraguay al cierre de ${periodoLabel}`} — equipos activos, repuestos y Zona de playa sin clasificar.
             {" "}{filas.length} modelo(s) · {totalCant} unidad(es) · U$S {totalValor.toLocaleString("es-PY")}.
           </p>
         </div>

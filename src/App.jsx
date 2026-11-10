@@ -6137,7 +6137,7 @@ function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos }) {
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
     obra: (cot.obra || "").trim(),
     lineas: [{ cantidad: 1, marca: "AEON", codigo: "", producto: "Anticipo", familia: "Anticipo", precioUnit: 0 }],
-    origenPrecios: `Anticipo de la cotización "${cot.nombre || cot.categoria || "Cotización"}" (${fmtDate(cot.fecha)}) — sin mercadería entregada todavía. Definí el monto abajo.`,
+    origenPrecios: `Anticipo de la cotización "${cot.nombre || cot.categoria || "Cotización"}" (${fmtDate(cot.fecha)}) — Total cotizado: U$S ${fmtN(calcularTotalCotizacion(cot))}. Mercadería sin entregar todavía. Definí el % o el monto arriba.`,
     estado: "Borrador",
   };
 }
@@ -6405,6 +6405,21 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     const monto = totalCotizacionAnticipo > 0 ? Math.round(totalCotizacionAnticipo * ((Number(valor) || 0) / 100) * 100) / 100 : 0;
     setLinea(0, "precioUnit", monto);
   };
+  // El texto que va al mail/PDF/Excel (origenPrecios) tiene que quedar siempre consistente con lo
+  // que realmente se va a facturar: el total de la cotización y el % real (se calcule por "% del
+  // total" o por "monto fijo") — así nunca queda la aclaración genérica de cuando todavía no se
+  // había definido el monto.
+  const montoAnticipoElegido = Number(p.lineas[0]?.precioUnit) || 0;
+  useEffect(() => {
+    if (!cotizacionAnticipo) return;
+    const nombreCot = cotizacionAnticipo.nombre || cotizacionAnticipo.categoria || "Cotización";
+    const pct = totalCotizacionAnticipo > 0 ? Math.round((montoAnticipoElegido / totalCotizacionAnticipo) * 1000) / 10 : 0;
+    const texto = montoAnticipoElegido > 0
+      ? `Anticipo de la cotización "${nombreCot}" (${fmtDate(cotizacionAnticipo.fecha)}) — Total cotizado: U$S ${fmtN(totalCotizacionAnticipo)}. Se va a facturar el ${fmtN(pct, 1)}% de ese total (U$S ${fmtN(montoAnticipoElegido)}). Mercadería sin entregar todavía.`
+      : `Anticipo de la cotización "${nombreCot}" (${fmtDate(cotizacionAnticipo.fecha)}) — Total cotizado: U$S ${fmtN(totalCotizacionAnticipo)}. Mercadería sin entregar todavía. Definí el % o el monto arriba.`;
+    set("origenPrecios", texto);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cotizacionAnticipo, montoAnticipoElegido, totalCotizacionAnticipo]);
   // El nombre de la empresa sale siempre normalizado (Octagon SA, CCI SA) en PDF, Excel y mail,
   // aunque se haya escrito a mano de otra forma.
   const pFinal = () => normalizarCamposEmpresa(p);

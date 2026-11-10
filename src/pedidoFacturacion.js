@@ -70,6 +70,16 @@ export async function generatePedidoFacturacionPdf(p) {
   const text = (s, x, yy, o = {}) =>
     page.drawText(String(s ?? ""), { x, y: yy, size: o.size || 9, font: o.bold ? bold : font, color: o.color || NEGRO });
   const ancho = (s, size, b) => (b ? bold : font).widthOfTextAtSize(String(s ?? ""), size);
+  const wrapNota = (texto, maxW, size) => {
+    const lineas = [];
+    let actual = "";
+    for (const palabra of String(texto ?? "").split(/\s+/).filter(Boolean)) {
+      const prueba = actual ? `${actual} ${palabra}` : palabra;
+      if (actual && ancho(prueba, size, false) > maxW) { lineas.push(actual); actual = palabra; } else actual = prueba;
+    }
+    if (actual) lineas.push(actual);
+    return lineas;
+  };
   const fit = (s, maxW, size, b) => {
     let t = String(s ?? "");
     while (t.length > 1 && ancho(t, size, b) > maxW) t = t.slice(0, -1);
@@ -138,7 +148,13 @@ export async function generatePedidoFacturacionPdf(p) {
   y -= RH;
   celda(cx[0], y, cw[0], RH, "OBRA:", L());
   celda(cx[1], y, cw[1] + cw[2], RH, p.obra, V);
-  y -= RH + 22;
+  y -= RH + 14;
+
+  if (p.origenPrecios) {
+    const lineasNota = wrapNota(`Nota: ${p.origenPrecios}`, W, 8);
+    lineasNota.forEach((ln, i) => text(ln, M, y - i * 10, { size: 8, color: GRIS_TXT }));
+    y -= lineasNota.length * 10 + 10;
+  }
 
   // Tabla
   const heads = ["Cantidad", "Marca", "CÓDIGO", "PRODUCTO", "Familia", "Precio UniT.", "Total USD"];
@@ -281,6 +297,13 @@ export async function generatePedidoFacturacionExcel(p) {
   valor("G14", f || "", { font: "Gotham", size: 11, align: "right", numFmt: "dd/mm/yyyy" });
   etiqueta("A15", "CENTRO DE COSTO:"); valor("B15", p.centroCostoCodigo || ""); valor("C15", p.centroCostoNombre || "", { size: 11 });
   etiqueta("A16", "OBRA:"); ws.mergeCells("B16:C16"); valor("B16", p.obra || ""); ws.getCell("C16").border = bordeG;
+
+  if (p.origenPrecios) {
+    ws.mergeCells("A17:G18");
+    ws.getCell("A17").value = `Nota: ${p.origenPrecios}`;
+    estilo(ws.getCell("A17"), { font: "Gotham", size: 10, bold: false, align: "left", wrap: true });
+    ws.getRow(17).height = 30;
+  }
 
   // Tabla
   const heads = ["Cantidad", "Marca", "CÓDIGO", "PRODUCTO", "Familia", "Precio UniT.", "Total USD"];

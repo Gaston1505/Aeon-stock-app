@@ -2350,6 +2350,20 @@ function calcularSistemaPorCodigo(productos, equipos) {
     };
   });
 }
+// Mismo cálculo que calcularSistemaPorCodigo, pero para un solo código — el stock del sistema
+// AHORA, no la foto congelada de cuando se abrió la auditoría (sistemaAlAbrir). Ver
+// resolverDiferenciaAuditoria: el conteo doble ciego puede tardar días, y en el medio entran/salen
+// movimientos normales (ventas, entradas) que ya mueven el stock del sistema; ajustar contra la
+// foto vieja en vez de contra el stock vivo contaría esos movimientos dos veces.
+function sistemaActualDeCodigo(codigo, esRepuesto, productos, equipos) {
+  if (esRepuesto) {
+    const producto = productos.find((p) => p.nombre === codigo);
+    return Number(producto?.stockDisponible) || 0;
+  }
+  return equipos
+    .filter((e) => e.modelo === codigo && e.estado !== "Vendido" && e.estado !== "Dado de baja")
+    .reduce((acc, e) => acc + (Number(e.cantidad) || 1), 0);
+}
 
 const MESES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 function periodoActual() {
@@ -2905,7 +2919,8 @@ export default function App() {
       const contadoFinal = item.contadoAdmin != null ? item.contadoAdmin : item.contadoDeposito;
       if (contadoFinal != null) {
         const auditoria = auditoriasStock.find((a) => a.id === auditoriaId);
-        ajustarStockSistema(item.codigo, item.esRepuesto, contadoFinal - item.sistemaAlAbrir, tituloPeriodo(auditoria?.periodo));
+        const sistemaActual = sistemaActualDeCodigo(item.codigo, item.esRepuesto, productos, equipos);
+        ajustarStockSistema(item.codigo, item.esRepuesto, contadoFinal - sistemaActual, tituloPeriodo(auditoria?.periodo));
       }
     }
   };

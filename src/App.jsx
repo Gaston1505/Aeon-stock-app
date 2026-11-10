@@ -3133,8 +3133,13 @@ export default function App() {
   // el precio sugerido en ventas comprometidas y el contenido de las cotizaciones.
   const addProducto = (data) => addItem(COLLECTIONS.productos, data);
   const updateProducto = (id, data) => updateItem(COLLECTIONS.productos, id, data);
-  // Aplica de una vez los precios de lista que salen de las métricas: [{ id, precioLista }].
-  const aplicarPreciosSegunMetricas = (cambios) => Promise.all(cambios.map((c) => updateItem(COLLECTIONS.productos, c.id, { precioLista: c.precioLista })));
+  // Aplica de una vez los precios de lista que salen de las métricas: [{ id, precioLista, costoPy }].
+  // Guarda costoPy junto con precioLista (antes solo se guardaba precioLista) — si no, el costoPy
+  // guardado del producto quedaba congelado en el valor de la última vez que se editó a mano, aunque
+  // el precio de lista ya se hubiera actualizado con un costo nuevo. Reporte para Seguro y Reporte
+  // Financiero valorizan stock con el costoPy guardado; sin este fix podían mostrar un costo viejo
+  // mientras Cotizaciones ya mostraba el costo nuevo (recalculado en vivo) para el mismo producto.
+  const aplicarPreciosSegunMetricas = (cambios) => Promise.all(cambios.map((c) => updateItem(COLLECTIONS.productos, c.id, { precioLista: c.precioLista, costoPy: c.costoPy })));
   const deleteProducto = (p) => deleteItem(COLLECTIONS.productos, p.id);
   const quitarFichaTecnica = (producto) => {
     borrarFichaTecnica(producto.id);
@@ -11403,7 +11408,7 @@ function PreciosSegunMetricasPanel({ productos, matrizCostos, onAplicar, onCerra
     setOcupado(true);
     setMsg(null);
     try {
-      await onAplicar(aElegir.map((f) => ({ id: f.p.id, precioLista: f.s.precio })));
+      await onAplicar(aElegir.map((f) => ({ id: f.p.id, precioLista: f.s.precio, costoPy: f.s.costoPy })));
       setMsg({ tipo: "ok", texto: `Se actualizaron ${aElegir.length} precio(s) de lista.` });
       setElegidos(null);
     } catch (e) { setMsg({ tipo: "error", texto: "No se pudieron actualizar los precios. Probá de nuevo." }); }

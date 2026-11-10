@@ -6836,7 +6836,7 @@ function ComprometidaPagoBox({ comprometidas }) {
   );
 }
 
-function VentasCerradasPanel({ ventasCerradas, onPago, infoPorRemitoKey }) {
+function VentasCerradasPanel({ ventasCerradas, onPago, infoPorRemitoKey, montoPorMovimientoId }) {
   const [q, setQ] = useState("");
   const anioActual = String(new Date().getFullYear());
   const anios = useMemo(() => {
@@ -6886,10 +6886,14 @@ function VentasCerradasPanel({ ventasCerradas, onPago, infoPorRemitoKey }) {
       const key = v.modelo || "—";
       if (!map[key]) map[key] = { modelo: key, cantidad: 0, monto: 0 };
       map[key].cantidad += Number(v.cantidad) || 0;
-      map[key].monto += Number(v.monto) || 0;
+      // Mismo respaldo que arriba: si el movimiento vino con monto 0 (retiro de venta
+      // comprometida) pero ya se resolvió un monto real para él (ver montoPorMovimientoId), se
+      // usa ese en vez de sumar el campo crudo.
+      const montoResuelto = montoPorMovimientoId?.get(v.id);
+      map[key].monto += montoResuelto != null ? montoResuelto : (Number(v.monto) || 0);
     });
     return Object.values(map).sort((a, b) => b.monto - a.monto);
-  }, [filtered]);
+  }, [filtered, montoPorMovimientoId]);
 
   return (
     <div className="rounded-xl p-4 mt-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -7348,6 +7352,13 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
     for (const fila of cuentasObras) for (const [k, v] of infoPorRemitoDeCuenta(fila.cuenta)) map.set(k, v);
     return map;
   }, [cuentasObras]);
+  // Mismo respaldo pero por movimiento individual (no por remito agrupado) — para que "Cerrado
+  // por producto" (debajo de "Ventas cerradas") tampoco sume el monto crudo del movimiento.
+  const montoPorMovimientoId = useMemo(() => {
+    const map = new Map();
+    for (const fila of cuentasObras) for (const [id, monto] of fila.cuenta.montoPorMovimiento || []) map.set(id, monto);
+    return map;
+  }, [cuentasObras]);
 
   // Un mini-resumen por cada área de la barra de menú, para navegar directo — los números
   // grandes (stock, historial, detalle) viven en su propia pestaña, acá solo el estado general.
@@ -7540,7 +7551,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
         )}
       </div>
 
-      <VentasCerradasPanel ventasCerradas={ventasCerradas} onPago={onPagoVenta} infoPorRemitoKey={infoPorRemitoKey} />
+      <VentasCerradasPanel ventasCerradas={ventasCerradas} onPago={onPagoVenta} infoPorRemitoKey={infoPorRemitoKey} montoPorMovimientoId={montoPorMovimientoId} />
 
       {/* Acceso rápido: crear una cotización sin tener que ir primero a esa pestaña. */}
       <button
@@ -17937,6 +17948,11 @@ function calcularCuentaObra({ cotizaciones, movimientos, ficha, facturas, notasC
   const adelantoCobrado = pagos.filter((p) => p.tipo === "Adelanto").reduce((a, p) => a + (Number(p.monto) || 0), 0);
   return {
     contrato: c2(contrato), contratoOrigen, totalGanadas, montoEntregado: entregado, unidadesEntregadas, unidadesContratadas, cobrado: c2(cobrado), facturado: c2(facturado), pagos,
+    // Monto ya resuelto por movimiento (con el respaldo por precioUnit cuando vino con monto 0,
+    // típico de un retiro de venta comprometida) — para que cualquier pantalla que desglose por
+    // movimiento/producto (ver VentasCerradasPanel → porProducto) pueda usar el mismo número en
+    // vez de volver a sumar el campo monto crudo del movimiento.
+    montoPorMovimiento,
     productos: productosLista, ganadas, remisiones, facturas, notasCredito, totalNotasCredito: c2(totalNotasCredito),
     adelantoPct, adelantoOrigen, adelantoPactado: adelantoPct ? c2((contrato * adelantoPct) / 100) : 0, adelantoCobrado: c2(adelantoCobrado),
     unidadesFaltan: Math.max(0, unidadesContratadas - unidadesEntregadas),

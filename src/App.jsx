@@ -4999,6 +4999,7 @@ export default function App() {
           <ReporteJoelView
             mercaderia={mercaderiaFisicaParaguay} transito={transito} productos={productos}
             comprometidas={comprometidas} cotizaciones={cotizaciones} cuentasObras={listaObrasCuenta}
+            cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
           />
         )}
         </div>
@@ -21327,7 +21328,7 @@ function ReporteSeguroView({ mercaderia, comprometidas }) {
 // Reporte para Joel — físico en Paraguay + en tránsito (modelos y costos, por separado), más
 // el resumen de cotizaciones y plata por cobrar. Reutiliza la misma cuenta de mercadería física
 // que el reporte de seguro, así los dos reportes nunca dan números distintos para lo mismo.
-function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotizaciones, cuentasObras }) {
+function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotizaciones, cuentasObras, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [compartiendo, setCompartiendo] = useState(false);
   const [error, setError] = useState("");
@@ -21354,7 +21355,14 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
     [transitoEnCamino, productos]
   );
   const gruposCotizacion = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
-  const resumenCot = useMemo(() => resumirCotizaciones(gruposCotizacion), [gruposCotizacion]);
+  // Mismo desglose Pendiente/Ganada/En curso/Cobrada/Perdida que en Resumen y Ventas (ver
+  // ResumenCotizaciones) — antes este reporte llamaba resumirCotizaciones sin los mapas de cuenta/
+  // movimiento, así que todo lo Ganado quedaba en un solo balde que no era comparable con el
+  // "Ganada" de los otros reportes.
+  const resumenCot = useMemo(
+    () => resumirCotizaciones(gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId),
+    [gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]
+  );
   // Por obra: además del monto y estado, un desglose de a qué categorías generales de producto
   // (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones) corresponde la plata cotizada
   // — cruzando cada línea contra el catálogo, mismas categorías que ya usa Catálogo de productos.
@@ -21369,13 +21377,17 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
         const monto = (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0);
         categoriasMap.set(key, (categoriasMap.get(key) || 0) + monto);
       }
+      let estado = ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente";
+      if (estado === "Ganada" && cuentaPorCotizacionId) {
+        estado = cotizacionEstadoGanadaVisual(c, cuentaPorCotizacionId.get(c.id), movimientoPropioPorCotizacionId?.get(c.id));
+      }
       return {
         cliente: g.cliente, obra: o.principales.length > 1 ? `${o.obra} — ${h.rubro}` : o.obra, monto: calcularTotalCotizacion(c),
-        estado: ESTADOS_COTIZACION.includes(c.estado) ? c.estado : "Pendiente",
+        estado,
         categorias: [...categoriasMap.entries()].map(([label, monto]) => ({ label, monto })),
       };
     }))),
-    [gruposCotizacion, productos]
+    [gruposCotizacion, productos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]
   );
 
   const totalFisico = filasFisicoPorCategoria.reduce((acc, f) => acc + f.valorTotal, 0);
@@ -21410,6 +21422,8 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
       ["Total cotizado (U$S)", resumenCot.total],
       ["Pendiente — cantidad / monto U$S", resumenCot.Pendiente.n, resumenCot.Pendiente.total],
       ["Ganada — cantidad / monto U$S", resumenCot.Ganada.n, resumenCot.Ganada.total],
+      ["En curso — cantidad / monto U$S", resumenCot["En curso"].n, resumenCot["En curso"].total],
+      ["Cobrada — cantidad / monto U$S", resumenCot.Cobrada.n, resumenCot.Cobrada.total],
       ["Perdida — cantidad / monto U$S", resumenCot.Perdida.n, resumenCot.Perdida.total],
       [],
       ["Cliente", "Obra", "Monto U$S", "Estado", "Categorías (monto U$S)"],
@@ -21545,7 +21559,7 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
           <p className="text-base font-bold" style={{ color: ACCENT }}>Cotizaciones — Total U$S {resumenCot.total.toLocaleString("es-PY")}</p>
         </div>
         <div className="flex items-center gap-3 text-xs mb-2 flex-wrap">
-          {ESTADOS_RESUMEN.map((estado) => (
+          {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>
               {estado}: {resumenCot[estado].n} · U$S {resumenCot[estado].total.toLocaleString("es-PY")}
             </span>

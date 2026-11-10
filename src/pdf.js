@@ -48,10 +48,12 @@ const BORDER = rgb(0xe4 / 255, 0xe5 / 255, 0xe5 / 255);
 const INK = rgb(0x1c / 255, 0x1e / 255, 0x20 / 255);
 const MUTED = rgb(0x68 / 255, 0x6d / 255, 0x73 / 255);
 const WHITE = rgb(1, 1, 1);
-// Mismos colores de estado que ya se usan en pantalla (Pendiente/Ganada/Perdida, saldo por cobrar).
+// Mismos colores de estado que ya se usan en pantalla (Pendiente/Ganada/En curso/Cobrada/Perdida, saldo por cobrar).
 const AMBAR = rgb(0xb4 / 255, 0x53 / 255, 0x09 / 255);
 const VERDE = rgb(0x15 / 255, 0x80 / 255, 0x3d / 255);
 const ROJO = rgb(0xb9 / 255, 0x1c / 255, 0x1c / 255);
+const MORADO = rgb(0x93 / 255, 0x33 / 255, 0xea / 255);
+const AZUL = rgb(0x1d / 255, 0x4e / 255, 0xd8 / 255);
 
 // ---------- Número a letras (Español) ----------
 const UNIDADES = ["", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"];
@@ -2941,7 +2943,7 @@ export async function downloadRentabilidadPdf(cotizacion, r) {
 // `filasFisicoPorCategoria`: [{ categoria, valorTotal }] — físico en Paraguay agrupado por categoría.
 // `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.
 // `valuacionTransito`: { costoOrigen, costoPuestoPy, ventaPrecioLista } — productos + repuestos juntos.
-// `resumenCot`: { total, Pendiente: {n,total}, Ganada: {n,total}, Perdida: {n,total} }
+// `resumenCot`: { total, Pendiente: {n,total}, Ganada: {n,total}, "En curso": {n,total}, Cobrada: {n,total}, Perdida: {n,total} }
 // `detalleCotizaciones`: [{ cliente, obra, monto, estado, categorias: [{label, monto}] }]
 // `cuentaObras`: [{ cliente, razonSocial, obra, contrato, adelantoPct, adelantoPactado, adelantoCobrado, entregado, cobrado, sinPagar, faltaEntregar, faltaCobrar }] — cuenta por obra.
 export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTransito, valuacionTransito, resumenCot, detalleCotizaciones, fecha, cuentaObras = []) {
@@ -3130,11 +3132,12 @@ export async function generateReporteJoelPdf(filasFisicoPorCategoria, costosTran
   const tituloCot = `Cotizaciones — Total U$S ${fmtNum(resumenCot.total)}`;
   text(tituloCot, MARGIN, y, { bold: true, size: 9 });
   y -= 12;
-  const resumenColor = { Pendiente: AMBAR, Ganada: VERDE, Perdida: ROJO };
-  const resumenLine = ["Pendiente", "Ganada", "Perdida"]
+  const resumenColor = { Pendiente: AMBAR, Ganada: VERDE, "En curso": MORADO, Cobrada: AZUL, Perdida: ROJO };
+  const ESTADOS_RESUMEN_COT_PDF = ["Pendiente", "Ganada", "En curso", "Cobrada", "Perdida"];
+  const resumenLine = ESTADOS_RESUMEN_COT_PDF
     .map((k) => `${k}: ${resumenCot[k].n} · U$S ${fmtNum(resumenCot[k].total)}`);
   let cxResumen = MARGIN;
-  ["Pendiente", "Ganada", "Perdida"].forEach((k, i) => {
+  ESTADOS_RESUMEN_COT_PDF.forEach((k, i) => {
     text(resumenLine[i], cxResumen, y, { size: 6.5, color: resumenColor[k] });
     cxResumen += bold.widthOfTextAtSize(resumenLine[i], 6.5) + 14;
   });

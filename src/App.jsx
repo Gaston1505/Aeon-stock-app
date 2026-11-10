@@ -32,7 +32,7 @@ import {
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
   downloadListadoProductosPdf, generateListadoProductosPdf, nombreArchivoListadoProductos,
   downloadContratoPdf, nombreArchivoContrato, downloadContratoWord, parseContratoWordDocx, ETIQUETAS_CAMPOS_CONTRATO,
-  COMPANY, fmtFecha, dataUrlToBytes,
+  COMPANY, fmtFecha, dataUrlToBytes, gananciaAeonService,
 } from "./pdf";
 import { prepararPdfParaFirestore } from "./pdfCompress";
 
@@ -20037,13 +20037,6 @@ function alertaUnidadPostventa(u) {
     return { hito: `${meses}m`, vencido: diasVto < 0, dias: diasVto };
   }
   return null;
-}
-
-// El service lo hace una empresa instaladora tercerizada (ej. Delta SRL): se le cobra al cliente
-// un monto, se le paga a la instaladora un costo menor, y la diferencia se reparte mitad y mitad
-// entre AEON y la instaladora — esta es la parte que queda para AEON.
-function gananciaAeonService(montoCliente, montoInstalador) {
-  return ((Number(montoCliente) || 0) - (Number(montoInstalador) || 0)) / 2;
 }
 
 // Una unidad puede tener varios equipos (ej. living + dormitorio) — `equipos` es la forma actual

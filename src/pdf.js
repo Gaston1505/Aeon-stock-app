@@ -527,6 +527,15 @@ export function fmtFecha(iso) {
   return `${d}/${m}/${y}`;
 }
 
+// El service de mantenimiento postventa lo hace una empresa instaladora tercerizada (ej. Delta
+// SRL): se le cobra al cliente un monto, se le paga a la instaladora un costo menor, y la
+// diferencia se reparte mitad y mitad entre AEON y la instaladora — esta es la parte que queda
+// para AEON. Vive acá (no en App.jsx) para que postventaExcel.js la reuse en vez de duplicarla a
+// mano — si un día cambia la fórmula de reparto, se actualiza en un solo lugar.
+export function gananciaAeonService(montoCliente, montoInstalador) {
+  return ((Number(montoCliente) || 0) - (Number(montoInstalador) || 0)) / 2;
+}
+
 // Nombre de archivo a prueba de WhatsApp/Android: sin tildes ni eñes, porque viajan rotos (ej.
 // "Electrodomésticos" llegaba como "ElectrodomÃ©sticos") en algunos de los pasos que atraviesa un
 // nombre de archivo compartido por Web Share — normaliza a la letra base (é→e, ñ→n) en vez de

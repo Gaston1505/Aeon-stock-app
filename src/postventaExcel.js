@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { COMPANY, fmtFecha } from "./pdf";
+import { COMPANY, fmtFecha, gananciaAeonService } from "./pdf";
 
 // Planilla de Mantenimiento postventa — mismos colores y helper de estilo que cotizacionExcel.js
 // (paleta derivada del gris del logo AEON), pero en formato tabla plana: una fila por unidad
@@ -141,7 +141,7 @@ export async function generatePlanillaPostventaExcelBuffer(edificios, unidades, 
     }
     entregas.sort((a, b) => (b.fechaHecho || "").localeCompare(a.fechaHecho || ""));
     const ultimo = entregas[0];
-    const gananciaTotal = entregas.reduce((a, e) => a + ((Number(e.montoCliente) || 0) - (Number(e.montoInstalador) || 0)) / 2, 0);
+    const gananciaTotal = entregas.reduce((a, e) => a + gananciaAeonService(e.montoCliente, e.montoInstalador), 0);
     const s12 = estadoHito(u, 12);
     const s24 = estadoHito(u, 24);
     const equiposTexto = (u.equipos?.length ? u.equipos : u.equipo ? [{ modelo: u.equipo, capacidad: u.capacidad, cantidad: 1 }] : [])

@@ -2741,6 +2741,7 @@ export default function App() {
         cantidadRetirada: retirada,
         ...(retirada >= Number(reserva.cantidad) ? { estado: "Completada" } : {}),
       });
+      sumarLineaRetirada(reserva.cotizacionId, reserva.modelo, cantidadRetirada);
     }
 
     if (cat.type === "equipo") {
@@ -2823,6 +2824,20 @@ export default function App() {
     const { dataUrl, comprimido } = await prepararPdfParaFirestore(file);
     updateMovimiento(grupo.items[0].id, { actaConformidad: dataUrl });
     return { comprimido };
+  };
+
+  // Suma una cantidad retirada a cotizacion.lineasRetiradas para una línea (código) puntual —
+  // mismo merge que ya hace generarSalidaDesdeCotizacion, reusado donde una entrega salga por un
+  // camino distinto (retiro de una venta comprometida) pero esté igual vinculada a una cotización
+  // vía cotizacionId. Sin esto, CotizacionDetalleModal/estadoSalidaCotizacion muestran "Entregado:
+  // 0" aunque ya haya salido mercadería real — es justamente lo que le pasó a Rocío Rodríguez.
+  const sumarLineaRetirada = (cotizacionId, codigo, cantidad) => {
+    if (!cotizacionId || !codigo) return;
+    const cot = cotizaciones.find((c) => c.id === cotizacionId);
+    if (!cot) return;
+    const nuevasRetiradas = { ...(cot.lineasRetiradas || {}) };
+    nuevasRetiradas[codigo] = (Number(nuevasRetiradas[codigo]) || 0) + (Number(cantidad) || 0);
+    updateItem(COLLECTIONS.cotizaciones, cotizacionId, { lineasRetiradas: nuevasRetiradas });
   };
 
   // Genera una o más salidas (una por cada lote de equipo usado) a partir de una cotización
@@ -3141,6 +3156,7 @@ export default function App() {
     const patch = { cantidadRetirada };
     if (cantidadRetirada >= Number(c.cantidad)) patch.estado = "Completada";
     updateItem(COLLECTIONS.ventasComprometidas, id, patch);
+    sumarLineaRetirada(c.cotizacionId, c.modelo, cantidadEvento);
   };
 
   // Cierre manual: el usuario confirma que ya no hay más que retirar de esta reserva.
@@ -5177,7 +5193,7 @@ export default function App() {
         />
       </Drawer>
       <Drawer open={drawer === "comprometida"} onClose={() => setDrawer(null)} title="Nueva venta comprometida">
-        <ComprometidaForm equipos={equipos} productos={productos} onSave={(d) => { addComprometida(d); setDrawer(null); }} />
+        <ComprometidaForm equipos={equipos} productos={productos} cotizaciones={cotizaciones} onSave={(d) => { addComprometida(d); setDrawer(null); }} />
       </Drawer>
       <Drawer open={drawer === "playa"} onClose={() => setDrawer(null)} title="Nuevo ingreso a playa">
         <PlayaForm onSave={(d) => { addPlaya(d); setDrawer(null); }} />
@@ -10677,7 +10693,7 @@ function GestionServiceForm({ venta, field, onUpdate, onClose }) {
   );
 }
 
-function ComprometidaForm({ equipos, productos, onSave }) {
+function ComprometidaForm({ equipos, productos, cotizaciones, onSave }) {
   const [fecha, setFecha] = useState(todayISO());
   const [razonSocial, setRazonSocial] = useState("");
   const [obra, setObra] = useState("");
@@ -10688,6 +10704,23 @@ function ComprometidaForm({ equipos, productos, onSave }) {
   const [montoTocado, setMontoTocado] = useState(false);
   const [lineas, setLineas] = useState([]);
   const [error, setError] = useState("");
+  const [cotizacionId, setCotizacionId] = useState("");
+  const [cotizacionTocada, setCotizacionTocada] = useState(false);
+
+  // Sin esto, esta reserva nace sin cotizacionId y su entrega/pago nunca se ve reflejado en el
+  // detalle de la cotización (CotizacionDetalleModal, badges de Ventas) aunque sí se vea a nivel
+  // obra — fue justo lo que pasó con la reserva de Rocío Rodríguez. Se sugiere sola cuando hay un
+  // único candidato Ganada para la razón social tipeada, pero se puede elegir otra o ninguna.
+  const cotizacionesGanadas = useMemo(() => (cotizaciones || []).filter((c) => c.estado === "Ganada"), [cotizaciones]);
+  const cotizacionesCandidatas = useMemo(() => {
+    const q = razonSocial.trim().toLowerCase();
+    if (!q) return cotizacionesGanadas;
+    return cotizacionesGanadas.filter((c) => (c.cliente || "").toLowerCase().includes(q));
+  }, [cotizacionesGanadas, razonSocial]);
+  useEffect(() => {
+    if (cotizacionTocada) return;
+    setCotizacionId(cotizacionesCandidatas.length === 1 ? cotizacionesCandidatas[0].id : "");
+  }, [cotizacionesCandidatas, cotizacionTocada]);
 
   const vendibles = equipos.filter((e) => e.estado === "En depósito" || e.estado === "Apto para venta" || e.estado === "Apto para venta con descuento");
   const equipo = vendibles.find((e) => e.id === equipoId);
@@ -10759,6 +10792,7 @@ function ComprometidaForm({ equipos, productos, onSave }) {
       onSave({
         fecha, razonSocial, obra, equipoId: l.equipoId, modelo: l.modelo, codigo: l.codigo,
         cantidad: l.cantidad, monto: l.monto, fechaEntrega,
+        cotizacionId: cotizacionId || "",
       });
     }
   };
@@ -10806,8 +10840,17 @@ function ComprometidaForm({ equipos, productos, onSave }) {
       <Field label="Razón social"><TextInput value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
       <Field label="Fecha estimada de entrega"><TextInput type="date" value={fechaEntrega} onChange={(e) => setFechaEntrega(e.target.value)} /></Field>
+      <Field label="Vincular a una cotización (opcional)">
+        <Select value={cotizacionId} onChange={(e) => { setCotizacionId(e.target.value); setCotizacionTocada(true); }}>
+          <option value="">Sin vincular</option>
+          {cotizacionesCandidatas.map((c) => (
+            <option key={c.id} value={c.id}>{c.cliente} — {c.obra || "Sin obra"} (U$S {Math.round(calcularTotalCotizacion(c)).toLocaleString("es-PY")})</option>
+          ))}
+        </Select>
+      </Field>
       <p className="text-xs mb-3" style={{ color: MUTED }}>
         Esta cantidad queda reservada: no se va a poder retirar del depósito para otra salida hasta que la marques como retirada.
+        {" "}Si esta reserva corresponde a una cotización ya Ganada, vinculala para que su entrega y su pago se reflejen también en el detalle de esa cotización.
       </p>
       {error && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{error}</p>}
       <PrimaryButton onClick={submit}>Guardar venta comprometida</PrimaryButton>

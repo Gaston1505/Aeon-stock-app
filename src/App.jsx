@@ -3087,6 +3087,29 @@ export default function App() {
 
   // Cierre manual: el usuario confirma que ya no hay más que retirar de esta reserva.
   const cerrarComprometida = (id) => updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", fechaCierre: todayISO() });
+
+  // Cierre con saldo sin retirar: el cliente avisó que no va a llevar el resto (a diferencia de
+  // cerrarComprometida, que solo cierra una reserva ya retirada al 100%). Antes esto no tenía
+  // ningún botón — una reserva con retiro parcial se quedaba trabada para siempre en "Comprometida"
+  // sin forma de cerrarla, y el saldo sin retirar seguía reservado (equipo.comprometido) aunque
+  // nadie lo fuera a buscar. Acá hay que: 1) liberar ese saldo del equipo para que vuelva a estar
+  // disponible, y 2) bajar la cantidad de la reserva a lo efectivamente retirado, para que el saldo
+  // quede en 0 en cualquier lado que lo derive de cantidad/cantidadRetirada (ver clasificarComprometida,
+  // que no mira el estado, solo cantidad y cantidadRetirada).
+  const cerrarComprometidaConSaldo = async (id) => {
+    const c = comprometidas.find((x) => x.id === id);
+    if (!c) return;
+    const retirado = Number(c.cantidadRetirada) || 0;
+    const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
+    const mensaje = `¿Cerrar esta reserva con ${saldo} unidad(es) sin retirar? Esas unidades vuelven a quedar disponibles para otra venta.`;
+    const confirmado = confirmBridge ? await confirmBridge(mensaje) : window.confirm(mensaje);
+    if (!confirmado) return;
+    if (saldo > 0) {
+      const equipo = equipos.find((e) => e.id === c.equipoId);
+      if (equipo) updateItem(COLLECTIONS.equipos, equipo.id, { comprometido: Math.max(0, (Number(equipo.comprometido) || 0) - saldo) });
+    }
+    updateItem(COLLECTIONS.ventasComprometidas, id, { estado: "Retirada", cantidadPactada: c.cantidad, cantidad: retirado, fechaCierre: todayISO() });
+  };
   // Fecha de retiro aproximada al cargar la reserva, ajustable después a medida que se va
   // sabiendo con más precisión cuándo retira el cliente.
   const updateFechaEntregaComprometida = (id, fechaEntrega) => updateItem(COLLECTIONS.ventasComprometidas, id, { fechaEntrega });
@@ -4670,6 +4693,7 @@ export default function App() {
             onCancelar={cancelarComprometida}
             onRetirar={(id) => setRetiroTarget(id)}
             onCerrar={cerrarComprometida}
+            onCerrarConSaldo={cerrarComprometidaConSaldo}
             onPago={(id) => setPagoTarget(id)}
             onFechaEntrega={updateFechaEntregaComprometida}
           />
@@ -7985,7 +8009,7 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
   );
 }
 
-function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onPago, onFechaEntrega }) {
+function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCotizacion, onCancelar, onRetirar, onCerrar, onCerrarConSaldo, onPago, onFechaEntrega }) {
   const pendientes = comprometidas.filter((c) => c.estado === "Comprometida");
   const totalMonto = pendientes.reduce((acc, c) => acc + (Number(c.monto) || 0), 0);
   const [abiertos, setAbiertos] = useState(() => new Set());
@@ -8057,7 +8081,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
                 {abierto && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-4 pb-4">
                     {g.items.map((c) => (
-                      <ComprometidaCard key={c.id} c={c} onPago={onPago} onRetirar={onRetirar} onCancelar={onCancelar} onCerrar={onCerrar} onFechaEntrega={onFechaEntrega} />
+                      <ComprometidaCard key={c.id} c={c} onPago={onPago} onRetirar={onRetirar} onCancelar={onCancelar} onCerrar={onCerrar} onCerrarConSaldo={onCerrarConSaldo} onFechaEntrega={onFechaEntrega} />
                     ))}
                   </div>
                 )}
@@ -8070,7 +8094,7 @@ function ComprometidasView({ comprometidas, query, onQuery, onNew, onNewDesdeCot
   );
 }
 
-function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar, onFechaEntrega }) {
+function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar, onCerrarConSaldo, onFechaEntrega }) {
   const retirado = Number(c.cantidadRetirada) || 0;
   const saldo = Math.max(0, (Number(c.cantidad) || 0) - retirado);
   const badge = COMPROMETIDA_BADGE[c.estado] || COMPROMETIDA_BADGE.Comprometida;
@@ -8113,13 +8137,22 @@ function ComprometidaCard({ c, onPago, onRetirar, onCancelar, onCerrar, onFechaE
         </button>
       </div>
       {c.estado === "Comprometida" && (
-        <div className="flex gap-2 mt-3">
+        <div className="flex gap-2 mt-3 flex-wrap">
           <button onClick={() => onRetirar(c.id)} className="text-xs px-2.5 py-1.5 rounded" style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}>
             Registrar retiro
           </button>
           {retirado === 0 && (
             <button onClick={() => onCancelar(c.id)} className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: MUTED }}>
               Cancelar
+            </button>
+          )}
+          {retirado > 0 && saldo > 0 && onCerrarConSaldo && (
+            <button
+              onClick={() => onCerrarConSaldo(c.id)}
+              title="El cliente no va a retirar el resto — libera el saldo reservado y cierra la reserva"
+              className="text-xs px-2.5 py-1.5 rounded border" style={{ borderColor: BORDER, color: "#B45309" }}
+            >
+              Cerrar con saldo pendiente
             </button>
           )}
         </div>

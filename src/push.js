@@ -5,7 +5,7 @@ import { messagingReady, db } from "./firebase";
 // Clave pública VAPID (Project Settings → Cloud Messaging → Web Push certificates, en Firebase
 // Console) — distinta de las claves de API: esta identifica el remitente ante el navegador para
 // que acepte el push, y es segura de exponer en el cliente (no es un secreto).
-const VAPID_KEY = "";
+const VAPID_KEY = "BKEG4fV4SjEWyse99g4Ai9dC2ZsVTUUrB1r42m1ARZsghPgkktYV90PslyCEiLWfF-ZFUm5TJagbES3F17IIU1I";
 
 export async function notificacionesSoportadas() {
   if (!("Notification" in window) || !("serviceWorker" in navigator)) return false;

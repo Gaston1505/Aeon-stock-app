@@ -120,6 +120,8 @@ service cloud.firestore {
     match /fabricasCompetencia/{docId} { allow read, write: if esAdmin(); }
     // Recordatorios: lista interna de pendientes, solo para admin — no depósito.
     match /recordatorios/{docId} { allow read, write: if esAdmin(); }
+    // Objetivos: metas comerciales propias, solo para admin — no depósito.
+    match /objetivos/{docId} { allow read, write: if esAdmin(); }
 
     // El PDF de la ficha técnica de cada producto vive acá (no en productos/{docId}) para que
     // el catálogo entero no se descargue cargado de PDFs cada vez que se abre la app — se pide

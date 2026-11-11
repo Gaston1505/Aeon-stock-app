@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt,
+  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth, storage } from "./firebase";
@@ -196,6 +196,7 @@ const COLLECTIONS = {
   preListaPedido: "preListaPedido",
   fabricasCompetencia: "fabricasCompetencia",
   recordatorios: "recordatorios",
+  objetivos: "objetivos",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -2550,6 +2551,7 @@ export default function App() {
   const [preListaPedido, setPreListaPedido] = useState([]);
   const [fabricasCompetencia, setFabricasCompetencia] = useState([]);
   const [recordatorios, setRecordatorios] = useState([]);
+  const [objetivos, setObjetivos] = useState([]);
   const [matrizCostos, setMatrizCostos] = useState(null);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
@@ -2573,6 +2575,7 @@ export default function App() {
   const [productoEditando, setProductoEditando] = useState(null);
   const [envioEditando, setEnvioEditando] = useState(null);
   const [recordatorioEditando, setRecordatorioEditando] = useState(null);
+  const [objetivoEditando, setObjetivoEditando] = useState(null);
   const [comprometerTarget, setComprometerTarget] = useState(null);
   const [llegadaTarget, setLlegadaTarget] = useState(null);
   const [repuestoTarget, setRepuestoTarget] = useState(null);
@@ -2622,6 +2625,7 @@ export default function App() {
       [COLLECTIONS.preListaPedido]: setPreListaPedido,
       [COLLECTIONS.fabricasCompetencia]: setFabricasCompetencia,
       [COLLECTIONS.recordatorios]: setRecordatorios,
+      [COLLECTIONS.objetivos]: setObjetivos,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -3908,6 +3912,15 @@ export default function App() {
   const deleteRecordatorio = (id) => deleteItem(COLLECTIONS.recordatorios, id);
   const marcarHechoRecordatorio = (id, hecho) => updateItem(COLLECTIONS.recordatorios, id, { hecho, fechaHecho: hecho ? todayISO() : null });
 
+  // Objetivos comerciales: metas a mano, simples (cumplido/no) o con progreso numérico. Al llegar
+  // a la meta numérica (o marcarla a mano si es simple) pasan a "cumplido", lo que dispara el
+  // festejo en ObjetivosView — una sola vez, hasta que se cierre y quede celebradoEn.
+  const addObjetivo = (data) => addItem(COLLECTIONS.objetivos, { estado: "activo", progresoValor: 0, ...data });
+  const updateObjetivo = (id, patch) => updateItem(COLLECTIONS.objetivos, id, patch);
+  const deleteObjetivo = (id) => deleteItem(COLLECTIONS.objetivos, id);
+  const reabrirObjetivo = (id) => updateItem(COLLECTIONS.objetivos, id, { estado: "activo", fechaCumplido: null, celebradoEn: null });
+  const cerrarCelebracionObjetivo = (id) => updateItem(COLLECTIONS.objetivos, id, { celebradoEn: Date.now() });
+
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
   const deletePlaya = (id) => deleteItem(COLLECTIONS.playa, id);
@@ -4515,6 +4528,7 @@ export default function App() {
   const NAV_TODO = [
     { key: "resumen", label: "Resumen", icon: LayoutDashboard, section: null },
     { key: "recordatorios", label: "Recordatorios", icon: Bell, section: null },
+    { key: "objetivos", label: "Objetivos", icon: Target, section: null },
     // Stock / inventario
     { key: "deposito", label: "Depósito", icon: Warehouse, section: "Stock e inventario" },
     { key: "transito", label: pendientesCronogramaTransito > 0 ? `Tránsito (${pendientesCronogramaTransito})` : "Tránsito", icon: Ship, section: "Stock e inventario" },
@@ -4750,6 +4764,20 @@ export default function App() {
             onEditar={(r) => { setRecordatorioEditando(r); setDrawer("recordatorio"); }}
             onMarcarHecho={marcarHechoRecordatorio}
             onEliminar={deleteRecordatorio}
+          />
+        )}
+
+        {tab === "objetivos" && (
+          <ObjetivosView
+            objetivos={objetivos}
+            query={query} onQuery={setQuery}
+            onNuevo={() => { setObjetivoEditando(null); setDrawer("objetivo"); }}
+            onEditar={(o) => { setObjetivoEditando(o); setDrawer("objetivo"); }}
+            onActualizarProgreso={updateObjetivo}
+            onMarcarCumplido={(id) => updateObjetivo(id, { estado: "cumplido", fechaCumplido: Date.now() })}
+            onReabrir={reabrirObjetivo}
+            onEliminar={deleteObjetivo}
+            onCerrarCelebracion={cerrarCelebracionObjetivo}
           />
         )}
 
@@ -5293,6 +5321,19 @@ export default function App() {
             else await addRecordatorio(d);
           }}
           onCancelar={() => { setDrawer(null); setRecordatorioEditando(null); }}
+        />
+      </Drawer>
+      <Drawer
+        open={drawer === "objetivo"} onClose={() => { setDrawer(null); setObjetivoEditando(null); }}
+        title={objetivoEditando ? "Editar objetivo" : "Nuevo objetivo"}
+      >
+        <ObjetivoForm
+          objetivo={objetivoEditando}
+          onGuardar={async (d) => {
+            if (objetivoEditando) await updateObjetivo(objetivoEditando.id, d);
+            else await addObjetivo(d);
+          }}
+          onCancelar={() => { setDrawer(null); setObjetivoEditando(null); }}
         />
       </Drawer>
       <Drawer
@@ -7081,7 +7122,49 @@ const TIPO_ALERTA_AUTOMATICA = {
   comprometida: { label: "Ventas comprometidas", icon: Lock, color: "#B45309", bg: "#FDF1E0" },
   transito: { label: "Tránsito", icon: Ship, color: "#1D4ED8", bg: "#E8EEFB" },
   stock: { label: "Stock bajo", icon: Boxes, color: "#B91C1C", bg: "#FBEAEA" },
+  motivacion: { label: "Motivación", icon: Star, color: "#B45309", bg: "#FFFBEB" },
 };
+// Frase de "Motivación" de Recordatorios: solo aparece lunes y miércoles, una por día, rotando
+// sola semana a semana (según el número de semana del año) para no repetir siempre la misma.
+// Lunes apunta a arrancar la semana organizado; miércoles mezcla motivación con dirección
+// comercial a mitad de camino. No se guarda nada en Firestore — se recalcula del día de hoy.
+const FRASES_LUNES = [
+  "Arrancá la semana: date 10 minutos para repasar los procesos clave antes de que el día te absorba.",
+  "Lunes de orden: planificá las prioridades de la semana antes del mediodía — el resto se acomoda solo.",
+  "Buen día para abrir la agenda y agendar esa llamada a un cliente nuevo que venís postergando.",
+  "Separá lo urgente de lo importante — esta semana se gana en las primeras horas del lunes.",
+  "Revisá qué quedó pendiente de la semana pasada antes de sumarle algo nuevo a la lista.",
+  "Elegí una sola cosa grande para cerrar esta semana, y arrancala hoy mismo.",
+  "Buen momento para repasar el embudo de cotizaciones — ¿hay algo frío que valga la pena reactivar?",
+  "Arrancá ordenando lo que tenés a la vista: lo que se ve prolijo, se vende mejor.",
+];
+const FRASES_MIERCOLES = [
+  "Mitad de semana: ¿ya hiciste seguimiento a las cotizaciones que mandaste el lunes?",
+  "Miércoles: buen día para medir cómo va la semana contra lo que planificaste el lunes.",
+  "A mitad de camino — revisá si el foco comercial de la semana sigue siendo el correcto.",
+  "Miércoles de números: mirá las ventas comprometidas, ¿hay algo por cerrar antes del viernes?",
+  "Ya pasó la mitad de la semana — es buen momento para un mensaje de seguimiento a ese cliente importante.",
+  "Lo que no se mide, no mejora — dale una mirada a tus indicadores comerciales de la semana.",
+  "Medio camino recorrido: ajustá el rumbo si hace falta, todavía hay tiempo de cerrar bien la semana.",
+  "Miércoles comercial: ¿qué cliente necesita que lo llamés hoy, no mañana?",
+];
+function numeroDeSemana(fecha) {
+  const inicio = new Date(fecha.getFullYear(), 0, 1);
+  const dias = Math.floor((fecha - inicio) / 86400000);
+  return Math.floor((dias + inicio.getDay()) / 7);
+}
+function fraseMotivacionalDeHoy() {
+  const hoy = new Date();
+  const dia = hoy.getDay(); // 1 = lunes, 3 = miércoles
+  if (dia !== 1 && dia !== 3) return null;
+  const pool = dia === 1 ? FRASES_LUNES : FRASES_MIERCOLES;
+  const idx = numeroDeSemana(hoy) % pool.length;
+  return {
+    id: `motivacion-${todayISO()}`, tipo: "motivacion",
+    titulo: dia === 1 ? "Arrancá la semana" : "Mitad de semana",
+    detalle: pool[idx], dias: 0, navTab: "objetivos", navFiltro: "",
+  };
+}
 function construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo }) {
   const items = [];
   (proximosServices || []).forEach((s) => {
@@ -7125,6 +7208,8 @@ function construirAlertasAutomaticas({ proximosServices, seguimientosPendientes,
       fecha: null, dias: null, navTab: "catalogo", navFiltro: r.producto.nombre,
     });
   });
+  const motivacion = fraseMotivacionalDeHoy();
+  if (motivacion) items.push(motivacion);
   return items.sort((a, b) => {
     if (a.dias == null && b.dias == null) return 0;
     if (a.dias == null) return -1;
@@ -7313,6 +7398,207 @@ function RecordatorioForm({ recordatorio, cuentasObras, cotizaciones, transito, 
           </Select>
         </Field>
       )}
+      {error && <p className="text-xs" style={{ color: "#B91C1C" }}>{error}</p>}
+      <div className="flex gap-2 pt-1">
+        <PrimaryButton onClick={guardar} disabled={guardando}>{guardando ? "Guardando..." : "Guardar"}</PrimaryButton>
+        <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Objetivos ----------
+// Metas comerciales cargadas a mano: "simple" se marca cumplida con un botón, "numérico" lleva un
+// progreso contra una meta (ventas, clientes, U$S, lo que sea) y se auto-marca cumplida al llegar
+// o superar la meta. Al quedar "cumplido" y todavía sin celebradoEn, ObjetivosView muestra el
+// festejo una sola vez (CelebracionObjetivo) — se cierra y ahí se graba celebradoEn.
+const TIPOS_META_OBJETIVO = [
+  { key: "simple", label: "Simple (cumplido / no cumplido)" },
+  { key: "numerico", label: "Con progreso numérico (ventas, clientes, U$S, etc.)" },
+];
+function CelebracionObjetivo({ objetivo, onCerrar }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3" style={{ backgroundColor: "rgba(15,23,32,0.75)" }}>
+      <div className="rounded-xl p-6 w-full text-center" style={{ backgroundColor: "#FFFFFF", maxWidth: 420 }}>
+        <div className="flex items-center justify-center gap-2 mb-3">
+          <Star size={20} className="animate-pulse" style={{ color: "#D97706" }} />
+          <Trophy size={34} className="animate-bounce" style={{ color: ACCENT }} />
+          <Star size={20} className="animate-pulse" style={{ color: "#D97706" }} />
+        </div>
+        <p className="text-lg font-bold" style={{ color: INK }}>Objetivo cumplido</p>
+        <p className="text-sm font-semibold mt-1" style={{ color: ACCENT }}>{objetivo.titulo}</p>
+        <p className="text-sm mt-3" style={{ color: MUTED }}>
+          Un logro menos en la lista, uno más para seguir construyendo. Buen trabajo.
+        </p>
+        <div className="mt-5">
+          <PrimaryButton onClick={onCerrar}>Seguir</PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+function ObjetivoCard({ o, onEditar, onActualizarProgreso, onMarcarCumplido, onReabrir, onEliminar }) {
+  const [progresoInput, setProgresoInput] = useState(String(o.progresoValor ?? 0));
+  const cumplido = o.estado === "cumplido";
+  const esNumerico = o.tipoMeta === "numerico" && Number(o.metaValor) > 0;
+  const pct = esNumerico ? Math.min(100, Math.round(((Number(o.progresoValor) || 0) / Number(o.metaValor)) * 100)) : null;
+  const dias = !cumplido && o.fechaLimite ? daysUntil(o.fechaLimite) : null;
+
+  const guardarProgreso = () => {
+    const val = Number(progresoInput) || 0;
+    const meta = Number(o.metaValor) || 0;
+    const patch = { progresoValor: val };
+    if (meta > 0 && val >= meta) { patch.estado = "cumplido"; patch.fechaCumplido = Date.now(); }
+    onActualizarProgreso(o.id, patch);
+  };
+
+  return (
+    <div className="rounded-lg p-3.5" style={{ backgroundColor: cumplido ? "#FAFBFC" : "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold" style={{ color: INK, textDecoration: cumplido ? "line-through" : "none" }}>{o.titulo}</p>
+          {o.descripcion && <p className="text-xs mt-0.5" style={{ color: MUTED }}>{o.descripcion}</p>}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => onEditar(o)} className="p-1 rounded hover:bg-gray-100"><Pencil size={13} style={{ color: MUTED }} /></button>
+          <button onClick={() => onEliminar(o.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={13} style={{ color: MUTED }} /></button>
+        </div>
+      </div>
+
+      {esNumerico && (
+        <div className="mt-2.5">
+          <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: "#F2F3F4" }}>
+            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: cumplido ? "#15803D" : ACCENT }} />
+          </div>
+          <p className="text-xs mt-1" style={{ color: MUTED }}>
+            {fmtN(o.progresoValor || 0, 0)} / {fmtN(o.metaValor, 0)} {o.unidad || ""} · {pct}%
+          </p>
+          {!cumplido && (
+            <div className="flex items-center gap-2 mt-1.5">
+              <div style={{ width: 90 }}>
+                <TextInput type="number" value={progresoInput} onChange={(e) => setProgresoInput(e.target.value)} />
+              </div>
+              <SecondaryButton onClick={guardarProgreso}>Actualizar progreso</SecondaryButton>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap mt-2.5">
+        {o.fechaLimite && !cumplido && (
+          <span className="text-xs whitespace-nowrap"><FechaAlerta dias={dias} /></span>
+        )}
+        {cumplido ? (
+          <>
+            <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+              Cumplido {o.fechaCumplido ? `el ${fmtDate(new Date(o.fechaCumplido).toISOString().slice(0, 10))}` : ""}
+            </span>
+            <button onClick={() => onReabrir(o.id)} className="text-xs underline" style={{ color: MUTED }}>Reabrir</button>
+          </>
+        ) : !esNumerico ? (
+          <button
+            onClick={() => onMarcarCumplido(o.id)}
+            className="text-xs px-2.5 py-1.5 rounded flex items-center gap-1"
+            style={{ backgroundColor: ACCENT, color: "#FFFFFF" }}
+          >
+            <CheckCircle2 size={13} /> Marcar como cumplido
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+function ObjetivosView({ objetivos, query, onQuery, onNuevo, onEditar, onActualizarProgreso, onMarcarCumplido, onReabrir, onEliminar, onCerrarCelebracion }) {
+  const q = (query || "").toLowerCase();
+  const filtrados = (objetivos || []).filter((o) => !q || [o.titulo, o.descripcion].some((v) => (v || "").toLowerCase().includes(q)));
+  const activos = filtrados.filter((o) => o.estado !== "cumplido").sort((a, b) => (a.fechaLimite || "9999").localeCompare(b.fechaLimite || "9999"));
+  const cumplidos = filtrados.filter((o) => o.estado === "cumplido").sort((a, b) => (b.fechaCumplido || 0) - (a.fechaCumplido || 0));
+  const aFestejar = (objetivos || []).find((o) => o.estado === "cumplido" && !o.celebradoEn);
+
+  return (
+    <Section
+      title="Objetivos"
+      subtitle="Metas comerciales propias — simples o con progreso numérico. Al cumplirlas, quedan marcadas y lo festejamos acá."
+      query={query} onQuery={onQuery}
+      onNew={onNuevo} newLabel="Nuevo objetivo"
+    >
+      {aFestejar && <CelebracionObjetivo objetivo={aFestejar} onCerrar={() => onCerrarCelebracion(aFestejar.id)} />}
+
+      <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Target size={15} style={{ color: ACCENT }} />
+          <h3 className="text-base font-bold" style={{ color: INK }}>En curso</h3>
+        </div>
+        {activos.length === 0 ? (
+          <EmptyState icon={Target} title="Todavía no hay objetivos cargados" subtitle="Usá “Nuevo objetivo” para cargar una meta, simple o con progreso numérico." />
+        ) : (
+          <div className="space-y-2">
+            {activos.map((o) => (
+              <ObjetivoCard key={o.id} o={o} onEditar={onEditar} onActualizarProgreso={onActualizarProgreso} onMarcarCumplido={onMarcarCumplido} onReabrir={onReabrir} onEliminar={onEliminar} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {cumplidos.length > 0 && (
+        <div className="rounded-xl p-4 mt-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <div className="flex items-center gap-2 mb-3">
+            <Trophy size={15} style={{ color: "#15803D" }} />
+            <h3 className="text-base font-bold" style={{ color: INK }}>Cumplidos ({cumplidos.length})</h3>
+          </div>
+          <div className="space-y-2">
+            {cumplidos.map((o) => (
+              <ObjetivoCard key={o.id} o={o} onEditar={onEditar} onActualizarProgreso={onActualizarProgreso} onMarcarCumplido={onMarcarCumplido} onReabrir={onReabrir} onEliminar={onEliminar} />
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+function ObjetivoForm({ objetivo, onGuardar, onCancelar }) {
+  const [titulo, setTitulo] = useState(objetivo?.titulo || "");
+  const [descripcion, setDescripcion] = useState(objetivo?.descripcion || "");
+  const [tipoMeta, setTipoMeta] = useState(objetivo?.tipoMeta || "simple");
+  const [metaValor, setMetaValor] = useState(objetivo?.metaValor ?? "");
+  const [unidad, setUnidad] = useState(objetivo?.unidad || "");
+  const [fechaLimite, setFechaLimite] = useState(objetivo?.fechaLimite || "");
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    if (!titulo.trim()) { setError("Ingresá un título."); return; }
+    if (tipoMeta === "numerico" && !(Number(metaValor) > 0)) { setError("Ingresá la meta numérica (mayor a 0)."); return; }
+    setGuardando(true);
+    try {
+      await onGuardar({
+        titulo: titulo.trim(), descripcion: descripcion.trim(), tipoMeta,
+        metaValor: tipoMeta === "numerico" ? Number(metaValor) : null,
+        unidad: unidad.trim(), fechaLimite: fechaLimite || null,
+      });
+      onCancelar();
+    } catch (e) { setError(e?.message || "No se pudo guardar."); }
+    setGuardando(false);
+  };
+
+  return (
+    <div className="space-y-3">
+      <Field label="Título"><TextInput value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Cerrar 5 obras nuevas este trimestre" /></Field>
+      <Field label="Descripción (opcional)">
+        <Textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Detalle opcional..." />
+      </Field>
+      <Field label="Tipo de meta">
+        <Select value={tipoMeta} onChange={(e) => setTipoMeta(e.target.value)}>
+          {TIPOS_META_OBJETIVO.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+        </Select>
+      </Field>
+      {tipoMeta === "numerico" && (
+        <div className="flex gap-2">
+          <div className="flex-1"><Field label="Meta"><TextInput type="number" value={metaValor} onChange={(e) => setMetaValor(e.target.value)} placeholder="Ej: 10" /></Field></div>
+          <div className="flex-1"><Field label="Unidad (opcional)"><TextInput value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="Ej: obras, U$S, clientes" /></Field></div>
+        </div>
+      )}
+      <Field label="Fecha límite (opcional)"><TextInput type="date" value={fechaLimite} onChange={(e) => setFechaLimite(e.target.value)} /></Field>
       {error && <p className="text-xs" style={{ color: "#B91C1C" }}>{error}</p>}
       <div className="flex gap-2 pt-1">
         <PrimaryButton onClick={guardar} disabled={guardando}>{guardando ? "Guardando..." : "Guardar"}</PrimaryButton>

@@ -1,3 +1,5 @@
+// Disparo del primer deploy a Firebase (ahora con el proyecto en Blaze y el secreto de GitHub
+// Actions configurado).
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");

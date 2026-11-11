@@ -32,14 +32,14 @@ export default defineConfig({
       // una versión nueva (ver registerSW() ahí).
       injectRegister: null,
       includeAssets: ["icons/apple-touch-icon.png"],
-      workbox: {
-        // Por default el service worker de la PWA reescribe CUALQUIER navegación (click en un
-        // <a>, escribir la URL) hacia index.html, para que la app funcione offline como SPA.
-        // Eso también atrapaba los links a archivos estáticos propios — manual.html,
-        // presentacion-comercial.pdf, el futuro catalogo.pdf — sirviendo la app en vez del
-        // archivo real. Como la app no tiene rutas propias (todo es un solo path con estado
-        // en React), alcanza con excluir del fallback cualquier URL que termine en extensión.
-        navigateFallbackDenylist: [/\.[^/]+$/],
+      // injectManifest (en vez del generateSW por default) porque el service worker necesita
+      // código propio además del precache de siempre: el manejador de notificaciones push de
+      // Firebase Cloud Messaging en segundo plano (ver src/sw.js, que reimplementa el mismo
+      // fallback de navegación que antes daba "workbox:" acá abajo).
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.js",
+      injectManifest: {
         // El chunk de exceljs (carga dinámica, solo al exportar una cotización a Excel) es
         // pesado — con el límite por defecto de 2MB, Workbox se niega a precachearlo y hace
         // fallar el build entero. No hace falta que esté disponible offline, pero que sea grande

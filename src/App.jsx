@@ -3,12 +3,13 @@ import {
   LayoutDashboard, Package, ArrowUpFromLine, ArrowDownToLine, ShieldCheck,
   Wrench, Plus, Download, Upload, Search, X, Trash2, MessageCircle, AlertTriangle,
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
-  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell,
+  Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell, BellRing,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
   Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth, storage } from "./firebase";
+import { activarNotificacionesPush, notificacionesSoportadas, escucharNotificacionesEnPrimerPlano } from "./push";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot, query, query as fsQuery, where, orderBy, runTransaction,
 } from "firebase/firestore";
@@ -4510,6 +4511,23 @@ export default function App() {
 
   const recordatoriosPropiosPendientes = useMemo(() => recordatorios.filter((r) => !r.hecho), [recordatorios]);
 
+  // Si la app está ABIERTA en primer plano cuando llega un push, Firebase no la pasa por el
+  // service worker (onBackgroundMessage) — hay que mostrar el aviso a mano, o se pierde en
+  // silencio mientras la estás mirando.
+  useEffect(() => {
+    let cancelado = false;
+    let unsubscribe = () => {};
+    escucharNotificacionesEnPrimerPlano((payload) => {
+      if (cancelado) return;
+      const titulo = payload.notification?.title || "AEON";
+      const cuerpo = payload.notification?.body || "";
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification(titulo, { body: cuerpo, icon: `${import.meta.env.BASE_URL}icons/icon-192.png` });
+      }
+    }).then((fn) => { if (!cancelado) unsubscribe = fn; });
+    return () => { cancelado = true; unsubscribe(); };
+  }, []);
+
   // Aviso proactivo al entrar a la app: en vez de depender de que alguien note la campanita
   // sola, se lo mostramos de una apenas termina de cargar todo — una vez por apertura de la app.
   const [mostrarAvisos, setMostrarAvisos] = useState(false);
@@ -7259,6 +7277,58 @@ function FechaAlerta({ dias }) {
   if (dias === 0) return <span style={{ color: "#B45309" }}>Hoy</span>;
   return <span style={{ color: dias <= 7 ? "#B45309" : MUTED }}>En {dias}d</span>;
 }
+
+// Activar notificaciones push de este dispositivo (celu, PC o iPad) — un botón por dispositivo
+// porque el permiso y el token son por navegador, no por cuenta. En iPhone/iPad, Safari solo
+// ofrece esto si la app ya está agregada a la pantalla de inicio (Compartir → Agregar a inicio).
+function NotificacionesPushBoton() {
+  const [estado, setEstado] = useState("inicial"); // inicial | activando | ok | error
+  const [error, setError] = useState("");
+  const [soportado, setSoportado] = useState(null);
+
+  useEffect(() => {
+    let activo = true;
+    notificacionesSoportadas().then((s) => { if (activo) setSoportado(s); });
+    return () => { activo = false; };
+  }, []);
+
+  if (soportado === false) return null;
+  if (typeof Notification !== "undefined" && Notification.permission === "granted" && estado === "inicial") {
+    // Ya estaba activado de una sesión anterior en este mismo dispositivo/navegador.
+    return (
+      <p className="text-xs flex items-center gap-1.5" style={{ color: "#15803D" }}>
+        <BellRing size={13} /> Notificaciones push activadas en este dispositivo.
+      </p>
+    );
+  }
+
+  const activar = async () => {
+    setEstado("activando");
+    setError("");
+    try {
+      await activarNotificacionesPush();
+      setEstado("ok");
+    } catch (e) {
+      setEstado("error");
+      setError(e.message || "No se pudo activar.");
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <button
+        onClick={activar}
+        disabled={estado === "activando" || estado === "ok"}
+        className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1.5"
+        style={{ borderColor: BORDER, color: estado === "ok" ? "#15803D" : ACCENT }}
+      >
+        <BellRing size={13} />
+        {estado === "ok" ? "Notificaciones activadas en este dispositivo" : estado === "activando" ? "Activando…" : "Activar notificaciones push en este dispositivo"}
+      </button>
+      {error && <span className="text-xs" style={{ color: "#B91C1C" }}>{error}</span>}
+    </div>
+  );
+}
 function RecordatoriosView({ recordatorios, proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, query, onQuery, onNavigate, onNuevo, onEditar, onMarcarHecho, onEliminar }) {
   const [verHechos, setVerHechos] = useState(false);
   const alertas = useMemo(
@@ -7284,6 +7354,10 @@ function RecordatoriosView({ recordatorios, proximosServices, seguimientosPendie
       query={query} onQuery={onQuery}
       onNew={onNuevo} newLabel="Nuevo recordatorio"
     >
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <NotificacionesPushBoton />
+      </div>
+
       <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
         <div className="flex items-center gap-2 mb-3">
           <Bell size={15} style={{ color: ACCENT }} />

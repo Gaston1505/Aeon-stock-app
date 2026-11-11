@@ -122,6 +122,10 @@ service cloud.firestore {
     match /recordatorios/{docId} { allow read, write: if esAdmin(); }
     // Objetivos: metas comerciales propias, solo para admin — no depósito.
     match /objetivos/{docId} { allow read, write: if esAdmin(); }
+    // Tokens de notificaciones push (un doc por dispositivo/navegador que activó notificaciones)
+    // — solo para admin, igual que recordatorios/objetivos. El envío real lo hace una rutina
+    // aparte con credenciales de servicio, no la app.
+    match /pushTokens/{docId} { allow read, write: if esAdmin(); }
 
     // El PDF de la ficha técnica de cada producto vive acá (no en productos/{docId}) para que
     // el catálogo entero no se descargue cargado de PDFs cada vez que se abre la app — se pide

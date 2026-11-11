@@ -2,6 +2,7 @@ import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, persistentSingleTabManager } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
+import { getMessaging, isSupported as isMessagingSupported } from "firebase/messaging";
 
 // These values are safe to expose in client-side code — Firebase's web
 // config is not a secret. Access is controlled by Firestore security rules,
@@ -32,3 +33,8 @@ export const db = initializeFirestore(app, {
 export const auth = getAuth(app);
 
 export const storage = getStorage(app);
+
+// Notificaciones push (Firebase Cloud Messaging): no todos los navegadores lo soportan (Safari
+// viejo, contexto sin service worker) — getMessaging() tira si no está soportado, por eso se
+// resuelve de forma async acá y el resto de la app recibe null en vez de que explote.
+export const messagingReady = isMessagingSupported().then((soportado) => (soportado ? getMessaging(app) : null));

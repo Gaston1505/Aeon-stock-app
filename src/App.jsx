@@ -2125,7 +2125,7 @@ function GlobalSearch({ equipos, productos, cotizaciones, presupuestosReparacion
 
 // Campanita de alertas — visible en cualquier pestaña (no solo en Resumen), agrupa lo mismo que
 // ya se calcula ahí (garantías a contactar/reenviar, stock bajo) para no duplicar esa lógica.
-function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr, align = "right" }) {
+function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, otrosRecordatorios = [], recordatoriosPropios = [], onIr, align = "right" }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -2137,7 +2137,7 @@ function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr,
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  const total = alertasContacto.length + seguimientosPendientes.length + stockBajo.length;
+  const total = alertasContacto.length + seguimientosPendientes.length + stockBajo.length + otrosRecordatorios.length + recordatoriosPropios.length;
 
   const ir = (tab) => {
     onIr(tab);
@@ -2192,6 +2192,26 @@ function AlertasBell({ alertasContacto, seguimientosPendientes, stockBajo, onIr,
                   {stockBajo.map((r) => (
                     <button key={r.producto.id} onClick={() => ir("catalogo")} className="w-full text-left text-xs px-3 py-1.5 hover:bg-gray-50" style={{ color: INK }}>
                       {r.producto.nombre} — quedan {r.actual} (mínimo {r.minimo})
+                    </button>
+                  ))}
+                </div>
+              )}
+              {otrosRecordatorios.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1" style={{ color: MUTED }}>Recordatorios</p>
+                  {otrosRecordatorios.map((a) => (
+                    <button key={a.id} onClick={() => ir(a.navTab)} className="w-full text-left text-xs px-3 py-1.5 hover:bg-gray-50" style={{ color: INK }}>
+                      {a.titulo}{a.detalle ? ` — ${a.detalle}` : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {recordatoriosPropios.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide px-3 pt-2.5 pb-1" style={{ color: MUTED }}>Tuyos</p>
+                  {recordatoriosPropios.map((r) => (
+                    <button key={r.id} onClick={() => ir("recordatorios")} className="w-full text-left text-xs px-3 py-1.5 hover:bg-gray-50" style={{ color: INK }}>
+                      {r.titulo}
                     </button>
                   ))}
                 </div>
@@ -4476,6 +4496,20 @@ export default function App() {
     return filas.sort((a, b) => a.fecha.localeCompare(b.fecha));
   }, [transito]);
 
+  // Recordatorios "extra" para la campanita del header: retiros comprometidos, etapas de
+  // tránsito y la frase de motivación de lunes/miércoles — lo que NO es garantía/stock (eso ya
+  // lo cubren alertasContacto/seguimientosPendientes/stockBajo) pero igual vive en la pestaña
+  // Recordatorios. Se suma además lo propio sin marcar como hecho, para que la campana se ponga
+  // roja apenas haya algo pendiente ahí, sea automático o cargado a mano.
+  const otrosRecordatorios = useMemo(() => {
+    return construirAlertasAutomaticas({
+      proximosServices: [], seguimientosPendientes: [], proximosRetiros, transitoCronogramaVencido,
+      transitoProximosPagos, stockBajo: [],
+    });
+  }, [proximosRetiros, transitoCronogramaVencido, transitoProximosPagos]);
+
+  const recordatoriosPropiosPendientes = useMemo(() => recordatorios.filter((r) => !r.hecho), [recordatorios]);
+
   // Aviso proactivo al entrar a la app: en vez de depender de que alguien note la campanita
   // sola, se lo mostramos de una apenas termina de cargar todo — una vez por apertura de la app.
   const [mostrarAvisos, setMostrarAvisos] = useState(false);
@@ -4604,6 +4638,7 @@ export default function App() {
         </div>
         <AlertasBell
           alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
+          otrosRecordatorios={otrosRecordatorios} recordatoriosPropios={recordatoriosPropiosPendientes}
           onIr={navigateTo}
         />
         <button onClick={handleLogout} className="p-1.5 rounded hover:bg-gray-100" title="Cerrar sesión">
@@ -4627,6 +4662,7 @@ export default function App() {
             <div className="hidden md:flex items-center gap-1">
               <AlertasBell
                 alertasContacto={alertasContacto} seguimientosPendientes={seguimientosPendientes} stockBajo={stockBajo}
+                otrosRecordatorios={otrosRecordatorios} recordatoriosPropios={recordatoriosPropiosPendientes}
                 onIr={(t) => { navigateTo(t); setNavOpen(false); }}
                 align="left"
               />

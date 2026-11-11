@@ -6415,8 +6415,9 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
   const [idDoc, setIdDoc] = useState(pedidoExistente?.id || null);
   const [msg, setMsg] = useState(null); // { tipo: "ok" | "error", texto }
   const [ocupado, setOcupado] = useState("");
-  // Solo aplica en modo anticipo (cotizacionAnticipo viene seteado): "monto fijo" carga directo el
-  // precioUnit de la línea de Anticipo; "porcentaje" lo calcula a partir del total de la cotización.
+  // Solo aplica en modo anticipo (cotizacionAnticipo viene seteado): "total" carga el 100% de la
+  // cotización de una, "monto fijo" carga directo el precioUnit de la línea de Anticipo, y
+  // "porcentaje" lo calcula a partir del total de la cotización.
   const [modoAnticipo, setModoAnticipo] = useState("porcentaje");
   const [pctAnticipo, setPctAnticipo] = useState("");
 
@@ -6436,6 +6437,10 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     const monto = totalCotizacionAnticipo > 0 ? Math.round(totalCotizacionAnticipo * ((Number(valor) || 0) / 100) * 100) / 100 : 0;
     setLinea(0, "precioUnit", monto);
   };
+  const aplicarTotal = () => {
+    setModoAnticipo("total");
+    setLinea(0, "precioUnit", Math.round(totalCotizacionAnticipo * 100) / 100);
+  };
   // El texto que va al mail/PDF/Excel (origenPrecios) tiene que quedar siempre consistente con lo
   // que realmente se va a facturar: el total de la cotización y el % real (se calcule por "% del
   // total" o por "monto fijo") — así nunca queda la aclaración genérica de cuando todavía no se
@@ -6445,12 +6450,14 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     if (!cotizacionAnticipo) return;
     const nombreCot = cotizacionAnticipo.nombre || cotizacionAnticipo.categoria || "Cotización";
     const pct = totalCotizacionAnticipo > 0 ? Math.round((montoAnticipoElegido / totalCotizacionAnticipo) * 1000) / 10 : 0;
-    const texto = montoAnticipoElegido > 0
+    const texto = modoAnticipo === "total" && montoAnticipoElegido > 0
+      ? `Facturación del total de la cotización "${nombreCot}" (${fmtDate(cotizacionAnticipo.fecha)}) — U$S ${fmtN(montoAnticipoElegido)}. Mercadería sin entregar todavía.`
+      : montoAnticipoElegido > 0
       ? `Anticipo de la cotización "${nombreCot}" (${fmtDate(cotizacionAnticipo.fecha)}) — Total cotizado: U$S ${fmtN(totalCotizacionAnticipo)}. Se va a facturar el ${fmtN(pct, 1)}% de ese total (U$S ${fmtN(montoAnticipoElegido)}). Mercadería sin entregar todavía.`
       : `Anticipo de la cotización "${nombreCot}" (${fmtDate(cotizacionAnticipo.fecha)}) — Total cotizado: U$S ${fmtN(totalCotizacionAnticipo)}. Mercadería sin entregar todavía. Definí el % o el monto arriba.`;
     set("origenPrecios", texto);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cotizacionAnticipo, montoAnticipoElegido, totalCotizacionAnticipo]);
+  }, [cotizacionAnticipo, montoAnticipoElegido, totalCotizacionAnticipo, modoAnticipo]);
   // El nombre de la empresa sale siempre normalizado (Octagon SA, CCI SA) en PDF, Excel y mail,
   // aunque se haya escrito a mano de otra forma.
   const pFinal = () => normalizarCamposEmpresa(p);
@@ -6512,9 +6519,9 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
             {totalCotizacionAnticipo > 0 ? ` (${fmtN((yaPedidoCotizacion / totalCotizacionAnticipo) * 100, 1)}%)` : ""} · Quedaría sin pedir: <b>U$S {fmtN(Math.max(0, totalCotizacionAnticipo - yaPedidoCotizacion - total))}</b>
           </p>
           <div className="flex items-center gap-2 mb-2">
-            {[{ v: "porcentaje", label: "% del total" }, { v: "fijo", label: "Monto fijo" }].map((o) => (
+            {[{ v: "total", label: "Total" }, { v: "porcentaje", label: "% del total" }, { v: "fijo", label: "Monto fijo" }].map((o) => (
               <button
-                key={o.v} type="button" onClick={() => setModoAnticipo(o.v)}
+                key={o.v} type="button" onClick={() => (o.v === "total" ? aplicarTotal() : setModoAnticipo(o.v))}
                 className="text-xs px-2.5 py-1 rounded-full"
                 style={modoAnticipo === o.v ? { backgroundColor: ACCENT, color: "#FFFFFF" } : { backgroundColor: "#F2F3F4", color: MUTED }}
               >
@@ -6522,7 +6529,11 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
               </button>
             ))}
           </div>
-          {modoAnticipo === "porcentaje" ? (
+          {modoAnticipo === "total" ? (
+            <p className="text-xs" style={{ color: INK }}>
+              Se va a facturar el total de la cotización: <b>U$S {fmtN(totalCotizacionAnticipo)}</b>.
+            </p>
+          ) : modoAnticipo === "porcentaje" ? (
             <Field label="% del total de la cotización">
               <TextInput type="number" value={pctAnticipo} onChange={(e) => aplicarPorcentaje(e.target.value)} placeholder="Ej: 30" />
             </Field>

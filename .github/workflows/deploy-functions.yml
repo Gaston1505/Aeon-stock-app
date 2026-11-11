@@ -1,0 +1,30 @@
+name: Deploy Firebase Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - "firebase.json"
+      - ".firebaserc"
+      - ".github/workflows/deploy-functions.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+        working-directory: functions
+      # Requiere el secreto de repo FIREBASE_SERVICE_ACCOUNT (el JSON completo de la cuenta de
+      # servicio de Firebase) y que el proyecto esté en el plan Blaze — las funciones programadas
+      # (Cloud Scheduler) no están disponibles en el plan Spark gratuito.
+      - uses: w9jds/firebase-action@v13.7.2
+        with:
+          args: deploy --only functions --project aeon-stock-app
+        env:
+          GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

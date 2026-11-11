@@ -7286,22 +7286,6 @@ function NotificacionesPushBoton() {
   const [error, setError] = useState("");
   const [soportado, setSoportado] = useState(null);
 
-  useEffect(() => {
-    let activo = true;
-    notificacionesSoportadas().then((s) => { if (activo) setSoportado(s); });
-    return () => { activo = false; };
-  }, []);
-
-  if (soportado === false) return null;
-  if (typeof Notification !== "undefined" && Notification.permission === "granted" && estado === "inicial") {
-    // Ya estaba activado de una sesión anterior en este mismo dispositivo/navegador.
-    return (
-      <p className="text-xs flex items-center gap-1.5" style={{ color: "#15803D" }}>
-        <BellRing size={13} /> Notificaciones push activadas en este dispositivo.
-      </p>
-    );
-  }
-
   const activar = async () => {
     setEstado("activando");
     setError("");
@@ -7314,11 +7298,28 @@ function NotificacionesPushBoton() {
     }
   };
 
+  useEffect(() => {
+    let activo = true;
+    notificacionesSoportadas().then((s) => {
+      if (!activo) return;
+      setSoportado(s);
+      // El permiso del navegador puede haber quedado "concedido" de un intento anterior que
+      // falló antes de llegar a guardar el token (por ejemplo, por un permiso de Firestore que
+      // en ese momento todavía no estaba publicado) — el permiso del navegador no se revierte
+      // solo, así que si ya está concedido, reintenta guardar el token en vez de asumir que
+      // quedó guardado la primera vez.
+      if (s && typeof Notification !== "undefined" && Notification.permission === "granted") activar();
+    });
+    return () => { activo = false; };
+  }, []);
+
+  if (soportado === false) return null;
+
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <button
         onClick={activar}
-        disabled={estado === "activando" || estado === "ok"}
+        disabled={estado === "activando"}
         className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1.5"
         style={{ borderColor: BORDER, color: estado === "ok" ? "#15803D" : ACCENT }}
       >

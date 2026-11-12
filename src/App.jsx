@@ -6308,14 +6308,20 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
 // factor que usa armarPedidoDesdeGrupo para un remito real) — "basePrecioUnit" guarda ese precio
 // al 100% para poder escalarlo después al % o monto que se termine pidiendo (ver aplicarFactor en
 // PedidoFacturacionForm), sin perder de referencia cuál era el precio lleno.
-function itemizarCotizacionParaFacturar(cot) {
+function itemizarCotizacionParaFacturar(cot, productos) {
   const d = desglosarTotalCotizacion(cot);
   const factorDescuento = d.subtotal > 0 ? (d.subtotal - d.descuentoMonto) / d.subtotal : 1;
-  const lineasProducto = (cot.lineas || []).map((lin) => ({
-    cantidad: Number(lin.cantidad) || 1, marca: "AEON", codigo: lin.codigo || "",
-    producto: lin.producto || lin.nombre || "", familia: lin.familia || "",
-    basePrecioUnit: Math.round((Number(lin.precioUnit) || 0) * factorDescuento * 100) / 100,
-  }));
+  const lineasProducto = (cot.lineas || []).map((lin) => {
+    // Las líneas de la cotización solo guardan el código — el nombre descriptivo (y la familia,
+    // para el centro de costo sugerido) se resuelven del catálogo, igual que con un remito real.
+    const prod = productoDeCodigo(lin.codigo, [], productos || []);
+    return {
+      cantidad: Number(lin.cantidad) || 1, marca: "AEON", codigo: lin.codigo || "",
+      producto: lin.producto || lin.nombre || (prod ? nombreProducto(prod) : ""),
+      familia: lin.familia || prod?.categoriaPrincipal || "",
+      basePrecioUnit: Math.round((Number(lin.precioUnit) || 0) * factorDescuento * 100) / 100,
+    };
+  });
   const lineasServicio = [];
   if (cot.incluirInstalacion) {
     const servicios = cot.serviciosAdicionales || [];
@@ -6343,13 +6349,13 @@ function itemizarCotizacionParaFacturar(cot) {
 // abajo); si preferís el detalle (el caso típico de 1-2 productos), dejalas como están. Si la
 // cotización no tiene líneas cargadas (caso raro), cae a una sola línea "Anticipo" para no dejar el
 // formulario vacío.
-function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos }) {
+function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos, productos }) {
   const cliente = (cot.cliente || "").trim();
   const previo = [...(pedidos || [])]
     .filter((p) => p.cliente && p.cliente.trim().toLowerCase() === cliente.toLowerCase())
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
   const centro = centroCostoPorCodigo(centroCostoSugerido(cot.obra));
-  const itemizadas = itemizarCotizacionParaFacturar(cot);
+  const itemizadas = itemizarCotizacionParaFacturar(cot, productos);
   return {
     tipoPedido: "anticipo", cotizacionId: cot.id, remitoKey: "", remito: "",
     fecha: todayISO(),
@@ -6597,7 +6603,7 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     () => pedidoExistente || (
       grupo
         ? armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos, grupos })
-        : armarPedidoAnticipoDesdeCotizacion(cotizacionAnticipo, { pedidos, grupos })
+        : armarPedidoAnticipoDesdeCotizacion(cotizacionAnticipo, { pedidos, grupos, productos })
     ),
     [] // eslint-disable-line react-hooks/exhaustive-deps
   );

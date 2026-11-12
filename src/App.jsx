@@ -5021,7 +5021,7 @@ export default function App() {
             <SalidasPorRemito
               movimientos={filteredMovimientos} productos={productos} equipos={equipos} pedidos={pedidosFacturacion} ventas={ventas}
               cotizaciones={cotizaciones} gruposEmpresas={gruposEmpresas} esAdmin={esAdmin}
-              facturasObra={facturasObra} onGuardarFactura={guardarFacturaObra}
+              facturasObra={facturasObra} fichasObras={fichasObras} comprometidas={comprometidas} onGuardarFactura={guardarFacturaObra}
               forzarAbierto={query.trim().length > 0} onDelete={deleteMovimiento} onVerFoto={setFotoView}
               onSubirFoto={subirFotoRemito}
               onSubirActa={subirActaConformidad}
@@ -6031,7 +6031,7 @@ function EstadoVentaRemito({ pedido, esAdmin, facturasDisponibles, onMarcarFactu
   );
 }
 
-function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, facturasObra, onGuardarFactura, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onSubirActa, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
+function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, cotizaciones, gruposEmpresas, facturasObra, fichasObras, comprometidas, onGuardarFactura, forzarAbierto, onDelete, onVerFoto, onSubirFoto, onSubirActa, onAdjuntarFactura, onPedido, onGuardarPedido, esAdmin }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const [avisoFactura, setAvisoFactura] = useState("");
   const [historialAbierto, setHistorialAbierto] = useState(false);
@@ -6077,6 +6077,17 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
         const empresaR = resolverEmpresa(m0.empresaCliente || m0.cliente, gruposEmpresas || []);
         const obraKeyG = normClave(m0.obra) || "(sin obra)";
         const facturasDeEstaObra = empresaR ? (facturasObra || []).filter((f) => f.empresaKey === empresaR.key && f.obraKey === obraKeyG) : [];
+        // Pago real ya cargado para esta obra (ficha de obra + Ventas comprometidas), aunque
+        // Administración todavía no haya tildado "Pagado" en el Pedido de facturación — para no
+        // mostrar "Sin pagar" a secas cuando en realidad ya hay una seña o un pago parcial cargado.
+        const pagoRealObra = empresaR
+          ? [
+              ...((fichasObras || []).find((f) => f.id === idFichaObra(empresaR.key, obraKeyG))?.pagos || []),
+              ...(comprometidas || [])
+                .filter((c) => resolverEmpresa(c.razonSocial, gruposEmpresas || [])?.key === empresaR.key && (normClave(c.obra) || "(sin obra)") === obraKeyG)
+                .flatMap((c) => c.pagos || []),
+            ].reduce((acc, p) => acc + (Number(p.monto) || 0), 0)
+          : 0;
         const accionPedido = onPedido && (
           <span
             role="button" title="Pedido de facturación para Administración"
@@ -6098,7 +6109,7 @@ function SalidasPorRemito({ movimientos, productos, equipos, pedidos, ventas, co
               {facturada ? "Facturada" : "Sin facturar"}
             </span>
             <span className="text-[11px] px-2 py-1 rounded-full font-medium" style={{ backgroundColor: pagado ? "#E9F7EF" : "#FDF1E0", color: pagado ? "#15803D" : "#B45309" }}>
-              {pagado ? "Pagada" : "Sin pagar"}
+              {pagado ? "Pagada" : pagoRealObra > 0 ? `Pago parcial · ${usd(pagoRealObra)}` : "Sin pagar"}
             </span>
           </>
         );

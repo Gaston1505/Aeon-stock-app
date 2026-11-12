@@ -5364,6 +5364,7 @@ export default function App() {
           producto={productoEditando}
           defaults={nuevoProductoDefaults}
           matrizCostos={matrizCostosEfectiva}
+          productos={productos}
           onSave={async (d) => {
             let id = productoEditando?.id;
             if (productoEditando) await updateProducto(productoEditando.id, d);
@@ -11673,7 +11674,7 @@ function PlayaForm({ onSave }) {
 }
 
 // ---------- Catálogo de productos ----------
-function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
+function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
   const [nombre, setNombre] = useState(producto?.nombre || "");
   const [categoria, setCategoria] = useState(producto?.categoria || "");
   const [categoriaPrincipal, setCategoriaPrincipal] = useState(producto?.categoriaPrincipal || defaults?.categoriaPrincipal || "");
@@ -11698,6 +11699,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
   const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stockMinimo ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
+  const [reusarFotoId, setReusarFotoId] = useState("");
   const [noDisponible, setNoDisponible] = useState(!!producto?.noDisponible);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
@@ -11724,6 +11726,14 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
     if (primerRender.current) { primerRender.current = false; return; }
     if (sugerido) { setPrecioLista(String(sugerido.precio)); setPrecioManual(false); }
   }, [costoOrigen, contenedorCantidad, markupPropio, categoriaPrincipal, subcategoria, subcategoria2]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Para no tener que subir de nuevo la misma foto genérica por tipo de equipo (p.ej. al cargar
+  // una fábrica nueva con las mismas fotos que ya usa Midea para Cassette/Ducto/Piso-Techo) — se
+  // ofrecen los productos de la misma subcategoría que ya tengan foto, para copiarla con un click.
+  const candidatosFoto = useMemo(
+    () => (productos || []).filter((p) => p.foto && p.subcategoria === subcategoria && p.id !== producto?.id),
+    [productos, subcategoria, producto]
+  );
 
   const handleFoto = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -11890,6 +11900,22 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         <FotoPicker onChange={handleFoto} />
       </Field>
       {subiendoFoto && <p className="text-xs mb-2" style={{ color: MUTED }}>Procesando imagen...</p>}
+      {candidatosFoto.length > 0 && (
+        <div className="flex items-end gap-2 mb-3">
+          <Field label={`O reusar la foto de otro producto "${subcategoria}"`}>
+            <Select value={reusarFotoId} onChange={(e) => setReusarFotoId(e.target.value)}>
+              <option value="">Elegí un producto...</option>
+              {candidatosFoto.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </Select>
+          </Field>
+          <SecondaryButton
+            onClick={() => { const p = candidatosFoto.find((p) => p.id === reusarFotoId); if (p) setFoto(p.foto); }}
+            disabled={!reusarFotoId}
+          >
+            Usar esta foto
+          </SecondaryButton>
+        </div>
+      )}
       {foto && (
         <div className="mb-3 relative inline-block">
           <img src={foto} alt="Producto" className="rounded border" style={{ maxWidth: 140, borderColor: BORDER }} />

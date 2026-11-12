@@ -34,6 +34,7 @@ import {
   downloadListadoProductosPdf, generateListadoProductosPdf, nombreArchivoListadoProductos,
   downloadContratoPdf, nombreArchivoContrato, downloadContratoWord, parseContratoWordDocx, ETIQUETAS_CAMPOS_CONTRATO,
   COMPANY, fmtFecha, dataUrlToBytes, gananciaAeonService,
+  generateFichaTecnicaAirePdf,
 } from "./pdf";
 import { prepararPdfParaFirestore } from "./pdfCompress";
 
@@ -5745,6 +5746,29 @@ function ServiceCell({ venta, field, label, onUpdate, onGestionar }) {
 // Vacío = Midea (toda la línea histórica quedó así, sin necesidad de migrar nada).
 const FABRICAS_CONOCIDAS = ["Midea", "TCL", "Chigo"];
 function fabricaDe(p) { return (p?.fabrica || "").trim() || "Midea"; }
+
+// Campos técnicos para generar la ficha técnica de un Aire Acondicionado (ver generateFichaTecnicaAirePdf
+// en pdf.js) — Modelo/Tipo de producto/Tecnología salen solos del nombre/subcategoria/subcategoria2,
+// el resto se carga a mano una vez por modelo y después se reusa con "Generar ficha técnica".
+const ESPECS_FICHA_AIRE_CAMPOS = [
+  ["capacidadNominal", "Capacidad nominal", "Ej: 24.000 BTU/h · frío / calor (bomba de calor)"],
+  ["consumoFrioEer", "Consumo en frío / EER (W/W)", "Ej: 2.450 W / 2,87"],
+  ["capacidadCalor", "Capacidad de calor", "Ej: 24.000 BTU/h"],
+  ["consumoCalorCop", "Consumo en calor / COP (W/W)", "Ej: 1.600 W / 4,39"],
+  ["alimentacion", "Alimentación", "Ej: 220-240 V, monofásico, 50 Hz"],
+  ["gasRefrigerante", "Gas refrigerante", "Ej: R32 (1,6 kg)"],
+  ["conexionesCaneria", "Conexiones de cañería", "Ej: Líquido 3/8\" / Gas 5/8\""],
+  ["longitudMaxCaneria", "Longitud máx. de cañería / desnivel máx.", "Ej: 25 m / 15 m"],
+  ["caudalAireInterior", "Caudal de aire interior (por velocidad)", "Ej: 1247 / 1118 / 992 m³/h"],
+  ["ruidoInterior", "Ruido unidad interior", "Ej: 49,5 / 45,0 / 42,5 dB(A)"],
+  ["ruidoExterior", "Ruido unidad exterior", "Ej: 58 dB(A)"],
+  ["dimInterior", "Unidad interior (Ancho x Prof. x Alto) (mm)", "Ej: 830 x 830 x 205"],
+  ["pesoInterior", "Peso unidad interior neto / bruto", "Ej: 21,6 / 25,4 kg"],
+  ["dimExterior", "Unidad exterior (Ancho x Prof. x Alto) (mm)", "Ej: 805 x 330 x 554"],
+  ["pesoExterior", "Peso unidad exterior neto / bruto", "Ej: 33 / 35,5 kg"],
+  ["tempExterior", "Temperatura exterior de funcionamiento", "Ej: Frío 0 a 50 °C · Calor -15 a 24 °C"],
+  ["incluye", "Incluye", "Ej: 3 m de cañería de cobre, 3,5 m de cable y control remoto"],
+];
 
 // Nombre legible del producto (lo que es, no solo el código) — se arma con la categoría del
 // catálogo: "Split Pared Inverter 24.000 BTU", "Anafe Inducción 3 zonas", "Termocalefón 80 Lt.".
@@ -11700,6 +11724,11 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
   const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stockMinimo ?? "") : "");
   const [foto, setFoto] = useState(producto?.foto || "");
   const [reusarFotoId, setReusarFotoId] = useState("");
+  const [fotoExterior, setFotoExterior] = useState(producto?.fotoExterior || "");
+  const [reusarFotoExteriorId, setReusarFotoExteriorId] = useState("");
+  const [especsFicha, setEspecsFicha] = useState(producto?.especsFicha || {});
+  const [generandoFicha, setGenerandoFicha] = useState(false);
+  const [errorFicha, setErrorFicha] = useState("");
   const [noDisponible, setNoDisponible] = useState(!!producto?.noDisponible);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
@@ -11734,6 +11763,12 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
     () => (productos || []).filter((p) => p.foto && p.subcategoria === subcategoria && p.id !== producto?.id),
     [productos, subcategoria, producto]
   );
+  // Mismo mecanismo que candidatosFoto, pero para la foto de la unidad exterior (el condensador
+  // es el mismo equipo para todo un tipo+BTU, así que también conviene reusarla entre fábricas).
+  const candidatosFotoExterior = useMemo(
+    () => (productos || []).filter((p) => p.fotoExterior && p.subcategoria === subcategoria && p.id !== producto?.id),
+    [productos, subcategoria, producto]
+  );
 
   const handleFoto = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -11754,6 +11789,27 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
     setError("");
     setAvisoFicha(file.size > MAX_FICHA_BYTES ? `Pesa ${fmtN(file.size / 1024, 0)}KB — se va a comprimir automáticamente al guardar (puede perder algo de nitidez).` : "");
     setFichaFile(file);
+  };
+
+  // Arma la ficha técnica con el mismo esqueleto que ya usan las de Midea (ver generateFichaTecnicaAirePdf
+  // en pdf.js) y la deja como si se hubiera subido a mano — así se guarda con el mismo flujo de
+  // siempre (comprimir si hace falta + guardarFichaTecnica) al tocar "Guardar".
+  const generarFicha = async () => {
+    setGenerandoFicha(true);
+    setErrorFicha("");
+    try {
+      const bytes = await generateFichaTecnicaAirePdf({
+        modelo: nombre, tipoProducto: subcategoria, tecnologia: subcategoria2,
+        fotoInterior: foto, fotoExterior,
+        ...especsFicha,
+      });
+      const archivo = new File([bytes], `Ficha_tecnica_${nombre || "producto"}.pdf`, { type: "application/pdf" });
+      setFichaFile(archivo);
+      setAvisoFicha("");
+    } catch (err) {
+      setErrorFicha("No se pudo generar la ficha técnica.");
+    }
+    setGenerandoFicha(false);
   };
 
   const submit = async () => {
@@ -11785,7 +11841,7 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
-        foto, noDisponible, fichaTecnicaNombre,
+        foto, fotoExterior, especsFicha, noDisponible, fichaTecnicaNombre,
       });
       if (fichaDataUrl && id) await guardarFichaTecnica(id, fichaDataUrl);
     } catch (err) {
@@ -11923,6 +11979,60 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
             <X size={12} color="#FFFFFF" />
           </button>
         </div>
+      )}
+
+      {categoriaPrincipal === "Aire Acondicionado" && (
+        <>
+          <Field label="Foto de la unidad exterior (para la ficha técnica)">
+            <FotoPicker onChange={async (e) => {
+              const file = e.target.files && e.target.files[0];
+              if (!file) return;
+              setSubiendoFoto(true);
+              try { setFotoExterior(await compressImage(file, 480, 0.75)); }
+              catch (err) { setError("No se pudo procesar la foto, probá con otra imagen."); }
+              setSubiendoFoto(false);
+            }} />
+          </Field>
+          {candidatosFotoExterior.length > 0 && (
+            <div className="flex items-end gap-2 mb-3">
+              <Field label={`O reusar la foto exterior de otro producto "${subcategoria}"`}>
+                <Select value={reusarFotoExteriorId} onChange={(e) => setReusarFotoExteriorId(e.target.value)}>
+                  <option value="">Elegí un producto...</option>
+                  {candidatosFotoExterior.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                </Select>
+              </Field>
+              <SecondaryButton
+                onClick={() => { const p = candidatosFotoExterior.find((p) => p.id === reusarFotoExteriorId); if (p) setFotoExterior(p.fotoExterior); }}
+                disabled={!reusarFotoExteriorId}
+              >
+                Usar esta foto
+              </SecondaryButton>
+            </div>
+          )}
+          {fotoExterior && (
+            <div className="mb-3 relative inline-block">
+              <img src={fotoExterior} alt="Unidad exterior" className="rounded border" style={{ maxWidth: 140, borderColor: BORDER }} />
+              <button onClick={() => setFotoExterior("")} className="absolute -top-2 -right-2 rounded-full p-0.5" style={{ backgroundColor: "#B91C1C" }}>
+                <X size={12} color="#FFFFFF" />
+              </button>
+            </div>
+          )}
+
+          <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos técnicos (para generar la ficha)</p>
+          {ESPECS_FICHA_AIRE_CAMPOS.map(([key, label, placeholder]) => (
+            <Field key={key} label={label}>
+              <TextInput
+                value={especsFicha[key] || ""}
+                onChange={(e) => setEspecsFicha((prev) => ({ ...prev, [key]: e.target.value }))}
+                placeholder={placeholder}
+              />
+            </Field>
+          ))}
+          <SecondaryButton onClick={generarFicha} disabled={generandoFicha}>
+            {generandoFicha ? "Generando..." : "Generar ficha técnica"}
+          </SecondaryButton>
+          {errorFicha && <p className="text-xs mt-1 mb-2" style={{ color: "#B91C1C" }}>{errorFicha}</p>}
+        </>
       )}
 
       <Field label="Ficha técnica (PDF)">

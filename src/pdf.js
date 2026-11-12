@@ -2768,6 +2768,135 @@ export async function downloadArmadoCombinacionPdf(armado) {
   downloadBlob(bytes, nombreArchivoArmadoCombinacion(armado), "application/pdf");
 }
 
+// ---------- Ficha técnica de Aire Acondicionado (generada, no subida a mano) ----------
+// Mismo esqueleto fijo para cualquier fábrica (Midea, TCL, Chigo...) — lo único que cambia por
+// producto son los valores y las dos fotos (unidad interior / unidad exterior). `datos` trae los
+// 20 campos ya como texto listo para mostrar (sin formatear acá, para no esconder a qué fábrica
+// le falta un dato real: si no hay info de la planilla de origen, el campo debe venir en "—").
+const FICHA_AIRE_CAMPOS = [
+  ["modelo", "Modelo"],
+  ["tipoProducto", "Tipo de producto"],
+  ["tecnologia", "Tecnología"],
+  ["capacidadNominal", "Capacidad nominal"],
+  ["consumoFrioEer", "Consumo en frío / EER (W/W)"],
+  ["capacidadCalor", "Capacidad de calor"],
+  ["consumoCalorCop", "Consumo en calor / COP (W/W)"],
+  ["alimentacion", "Alimentación"],
+  ["gasRefrigerante", "Gas refrigerante"],
+  ["conexionesCaneria", "Conexiones de cañería"],
+  ["longitudMaxCaneria", "Longitud máx. de cañería / desnivel máx."],
+  ["caudalAireInterior", "Caudal de aire interior (por velocidad)"],
+  ["ruidoInterior", "Ruido unidad interior"],
+  ["ruidoExterior", "Ruido unidad exterior"],
+  ["dimInterior", "Unidad interior (Ancho x Prof. x Alto) (mm)"],
+  ["pesoInterior", "Peso unidad interior neto / bruto"],
+  ["dimExterior", "Unidad exterior (Ancho x Prof. x Alto) (mm)"],
+  ["pesoExterior", "Peso unidad exterior neto / bruto"],
+  ["tempExterior", "Temperatura exterior de funcionamiento"],
+  ["incluye", "Incluye"],
+];
+
+export async function generateFichaTecnicaAirePdf(datos) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+  const fotoInteriorImg = datos.fotoInterior ? await embedImagenDataUrl(pdf, datos.fotoInterior) : null;
+  const fotoExteriorImg = datos.fotoExterior ? await embedImagenDataUrl(pdf, datos.fotoExterior) : null;
+
+  const page = pdf.addPage([AC_PAGE_W, AC_PAGE_H]);
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.7 : 0 });
+  }
+
+  let y = AC_PAGE_H - AC_MARGIN;
+  const headerH = 60;
+  const headerW = AC_CONTENT_W * 0.62;
+  rect(AC_MARGIN, y - headerH, headerW, headerH, { fill: ACCENT });
+  text("Ficha Técnica", AC_MARGIN + 20, y - headerH / 2 - 8, { bold: true, size: 22, color: WHITE });
+  if (logoImg) {
+    const w = 100;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: AC_MARGIN + headerW + 30, y: y - headerH / 2 - h / 2, width: w, height: h });
+  }
+  y -= headerH + 14;
+
+  const tablaW = AC_CONTENT_W * 0.43;
+  const fotosX = AC_MARGIN + tablaW;
+  const fotosW = AC_CONTENT_W - tablaW;
+  const fotoColW = fotosW / 2;
+  const labelW = tablaW * 0.5;
+  const valorW = tablaW - labelW;
+  const footerH = 20;
+  const tablaTop = y;
+
+  const filaHs = FICHA_AIRE_CAMPOS.map(([key, label]) => {
+    const lineasLabel = wrapText(bold, label, 7.5, labelW - 10);
+    const lineasValor = wrapText(font, datos[key] || "—", 7.5, valorW - 10);
+    return Math.max(lineasLabel.length, lineasValor.length) * 10 + 8;
+  });
+
+  let fy = tablaTop;
+  FICHA_AIRE_CAMPOS.forEach(([key, label], i) => {
+    const h = filaHs[i];
+    rect(AC_MARGIN, fy - h, labelW, h, { border: BORDER, fill: i === 0 ? ACCENT_LIGHT : undefined });
+    rect(AC_MARGIN + labelW, fy - h, valorW, h, { border: BORDER });
+    const lineasLabel = wrapText(bold, label, 7.5, labelW - 10);
+    const lineasValor = wrapText(font, datos[key] || "—", 7.5, valorW - 10);
+    lineasLabel.forEach((l, j) => text(l, AC_MARGIN + 5, fy - 12 - j * 10, { bold: true, size: 7.5 }));
+    lineasValor.forEach((l, j) => text(l, AC_MARGIN + labelW + 5, fy - 12 - j * 10, { size: 7.5 }));
+    fy -= h;
+  });
+  const tablaBottom = fy;
+
+  const fotoHeaderH = 16;
+  rect(fotosX, tablaTop - fotoHeaderH, fotoColW, fotoHeaderH, { border: BORDER });
+  rect(fotosX + fotoColW, tablaTop - fotoHeaderH, fotoColW, fotoHeaderH, { border: BORDER });
+  const lblInt = "Unidad interior";
+  const lblExt = "Unidad exterior";
+  text(lblInt, fotosX + fotoColW / 2 - bold.widthOfTextAtSize(lblInt, 8) / 2, tablaTop - 11, { bold: true, size: 8 });
+  text(lblExt, fotosX + fotoColW + fotoColW / 2 - bold.widthOfTextAtSize(lblExt, 8) / 2, tablaTop - 11, { bold: true, size: 8 });
+
+  const fotoAreaBottom = AC_MARGIN + footerH + 10;
+  const fotoAreaH = tablaTop - fotoHeaderH - fotoAreaBottom;
+  function dibujarFoto(img, colX) {
+    if (!img) return;
+    const maxW = fotoColW - 20;
+    const maxH = fotoAreaH - 20;
+    const esc = Math.min(maxW / img.width, maxH / img.height);
+    const w = img.width * esc;
+    const h = img.height * esc;
+    page.drawImage(img, { x: colX + fotoColW / 2 - w / 2, y: fotoAreaBottom + (fotoAreaH - h) / 2, width: w, height: h });
+  }
+  dibujarFoto(fotoInteriorImg, fotosX);
+  dibujarFoto(fotoExteriorImg, fotosX + fotoColW);
+
+  rect(fotosX, tablaBottom, fotoColW * 2, tablaTop - fotoHeaderH - tablaBottom, { border: BORDER });
+  rect(fotosX, tablaBottom, fotoColW, tablaTop - fotoHeaderH - tablaBottom, { border: BORDER });
+
+  const pie1 = "AEON Home Tech · Park Plaza, piso 11, Asunción · info@aeon.com.py · +595 976 144599";
+  const pie2 = "Datos sujetos a cambios sin previo aviso.";
+  text(pie1, AC_MARGIN, AC_MARGIN, { size: 7, color: MUTED });
+  text(pie2, AC_PAGE_W - AC_MARGIN - font.widthOfTextAtSize(pie2, 7), AC_MARGIN, { size: 7, color: MUTED });
+
+  return pdf.save();
+}
+
+export function nombreArchivoFichaTecnicaAire(datos) {
+  return `Ficha_tecnica_${limpiarNombreArchivo(datos.modelo) || "producto"}.pdf`;
+}
+
+export async function downloadFichaTecnicaAirePdf(datos) {
+  const bytes = await generateFichaTecnicaAirePdf(datos);
+  downloadBlob(bytes, nombreArchivoFichaTecnicaAire(datos), "application/pdf");
+}
+
 // ---------- Rentabilidad de una cotización ----------
 // `r` es el objeto que ya devuelve calcularRentabilidadCotizacion (App.jsx) — este módulo solo
 // lo dibuja, no recalcula nada, para que el PDF nunca pueda desviarse de lo que se ve en pantalla.

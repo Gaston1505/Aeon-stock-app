@@ -5541,7 +5541,7 @@ export default function App() {
           />
         )}
       </Drawer>
-      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); setPedidoAnticipoTarget(null); }} title={pedidoAnticipoTarget ? "Pedido de facturación — anticipo" : "Pedido de facturación"}>
+      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); setPedidoAnticipoTarget(null); }} title="Pedido de facturación">
         {pedidoTarget && (
           <PedidoFacturacionForm
             key={pedidoTarget.key}
@@ -17037,11 +17037,11 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
         {onPedidoAnticipo && (
           <button
             onClick={() => onPedidoAnticipo(c)}
-            title="Pedido de facturación por un anticipo, sin esperar a que se retire mercadería"
+            title="Pedir que Administración facture esta cotización (total, % o monto fijo), sin esperar a que se retire mercadería"
             className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
             style={{ borderColor: BORDER, color: INK }}
           >
-            <FileText size={13} /> Pedido de anticipo
+            <FileText size={13} /> Pedido de facturación
           </button>
         )}
         {onGenerarContrato && (

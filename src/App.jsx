@@ -1594,6 +1594,7 @@ const CAMPOS_IMPORT_CATALOGO = [
   { campo: "contenedorTipo", alias: ["contenedor tipo", "contenedor (tipo)"] },
   { campo: "contenedorCantidad", alias: ["contenedor cantidad", "cantidad por contenedor"] },
   { campo: "stockDisponible", alias: ["stock disponible", "stock", "cantidad en stock"] },
+  { campo: "fabrica", alias: ["fabrica", "fabrica / proveedor", "fabrica (interno)"] },
 ];
 function parseCatalogoExcel(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
@@ -1630,6 +1631,7 @@ function parseCatalogoExcel(arrayBuffer) {
       contenedorTipo: String(item.contenedorTipo || "").trim(),
       contenedorCantidad: Number(item.contenedorCantidad) || 0,
       stockDisponible: item.stockDisponible === "" || item.stockDisponible == null ? null : Number(item.stockDisponible) || 0,
+      fabrica: String(item.fabrica || "").trim(),
       foto: "", fichaTecnicaNombre: "",
     });
   });
@@ -1666,6 +1668,7 @@ function descargarPlantillaCatalogo() {
     "Especificación - etiqueta": "Potencia nominal", "Especificación - valor": "3000W",
     "Precio de lista U$S": 99, "Costo de origen U$S": 55, "Costo puesto en PY U$S": 70,
     "Contenedor tipo": "40HQ", "Contenedor cantidad": 420, "Stock disponible": 5,
+    "Fábrica": "Midea", // dato interno (nunca aparece en la cotización) — vacío = Midea
   }];
   const ws = XLSX.utils.json_to_sheet(filas);
   ws["!cols"] = autoAnchoColumnas(filas);
@@ -5734,6 +5737,13 @@ function ServiceCell({ venta, field, label, onUpdate, onGestionar }) {
     </div>
   );
 }
+
+// Fábrica/proveedor real del modelo (Midea, TCL, Chigo...) — para elegir internamente qué
+// calidad ofrecerle a cada cliente. Es un dato puramente interno: nunca aparece en la
+// cotización ni en ningún PDF para el cliente (ver ProductoForm, CatalogoView, CotizacionForm).
+// Vacío = Midea (toda la línea histórica quedó así, sin necesidad de migrar nada).
+const FABRICAS_CONOCIDAS = ["Midea", "TCL", "Chigo"];
+function fabricaDe(p) { return (p?.fabrica || "").trim() || "Midea"; }
 
 // Nombre legible del producto (lo que es, no solo el código) — se arma con la categoría del
 // catálogo: "Split Pared Inverter 24.000 BTU", "Anafe Inducción 3 zonas", "Termocalefón 80 Lt.".
@@ -11681,6 +11691,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
   // Si se escribe el precio a mano, el precio automático no lo pisa hasta que se vuelva a tocar el costo.
   const [precioManual, setPrecioManual] = useState(false);
   const [codigoFabrica, setCodigoFabrica] = useState(producto?.codigoFabrica || "");
+  const [fabrica, setFabrica] = useState(producto?.fabrica || "");
   const [contenedorTipo, setContenedorTipo] = useState(producto?.contenedorTipo || "40HQ");
   const [contenedorCantidad, setContenedorCantidad] = useState(producto ? String(producto.contenedorCantidad ?? "") : "");
   const [stockDisponible, setStockDisponible] = useState(producto ? String(producto.stockDisponible ?? "") : "");
@@ -11759,7 +11770,7 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
         precioLista: Number(precioLista) || 0,
         costoOrigen: Number(costoOrigen) || 0, costoPy: costoPyEfectivo,
         markupListaPct: markupPropio === "" ? null : Number(markupPropio),
-        codigoFabrica: codigoFabrica.trim(),
+        codigoFabrica: codigoFabrica.trim(), fabrica: fabrica.trim(),
         contenedorTipo, contenedorCantidad: Number(contenedorCantidad) || 0,
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
@@ -11818,6 +11829,14 @@ function ProductoForm({ producto, defaults, matrizCostos, onSave }) {
       </Field>
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Datos internos de costo (no aparecen en la cotización)</p>
+      {!esRepuesto && (
+        <Field label="Fábrica / proveedor (dato interno — nunca aparece en la cotización ni en el PDF para el cliente)">
+          <TextInput value={fabrica} onChange={(e) => setFabrica(e.target.value)} placeholder="Vacío = Midea" list="fabricas-conocidas" />
+          <datalist id="fabricas-conocidas">
+            {FABRICAS_CONOCIDAS.map((f) => <option key={f} value={f} />)}
+          </datalist>
+        </Field>
+      )}
       {esRepuesto && (
         <Field label="Código de pieza (fábrica)">
           <TextInput value={codigoFabrica} onChange={(e) => setCodigoFabrica(e.target.value)} placeholder="Opcional — para matchear llegadas de Tránsito" />
@@ -11947,7 +11966,14 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, comprom
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <CodeTag>{p.nombre}</CodeTag>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <CodeTag>{p.nombre}</CodeTag>
+              {p.categoriaPrincipal === "Aire Acondicionado" && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: "#EDE9FE", color: "#6D28D9" }} title="Fábrica — dato interno, nunca aparece en la cotización">
+                  {fabricaDe(p)}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-1 shrink-0">
               <button onClick={() => onEdit(p)} className="p-1 rounded hover:bg-gray-100" title="Editar producto">
                 <Pencil size={13} style={{ color: MUTED }} />
@@ -12757,11 +12783,22 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
     return mapa;
   }, [equipos]);
 
+  // Fábricas de Aire Acondicionado cargadas en el catálogo (Midea, TCL, Chigo...) — el filtro
+  // solo se muestra cuando hay más de una, para no agregar ruido mientras todo sea Midea.
+  const fabricasAires = useMemo(
+    () => [...new Set((productosTodos || productos).filter((p) => p.categoriaPrincipal === "Aire Acondicionado").map(fabricaDe))].sort(),
+    [productosTodos, productos]
+  );
+  const [fabricaFiltro, setFabricaFiltro] = useState("todas");
+
   // El catálogo muestra solo lo que ya está dado de alta — lo que viene en tránsito se ve
   // únicamente en la pestaña Tránsito, y recién entra acá cuando se confirma "Dar llegada".
   const productosFiltrados = useMemo(
-    () => productos.filter((p) => (p.categoriaPrincipal === "Repuestos") === (modo === "repuestos")),
-    [productos, modo]
+    () => productos.filter((p) =>
+      (p.categoriaPrincipal === "Repuestos") === (modo === "repuestos") &&
+      (fabricaFiltro === "todas" || p.categoriaPrincipal !== "Aire Acondicionado" || fabricaDe(p) === fabricaFiltro)
+    ),
+    [productos, modo, fabricaFiltro]
   );
 
   const buscando = query.trim().length > 0;
@@ -12815,6 +12852,12 @@ function CatalogoView({ productos, productosTodos, matrizCostos, onAplicarPrecio
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
+          {fabricasAires.length > 1 && (
+            <Select value={fabricaFiltro} onChange={(e) => setFabricaFiltro(e.target.value)} style={{ ...inputStyle, width: "auto" }} title="Fábrica de Aire Acondicionado a mostrar — dato interno">
+              <option value="todas">Aires: todas las fábricas</option>
+              {fabricasAires.map((f) => <option key={f} value={f}>Aires: solo {f}</option>)}
+            </Select>
+          )}
           <SecondaryButton onClick={() => setVerListaPrecios((v) => !v)}><FileText size={14} /> Lista de precios</SecondaryButton>
           <SecondaryButton onClick={() => setVerListadoProductos((v) => !v)}><List size={14} /> Listado de productos</SecondaryButton>
           <SecondaryButton onClick={() => setVerMetricas((v) => !v)}><Calculator size={14} /> Precios según métricas</SecondaryButton>
@@ -14708,13 +14751,27 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
     telefonoAutoRef.current = t;
   };
 
+  // Fábricas de Aire Acondicionado cargadas (Midea, TCL, Chigo...) — dato puramente interno
+  // (nunca aparece en la cotización ni en el PDF) para decidir qué calidad ofrecerle a este
+  // cliente. El selector solo se muestra cuando ya hay más de una, para no agregar ruido
+  // mientras todo siga siendo Midea.
+  const fabricasAires = useMemo(
+    () => [...new Set(productos.filter((p) => p.categoriaPrincipal === "Aire Acondicionado").map(fabricaDe))].sort(),
+    [productos]
+  );
+  const [fabricaElegida, setFabricaElegida] = useState("Midea");
+
   // Agrupa el selector de productos por categoría (categoriaPrincipal > subcategoria > ...)
   // para que un catálogo grande siga siendo navegable en vez de una lista plana larguísima.
   // Mismos grupos y mismo orden que el Catálogo (Tipo de equipo, ON-OFF antes que Inverter,
   // BTU/capacidad ascendente vía ordenNumerico) — así elegir acá es tan claro como navegarlo allá.
   // Los marcados "no disponible para la venta" (ver ProductoForm) no deben poder elegirse acá
-  // — siguen visibles/editables en Catálogo para el admin, solo se ocultan del picker.
-  const productosDisponibles = useMemo(() => productos.filter((p) => !p.noDisponible), [productos]);
+  // — siguen visibles/editables en Catálogo para el admin, solo se ocultan del picker. Los de
+  // Aire Acondicionado, además, se recortan a la fábrica elegida arriba.
+  const productosDisponibles = useMemo(
+    () => productos.filter((p) => !p.noDisponible && (p.categoriaPrincipal !== "Aire Acondicionado" || fabricaDe(p) === fabricaElegida)),
+    [productos, fabricaElegida]
+  );
   const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
 
   const handleProducto = (id) => {
@@ -14886,6 +14943,22 @@ function CotizacionForm({ productos, clientes, cotizaciones, matrizCostos, onGua
           empezar a cargar productos. */}
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Productos</p>
       <div className="p-2.5 rounded mb-3" style={{ backgroundColor: "#F7F8FA" }}>
+        {fabricasAires.length > 1 && (
+          <div className="mb-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium" style={{ color: MUTED }}>Fábrica para Aire Acondicionado (interno):</span>
+            {fabricasAires.map((f) => (
+              <button
+                key={f} type="button" onClick={() => { setFabricaElegida(f); setProductoId(""); }}
+                className="text-xs px-2.5 py-1 rounded-md font-medium"
+                style={fabricaElegida === f
+                  ? { backgroundColor: ACCENT, color: "#FFFFFF" }
+                  : { backgroundColor: "#FFFFFF", color: MUTED, border: `0.5px solid ${BORDER}` }}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        )}
         <Field label="Producto del catálogo">
           <SelectorProducto productos={productosDisponibles} productosPorGrupo={productosPorGrupo} value={productoId} onChange={handleProducto} />
         </Field>

@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell, BellRing,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy,
+  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy, Users,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth, storage } from "./firebase";
@@ -3962,19 +3962,13 @@ export default function App() {
   // mano, más entradas automáticas (cotización creada / cambio de estado — ver addCotizacion y
   // updateCotizacion) para que quede un registro único de todo lo que pasó con ese cliente, sin
   // tener que ir a buscarlo a Cotizaciones por separado.
-  const addHistorialCliente = (data) => {
-    addItem(COLLECTIONS.historialClientes, { fecha: todayISO(), automatico: false, ...data });
-    // "Próximo contacto" no inventa un sistema de alertas aparte — crea un Recordatorio normal
-    // vinculado al cliente, así aparece solo en Recordatorios/la campana con todo lo que ya tienen
-    // esos recordatorios (marcar hecho, botón "Ver", etc.) en vez de duplicar esa lógica acá.
-    if (data.proximoContacto) {
-      addItem(COLLECTIONS.recordatorios, {
-        hecho: false, titulo: `Contactar a ${data.empresaNombre}`, fecha: data.proximoContacto, notas: data.texto || "",
-        vinculoTipo: "cliente", vinculoKey: `${data.empresaNombre}|`, vinculoLabel: data.empresaNombre,
-        vinculoNavTab: "clientes", vinculoNavFiltro: data.empresaNombre,
-      });
-    }
-  };
+  // "Próximo contacto" no crea un Recordatorio aparte — se computa como alerta automática
+  // (tipo "contacto", ver construirAlertasAutomaticas) directo desde este mismo registro, para
+  // no tener el estado de "¿ya se hizo?" repartido en dos colecciones distintas.
+  const addHistorialCliente = (data) => addItem(COLLECTIONS.historialClientes, {
+    fecha: todayISO(), automatico: false, proximoContactoHecho: false, origenId: null, ...data,
+  });
+  const updateHistorialCliente = (id, patch) => updateItem(COLLECTIONS.historialClientes, id, patch);
   const deleteHistorialCliente = (id) => deleteItem(COLLECTIONS.historialClientes, id);
   // Entrada automática: no pasa por el formulario, así que no espera confirmación ni bloquea el
   // flujo que la disparó — si falla, igual se logueó el error (ver addItem) sin romper nada más.
@@ -4540,17 +4534,25 @@ export default function App() {
     return filas.sort((a, b) => a.fecha.localeCompare(b.fecha));
   }, [transito]);
 
+  // Próximos contactos pendientes del CRM (historial de clientes) — entradas con proximoContacto
+  // cargado que todavía no se marcaron hechas. Única fuente de verdad para "¿falta contactar a
+  // este cliente?": no hay un Recordatorio aparte que se pueda desincronizar de esto.
+  const historialPendiente = useMemo(
+    () => historialClientes.filter((h) => h.proximoContacto && !h.proximoContactoHecho),
+    [historialClientes]
+  );
+
   // Recordatorios "extra" para la campanita del header: retiros comprometidos, etapas de
-  // tránsito y la frase de motivación de lunes/miércoles — lo que NO es garantía/stock (eso ya
-  // lo cubren alertasContacto/seguimientosPendientes/stockBajo) pero igual vive en la pestaña
-  // Recordatorios. Se suma además lo propio sin marcar como hecho, para que la campana se ponga
-  // roja apenas haya algo pendiente ahí, sea automático o cargado a mano.
+  // tránsito, próximos contactos del CRM y la frase de motivación de lunes/miércoles — lo que NO
+  // es garantía/stock (eso ya lo cubren alertasContacto/seguimientosPendientes/stockBajo) pero
+  // igual vive en la pestaña Recordatorios. Se suma además lo propio sin marcar como hecho, para
+  // que la campana se ponga roja apenas haya algo pendiente ahí, sea automático o cargado a mano.
   const otrosRecordatorios = useMemo(() => {
     return construirAlertasAutomaticas({
       proximosServices: [], seguimientosPendientes: [], proximosRetiros, transitoCronogramaVencido,
-      transitoProximosPagos, stockBajo: [],
+      transitoProximosPagos, stockBajo: [], historialPendiente,
     });
-  }, [proximosRetiros, transitoCronogramaVencido, transitoProximosPagos]);
+  }, [proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, historialPendiente]);
 
   const recordatoriosPropiosPendientes = useMemo(() => recordatorios.filter((r) => !r.hecho), [recordatorios]);
 
@@ -4657,6 +4659,7 @@ export default function App() {
     { key: "presupuestos-reparacion", label: "Presupuestos de reparación", icon: Hammer, section: "Ventas" },
     // Clientes
     { key: "clientes", label: "Clientes", icon: Phone, section: "Clientes" },
+    { key: "crm", label: "CRM", icon: Users, section: "Clientes" },
     // Reportes
     { key: "panel", label: "Panel de indicadores", icon: TrendingUp, section: "Reportes" },
     { key: "precios-mercado", label: "Precios de mercado", icon: Search, section: "Reportes" },
@@ -4854,7 +4857,7 @@ export default function App() {
             proximosServices={proximosServices} seguimientosPendientes={seguimientosPendientes}
             proximosRetiros={proximosRetiros}
             transitoCronogramaVencido={transitoCronogramaVencido} transitoProximosPagos={transitoProximosPagos}
-            stockBajo={stockBajo}
+            stockBajo={stockBajo} historialPendiente={historialPendiente}
             query={query} onQuery={setQuery}
             onNavigate={navigateTo}
             onNuevo={() => { setRecordatorioEditando(null); setDrawer("recordatorio"); }}
@@ -5212,6 +5215,15 @@ export default function App() {
             historialClientes={historialClientes}
             onAgregarHistorial={addHistorialCliente}
             onEliminarHistorial={deleteHistorialCliente}
+          />
+        )}
+
+        {tab === "crm" && (
+          <CrmView
+            historial={historialClientes} empresas={empresasObras}
+            query={query} onQuery={setQuery}
+            onAgregar={addHistorialCliente} onActualizar={updateHistorialCliente} onEliminar={deleteHistorialCliente}
+            onNavigate={navigateTo}
           />
         )}
 
@@ -7223,6 +7235,7 @@ const TIPO_ALERTA_AUTOMATICA = {
   transito: { label: "Tránsito", icon: Ship, color: "#1D4ED8", bg: "#E8EEFB" },
   stock: { label: "Stock bajo", icon: Boxes, color: "#B91C1C", bg: "#FBEAEA" },
   motivacion: { label: "Motivación", icon: Star, color: "#B45309", bg: "#FFFBEB" },
+  contacto: { label: "CRM", icon: Phone, color: "#1D4ED8", bg: "#E8EEFB" },
 };
 // Frase de "Motivación" de Recordatorios: solo aparece lunes y miércoles, una por día, rotando
 // sola semana a semana (según el número de semana del año) para no repetir siempre la misma.
@@ -7265,7 +7278,7 @@ function fraseMotivacionalDeHoy() {
     detalle: pool[idx], dias: 0, navTab: "objetivos", navFiltro: "",
   };
 }
-function construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo }) {
+function construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, historialPendiente }) {
   const items = [];
   (proximosServices || []).forEach((s) => {
     const pendienteSeguimiento = (seguimientosPendientes || []).includes(s);
@@ -7306,6 +7319,14 @@ function construirAlertasAutomaticas({ proximosServices, seguimientosPendientes,
       titulo: `Stock bajo — ${nombreProducto(r.producto)}`,
       detalle: `${r.actual} disponible(s), mínimo ${r.minimo}`,
       fecha: null, dias: null, navTab: "catalogo", navFiltro: r.producto.nombre,
+    });
+  });
+  (historialPendiente || []).forEach((h) => {
+    items.push({
+      id: `contacto-${h.id}`, tipo: "contacto",
+      titulo: `Contactar a ${h.empresaNombre}`,
+      detalle: h.texto || "", fecha: h.proximoContacto, dias: daysUntil(h.proximoContacto),
+      navTab: "crm", navFiltro: h.empresaNombre,
     });
   });
   const motivacion = fraseMotivacionalDeHoy();
@@ -7376,11 +7397,11 @@ function NotificacionesPushBoton() {
     </div>
   );
 }
-function RecordatoriosView({ recordatorios, proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, query, onQuery, onNavigate, onNuevo, onEditar, onMarcarHecho, onEliminar }) {
+function RecordatoriosView({ recordatorios, proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, historialPendiente, query, onQuery, onNavigate, onNuevo, onEditar, onMarcarHecho, onEliminar }) {
   const [verHechos, setVerHechos] = useState(false);
   const alertas = useMemo(
-    () => construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo }),
-    [proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo]
+    () => construirAlertasAutomaticas({ proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, historialPendiente }),
+    [proximosServices, seguimientosPendientes, proximosRetiros, transitoCronogramaVencido, transitoProximosPagos, stockBajo, historialPendiente]
   );
   const propios = useMemo(() => {
     const q = (query || "").toLowerCase();
@@ -19242,7 +19263,7 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
           </div>
           <Textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} placeholder="Qué se habló / qué quedó pendiente…" rows={3} />
           <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-xs" style={{ color: MUTED }}>Próximo contacto (opcional, crea recordatorio):</label>
+            <label className="text-xs" style={{ color: MUTED }}>Próximo contacto (opcional, avisa en Recordatorios y en CRM):</label>
             <div style={{ width: 150 }}>
               <input type="date" value={proximoContacto} onChange={(ev) => setProximoContacto(ev.target.value)} className={inputClass} style={inputStyle} />
             </div>
@@ -19268,7 +19289,11 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
                   <div className="min-w-0">
                     <p className="text-xs" style={{ color: MUTED }}>{fmtDate(h.fecha)} · {cfg.label}</p>
                     <p className="text-sm" style={{ color: INK }}>{h.texto}</p>
-                    {h.proximoContacto && <p className="text-xs mt-0.5" style={{ color: "#B45309" }}>Próximo contacto: {fmtDate(h.proximoContacto)}</p>}
+                    {h.proximoContacto && (
+                      <p className="text-xs mt-0.5" style={{ color: h.proximoContactoHecho ? "#15803D" : "#B45309" }}>
+                        Próximo contacto: {fmtDate(h.proximoContacto)}{h.proximoContactoHecho ? " — hecho" : ""}
+                      </p>
+                    )}
                   </div>
                 </div>
                 {!h.automatico && (
@@ -19282,6 +19307,191 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
         </div>
       )}
     </div>
+  );
+}
+
+// Vista CRM: el mismo historial de contacto que vive en cada ficha de Clientes, pero juntando
+// TODOS los clientes en un solo lugar — para encontrar "¿a quién tengo que llamar?" sin entrar
+// cliente por cliente. "Próximo contacto" sin marcar como hecho es la única fuente de verdad de
+// un pendiente (también sale en Recordatorios/la campana, ver construirAlertasAutomaticas); "+
+// Seguimiento" cierra ese pendiente y encadena uno nuevo a partir de la charla (origenId).
+function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar, onEliminar, onNavigate }) {
+  const [formAbierto, setFormAbierto] = useState(false);
+  const [seguimientoDe, setSeguimientoDe] = useState(null);
+  const [empresaNueva, setEmpresaNueva] = useState("");
+  const [tipo, setTipo] = useState("llamada");
+  const [fecha, setFecha] = useState(todayISO());
+  const [texto, setTexto] = useState("");
+  const [proximoContacto, setProximoContacto] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [editandoId, setEditandoId] = useState(null);
+  const [editFecha, setEditFecha] = useState("");
+  const [editTexto, setEditTexto] = useState("");
+
+  const q = (query || "").toLowerCase();
+
+  const pendientes = useMemo(
+    () => (historial || [])
+      .filter((h) => h.proximoContacto && !h.proximoContactoHecho)
+      .sort((a, b) => (a.proximoContacto || "").localeCompare(b.proximoContacto || "")),
+    [historial]
+  );
+
+  const lista = useMemo(
+    () => (historial || [])
+      .filter((h) => !q || [h.empresaNombre, h.texto].some((v) => (v || "").toLowerCase().includes(q)))
+      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || 0) - (a.createdAt || 0)),
+    [historial, q]
+  );
+
+  const abrirForm = (seguimientoDeEntry) => {
+    setSeguimientoDe(seguimientoDeEntry || null);
+    setEmpresaNueva(seguimientoDeEntry ? seguimientoDeEntry.empresaNombre : "");
+    setTipo("llamada"); setFecha(todayISO()); setTexto(""); setProximoContacto("");
+    setFormAbierto(true);
+  };
+
+  const guardar = async () => {
+    if (!empresaNueva.trim() || !texto.trim()) return;
+    setGuardando(true);
+    const empresa = empresas.find((e) => e.nombre === empresaNueva);
+    await onAgregar({
+      empresaKey: empresa ? empresa.key : normClave(empresaNueva), empresaNombre: empresaNueva.trim(),
+      tipo, fecha, texto: texto.trim(), proximoContacto: proximoContacto || null,
+      origenId: seguimientoDe ? seguimientoDe.id : null,
+    });
+    if (seguimientoDe) await onActualizar(seguimientoDe.id, { proximoContactoHecho: true });
+    setGuardando(false);
+    setFormAbierto(false); setSeguimientoDe(null);
+  };
+
+  const empezarEdicion = (h) => { setEditandoId(h.id); setEditFecha(h.fecha); setEditTexto(h.texto); };
+  const guardarEdicion = async (h) => { await onActualizar(h.id, { fecha: editFecha, texto: editTexto.trim() }); setEditandoId(null); };
+
+  return (
+    <Section
+      title="CRM"
+      subtitle="Historial de contacto con cada cliente — llamadas, mensajes, reuniones y notas, con seguimiento de a quién hay que volver a contactar y cuándo."
+      query={query} onQuery={onQuery}
+      onNew={() => abrirForm(null)} newLabel="Nuevo contacto"
+    >
+      {formAbierto && (
+        <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <p className="text-sm font-bold mb-2" style={{ color: INK }}>
+            {seguimientoDe ? `Seguimiento — ${seguimientoDe.empresaNombre}` : "Nuevo contacto"}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap mb-2">
+            {!seguimientoDe && (
+              <div style={{ width: 220 }}>
+                <input
+                  list="crm-empresas" value={empresaNueva} onChange={(ev) => setEmpresaNueva(ev.target.value)}
+                  placeholder="Cliente / empresa" className={inputClass} style={inputStyle}
+                />
+                <datalist id="crm-empresas">
+                  {empresas.map((e) => <option key={e.key} value={e.nombre} />)}
+                </datalist>
+              </div>
+            )}
+            <div style={{ width: 140 }}>
+              <Select value={tipo} onChange={(ev) => setTipo(ev.target.value)}>
+                {Object.entries(TIPOS_HISTORIAL_CLIENTE).filter(([k]) => k !== "cotizacion").map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}
+              </Select>
+            </div>
+            <div style={{ width: 150 }}>
+              <input type="date" value={fecha} onChange={(ev) => setFecha(ev.target.value)} className={inputClass} style={inputStyle} />
+            </div>
+          </div>
+          <Textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} placeholder="Qué se habló / qué quedó pendiente…" rows={3} />
+          <div className="flex items-center gap-2 flex-wrap mt-2">
+            <label className="text-xs" style={{ color: MUTED }}>Próximo contacto (opcional):</label>
+            <div style={{ width: 150 }}>
+              <input type="date" value={proximoContacto} onChange={(ev) => setProximoContacto(ev.target.value)} className={inputClass} style={inputStyle} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mt-3">
+            <PrimaryButton onClick={guardar} disabled={guardando || !texto.trim() || !empresaNueva.trim()}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
+            <SecondaryButton onClick={() => { setFormAbierto(false); setSeguimientoDe(null); }}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Phone size={15} style={{ color: ACCENT }} />
+          <h3 className="text-base font-bold" style={{ color: INK }}>Pendientes de contacto {pendientes.length > 0 ? `(${pendientes.length})` : ""}</h3>
+        </div>
+        {pendientes.length === 0 ? (
+          <p className="text-sm" style={{ color: MUTED }}>No hay ningún seguimiento pendiente.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {pendientes.map((h) => (
+              <div key={h.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg flex-wrap" style={{ backgroundColor: "#FAFBFC" }}>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium" style={{ color: INK }}>{h.empresaNombre}</p>
+                  <p className="text-xs truncate" style={{ color: MUTED }}>{h.texto}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs whitespace-nowrap"><FechaAlerta dias={daysUntil(h.proximoContacto)} /></span>
+                  <button onClick={() => abrirForm(h)} className="text-xs px-2 py-1 rounded border" style={{ borderColor: BORDER, color: ACCENT }}>+ Seguimiento</button>
+                  <button onClick={() => onActualizar(h.id, { proximoContactoHecho: true })} className="text-xs px-2 py-1 rounded border" style={{ borderColor: BORDER, color: "#15803D" }}>Marcar hecho</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-4" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+        <h3 className="text-base font-bold mb-3" style={{ color: INK }}>Historial</h3>
+        {lista.length === 0 ? (
+          <EmptyState icon={Phone} title="Todavía no hay nada cargado" subtitle="Usá 'Nuevo contacto' para anotar una llamada, mensaje, reunión o nota." />
+        ) : (
+          <div className="space-y-1.5">
+            {lista.map((h) => {
+              const cfg = TIPOS_HISTORIAL_CLIENTE[h.tipo] || TIPOS_HISTORIAL_CLIENTE.nota;
+              const Icon = cfg.icon;
+              const enEdicion = editandoId === h.id;
+              return (
+                <div key={h.id} className="flex items-start justify-between gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: "#FAFBFC" }}>
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    <span className="p-1 rounded shrink-0 mt-0.5" style={{ backgroundColor: ACCENT_LIGHT }}><Icon size={12} style={{ color: cfg.color }} /></span>
+                    <div className="min-w-0 flex-1">
+                      <button onClick={() => onNavigate("clientes", h.empresaNombre)} className="text-sm font-medium hover:underline" style={{ color: INK }}>{h.empresaNombre}</button>
+                      {enEdicion ? (
+                        <div className="mt-1 space-y-1.5">
+                          <div style={{ width: 150 }}><input type="date" value={editFecha} onChange={(ev) => setEditFecha(ev.target.value)} className={inputClass} style={inputStyle} /></div>
+                          <Textarea value={editTexto} onChange={(ev) => setEditTexto(ev.target.value)} rows={2} />
+                          <div className="flex items-center gap-2">
+                            <PrimaryButton onClick={() => guardarEdicion(h)}>Guardar</PrimaryButton>
+                            <SecondaryButton onClick={() => setEditandoId(null)}>Cancelar</SecondaryButton>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs" style={{ color: MUTED }}>{fmtDate(h.fecha)} · {cfg.label}</p>
+                          <p className="text-sm" style={{ color: INK }}>{h.texto}</p>
+                          {h.proximoContacto && (
+                            <p className="text-xs mt-0.5" style={{ color: h.proximoContactoHecho ? "#15803D" : "#B45309" }}>
+                              Próximo contacto: {fmtDate(h.proximoContacto)}{h.proximoContactoHecho ? " — hecho" : ""}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {!enEdicion && !h.automatico && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => empezarEdicion(h)} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
+                      <button onClick={() => onEliminar(h.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Section>
   );
 }
 

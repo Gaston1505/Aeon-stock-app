@@ -8129,7 +8129,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
         <ResumenCotizaciones
           resumen={resumenCot} grupos={gruposCotizacion} productos={productos}
           cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
-          cobradoReal={totalCobranza.cobrado}
+          cuentasObras={cuentasObras}
         />
       </div>
 
@@ -16827,9 +16827,20 @@ const INFO_ESTADOS_COTIZACION = {
   Cobrada: "Ya se cobró todo lo que corresponde, según la cuenta de la obra (ficha de obra + Ventas comprometidas). Si la obra tiene varios rubros Ganados, se marca a mano (botón \"Marcar como cobrada\"), porque ahí los pagos no vienen separados por rubro.",
   Perdida: "Se perdió — el motivo queda cargado en cada cotización.",
 };
-function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cobradoReal }) {
+function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras }) {
   const [sel, setSel] = useState(null); // "Total" | estado
   const [detalle, setDetalle] = useState(null);
+  // Cuando se pasan las cuentas por obra (solo en Resumen, no en la pestaña Cotizaciones), el
+  // recuadro "Cobrada" deja de mostrar el total cotizado de las cotizaciones 100% cobradas y
+  // pasa a mostrar lo efectivamente cobrado de TODAS las obras ganadas — completo o parcial —
+  // porque eso es lo que de verdad importa acá: cuánta plata entró. El desglose de abajo, para
+  // este recuadro puntual, pasa a ser por obra (no por cotización) para poder mostrar quién pagó
+  // completo y quién parcial.
+  const obrasConCobro = useMemo(
+    () => (cuentasObras || []).filter((f) => f.cuenta.cobrado > 0).sort((a, b) => b.cuenta.cobrado - a.cuenta.cobrado),
+    [cuentasObras]
+  );
+  const cobradoReal = cuentasObras ? totalesCuentasObras(cuentasObras).cobrado : null;
   // Mismo criterio que resumirCotizaciones: una Ganada puede mostrarse como En curso o Cobrada
   // según el cobro/entrega de su obra, aunque el estado guardado siga siendo "Ganada".
   const estadoVisual = (c) => {
@@ -16845,8 +16856,9 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
       .filter((f) => sel === "Total" || estadoVisual(f.c) === sel)
       .sort((a, b) => calcularTotalCotizacion(b.c) - calcularTotalCotizacion(a.c));
   }, [sel, grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
-  const tile = (key, label, n, total, color, bg) => {
+  const tile = (key, label, n, total, color, bg, infoOverride) => {
     const activo = sel === key;
+    const info = infoOverride || INFO_ESTADOS_COTIZACION[key];
     return (
       <div
         key={key} className="relative rounded-lg"
@@ -16856,9 +16868,9 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
           <p className="text-xs" style={{ color }}>{label}{n != null ? ` (${n})` : ""}</p>
           <p className="text-sm font-semibold" style={{ color }}>U$S {total.toLocaleString("es-PY")}</p>
         </button>
-        {INFO_ESTADOS_COTIZACION[key] && (
+        {info && (
           <span className="absolute top-0.5 right-0.5" onClick={(e) => e.stopPropagation()}>
-            <InfoTip><p>{INFO_ESTADOS_COTIZACION[key]}</p></InfoTip>
+            <InfoTip><p>{info}</p></InfoTip>
           </span>
         )}
       </div>
@@ -16868,18 +16880,51 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
     <div className="mb-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {tile("Total", "Total cotizado", null, resumen.total, ACCENT, ACCENT_LIGHT)}
-        {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => tile(estado, estado, resumen[estado].n, resumen[estado].total, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg))}
+        {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => {
+          if (estado === "Cobrada" && cuentasObras) {
+            return tile(
+              estado, estado, obrasConCobro.length, cobradoReal, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg,
+              "Lo que ya entró en efectivo de todas las obras Ganadas, se haya terminado de cobrar o no — a diferencia de los demás recuadros, que muestran el total cotizado (el contrato). Un pago parcial de una obra En curso ya está contado acá. Tocá para ver el detalle por obra."
+            );
+          }
+          return tile(estado, estado, resumen[estado].n, resumen[estado].total, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg);
+        })}
       </div>
-      {cobradoReal != null && (
-        <div className="mt-2 rounded-lg px-3 py-2 flex items-center justify-between flex-wrap gap-1" style={{ backgroundColor: "#E8EEFB" }}>
-          <span className="text-xs flex items-center gap-1" style={{ color: "#1D4ED8" }}>
-            Cobrado real (todas las obras ganadas, completo + parcial)
-            <InfoTip><p>Suma lo que ya entró en efectivo de todas las obras Ganadas, se haya terminado de cobrar o no — a diferencia de los recuadros de arriba, que muestran el total cotizado (el contrato), no lo cobrado. Un pago parcial como el de una obra En curso ya está contado acá.</p></InfoTip>
-          </span>
-          <span className="text-sm font-semibold" style={{ color: "#1D4ED8" }}>U$S {cobradoReal.toLocaleString("es-PY")}</span>
+      {sel === "Cobrada" && cuentasObras ? (
+        <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <p className="text-xs font-semibold mb-1.5" style={{ color: INK }}>
+            Cobrada · {obrasConCobro.length} obra(s) con cobro — completo o parcial
+          </p>
+          {obrasConCobro.length === 0 ? (
+            <p className="text-xs" style={{ color: MUTED }}>Ninguna obra tiene cobros todavía.</p>
+          ) : (
+            <div className="space-y-1">
+              {obrasConCobro.map((f, i) => {
+                const completo = f.cuenta.contrato > 0 && f.cuenta.cobrado >= f.cuenta.contrato;
+                return (
+                  <div
+                    key={i} className="flex items-center justify-between gap-2 px-2.5 py-2 rounded border"
+                    style={{ borderColor: BORDER }}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium truncate" style={{ color: INK }}>{f.cliente}{f.obra ? ` — ${f.obra}` : ""}</span>
+                      <span className="block text-xs" style={{ color: completo ? "#15803D" : "#9333EA" }}>
+                        {completo ? "Cobro completo" : "Cobro parcial"} · U$S {f.cuenta.cobrado.toLocaleString("es-PY")}
+                        {f.cuenta.contrato > 0 ? ` de U$S ${f.cuenta.contrato.toLocaleString("es-PY")}` : ""}
+                      </span>
+                    </span>
+                    {!completo && f.cuenta.contrato > 0 && (
+                      <span className="text-xs shrink-0 font-medium" style={{ color: "#B45309" }}>
+                        Falta U$S {(f.cuenta.contrato - f.cuenta.cobrado).toLocaleString("es-PY")}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
-      {sel && (
+      ) : sel && (
         <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
           <p className="text-xs font-semibold mb-1.5" style={{ color: INK }}>
             {sel === "Total" ? "Todas las cotizaciones que cuentan" : sel} · {lista.length} · tocá una para ver qué contiene

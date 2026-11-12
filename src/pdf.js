@@ -1057,6 +1057,18 @@ export async function generateGarantiaPdf(venta) {
   text("Obra:", MARGIN + 4, y - 11, { bold: true, size: 8 });
   text(venta.obra || "", MARGIN + 60, y - 11, { size: 8 });
   y -= rowH;
+  if (venta.apartamento) {
+    rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+    text("Apartamento / unidad:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+    text(venta.apartamento, MARGIN + 110, y - 11, { size: 8 });
+    y -= rowH;
+  }
+  if (venta.clienteFinal) {
+    rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+    text("Cliente final:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+    text(venta.clienteFinal, MARGIN + 60, y - 11, { size: 8 });
+    y -= rowH;
+  }
   rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
   text("Fecha de venta:", MARGIN + 4, y - 11, { bold: true, size: 8 });
   text(fmtFecha(venta.fechaVenta), MARGIN + 90, y - 11, { size: 8 });
@@ -1518,6 +1530,8 @@ export async function generateGarantiaCompletaPdf(venta) {
   const fichaRows = [
     ["Cliente:", venta.cliente || ""],
     ["Obra:", venta.obra || ""],
+    ["Apartamento / unidad:", venta.apartamento || ""],
+    ["Cliente final:", venta.clienteFinal || ""],
     ["Fecha de entrega:", fmtFecha(venta.fechaVenta)],
     ["Documento / RUC:", ""],
     ["Dirección:", ""],

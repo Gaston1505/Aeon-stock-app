@@ -3125,6 +3125,7 @@ export default function App() {
     const lineas = (cotizacion.lineas || []).map((l) => ({ modelo: l.codigo, descripcion: l.descripcion || "", cantidad: l.cantidad }));
     addVenta({
       cliente: cotizacion.cliente, obra: cotizacion.obra, cotizacionId: cotizacion.id,
+      apartamento: datos.apartamento || "", clienteFinal: datos.clienteFinal || "",
       fechaVenta, lineas,
       ...serviciosDeVenta(fechaVenta, lineas, productos),
     });
@@ -8987,6 +8988,17 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                   </button>
                 </div>
 
+                <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                  <div>
+                    <p className="text-[10px] mb-0.5" style={{ color: MUTED }}>Apartamento / unidad</p>
+                    <CampoLineaEditable value={v.apartamento} onSave={(val) => onUpdateField(v.id, "apartamento", val)} placeholder="Ej: Depto 302" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] mb-0.5" style={{ color: MUTED }}>Cliente final (si hay intermediario)</p>
+                    <CampoLineaEditable value={v.clienteFinal} onSave={(val) => onUpdateField(v.id, "clienteFinal", val)} placeholder="Ej: Juan Pérez" />
+                  </div>
+                </div>
+
                 <p className="text-xs mt-1.5" style={{ color: MUTED }}>Fecha de venta: {fmtDate(v.fechaVenta)}</p>
 
                 {(v.lineas || []).length > 0 && (
@@ -9271,6 +9283,33 @@ function ComentarioEditor({ value, onSave, placeholder = "Ej: en muestra por def
 
 // Como ComentarioEditor pero multilínea — para trazabilidad que se va acumulando con el
 // tiempo (Zona de playa, Banco de recuperables), a diferencia del comentario corto de Muestras.
+// Como NotasEditor pero de una sola línea — para datos cortos tipo "Depto 302" que no justifican
+// un textarea multilínea.
+function CampoLineaEditable({ value, onSave, placeholder }) {
+  const [draft, setDraft] = useState(value || "");
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => setDraft(value || ""), [value]);
+
+  const commit = () => {
+    setEditing(false);
+    if (draft !== value) onSave(draft);
+  };
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setEditing(true)}
+      onBlur={commit}
+      placeholder={placeholder}
+      className="w-full text-xs px-2 py-1 rounded border outline-none"
+      style={{ borderColor: editing ? ACCENT : BORDER, color: INK }}
+    />
+  );
+}
+
 function NotasEditor({ value, onSave, placeholder = "Agregar comentario / trazabilidad..." }) {
   const [draft, setDraft] = useState(value || "");
   const [editing, setEditing] = useState(false);
@@ -11068,6 +11107,8 @@ function EntradaForm({ equipos, productos, onSave, esAdmin = true }) {
 function VentaForm({ productos, onSave }) {
   const [cliente, setCliente] = useState("");
   const [obra, setObra] = useState("");
+  const [apartamento, setApartamento] = useState("");
+  const [clienteFinal, setClienteFinal] = useState("");
   const [fechaVenta, setFechaVenta] = useState(todayISO());
   const [modeloNuevo, setModeloNuevo] = useState("");
   const [cantidadNueva, setCantidadNueva] = useState(1);
@@ -11100,13 +11141,19 @@ function VentaForm({ productos, onSave }) {
       setError("Agregá al menos un modelo vendido.");
       return;
     }
-    onSave({ cliente, obra, fechaVenta, lineas, ...serviciosDeVenta(fechaVenta, lineas, productos) });
+    onSave({ cliente, obra, apartamento, clienteFinal, fechaVenta, lineas, ...serviciosDeVenta(fechaVenta, lineas, productos) });
   };
 
   return (
     <div>
       <Field label="Cliente"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
       <Field label="Obra"><TextInput value={obra} onChange={(e) => setObra(e.target.value)} /></Field>
+      <Field label="Apartamento / unidad (opcional — para identificar a quién se le entregó dentro de la obra)">
+        <TextInput value={apartamento} onChange={(e) => setApartamento(e.target.value)} placeholder="Ej: Depto 302" />
+      </Field>
+      <Field label="Cliente final (opcional — si el cliente de arriba es un intermediario)">
+        <TextInput value={clienteFinal} onChange={(e) => setClienteFinal(e.target.value)} placeholder="Ej: Juan Pérez" />
+      </Field>
       <Field label="Fecha de venta"><TextInput type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} /></Field>
 
       <p className="text-base font-bold mt-4 mb-2" style={{ color: ACCENT }}>Modelos vendidos</p>
@@ -11150,6 +11197,8 @@ function VentaForm({ productos, onSave }) {
 function VentaDesdeCotizacionForm({ cotizaciones, ventas, movimientos, cotizacionInicial, onGenerar }) {
   const [cotizacionId, setCotizacionId] = useState(cotizacionInicial?.id || "");
   const [fechaVenta, setFechaVenta] = useState(todayISO());
+  const [apartamento, setApartamento] = useState("");
+  const [clienteFinal, setClienteFinal] = useState("");
   const [error, setError] = useState("");
 
   // Solo cotizaciones Ganadas, con algo ya entregado (si no, todavía no corresponde la garantía)
@@ -11172,7 +11221,7 @@ function VentaDesdeCotizacionForm({ cotizaciones, ventas, movimientos, cotizacio
       setError("Esta cotización ya tiene una ficha de venta y garantía generada.");
       return;
     }
-    onGenerar(cotizacion, { fechaVenta });
+    onGenerar(cotizacion, { fechaVenta, apartamento, clienteFinal });
   };
 
   return (
@@ -11184,6 +11233,12 @@ function VentaDesdeCotizacionForm({ cotizaciones, ventas, movimientos, cotizacio
         </Select>
       </Field>
       <Field label="Fecha de venta"><TextInput type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} /></Field>
+      <Field label="Apartamento / unidad (opcional — para identificar a quién se le entregó dentro de la obra)">
+        <TextInput value={apartamento} onChange={(e) => setApartamento(e.target.value)} placeholder="Ej: Depto 302" />
+      </Field>
+      <Field label="Cliente final (opcional — si el cliente de la cotización es un intermediario)">
+        <TextInput value={clienteFinal} onChange={(e) => setClienteFinal(e.target.value)} placeholder="Ej: Juan Pérez" />
+      </Field>
 
       {cotizacion && (
         <div className="mb-3 rounded border overflow-hidden" style={{ borderColor: BORDER }}>

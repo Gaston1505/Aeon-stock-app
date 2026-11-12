@@ -11726,6 +11726,7 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
   const [reusarFotoId, setReusarFotoId] = useState("");
   const [fotoExterior, setFotoExterior] = useState(producto?.fotoExterior || "");
   const [reusarFotoExteriorId, setReusarFotoExteriorId] = useState("");
+  const [fotoExteriorUrlInput, setFotoExteriorUrlInput] = useState("");
   const [especsFicha, setEspecsFicha] = useState(producto?.especsFicha || {});
   const [generandoFicha, setGenerandoFicha] = useState(false);
   const [errorFicha, setErrorFicha] = useState("");
@@ -11993,6 +11994,17 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
               setSubiendoFoto(false);
             }} />
           </Field>
+          <div className="flex items-end gap-2 mb-3">
+            <Field label="O pegá la foto como data URL (para cargar la primera de un tipo nuevo)">
+              <TextInput value={fotoExteriorUrlInput} onChange={(e) => setFotoExteriorUrlInput(e.target.value)} placeholder="data:image/jpeg;base64,..." />
+            </Field>
+            <SecondaryButton
+              onClick={() => { if (fotoExteriorUrlInput.startsWith("data:image/")) { setFotoExterior(fotoExteriorUrlInput); setFotoExteriorUrlInput(""); } }}
+              disabled={!fotoExteriorUrlInput.startsWith("data:image/")}
+            >
+              Usar
+            </SecondaryButton>
+          </div>
           {candidatosFotoExterior.length > 0 && (
             <div className="flex items-end gap-2 mb-3">
               <Field label={`O reusar la foto exterior de otro producto "${subcategoria}"`}>

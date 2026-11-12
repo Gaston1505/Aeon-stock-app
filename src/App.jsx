@@ -198,6 +198,7 @@ const COLLECTIONS = {
   fabricasCompetencia: "fabricasCompetencia",
   recordatorios: "recordatorios",
   objetivos: "objetivos",
+  historialClientes: "historialClientes",
 };
 const MATRIZ_COSTOS_DOC_ID = "matrizCostos";
 // Contador de seriales de las etiquetas que genera la app, por producto (colección "configuracion",
@@ -2573,6 +2574,7 @@ export default function App() {
   const [fabricasCompetencia, setFabricasCompetencia] = useState([]);
   const [recordatorios, setRecordatorios] = useState([]);
   const [objetivos, setObjetivos] = useState([]);
+  const [historialClientes, setHistorialClientes] = useState([]);
   const [matrizCostos, setMatrizCostos] = useState(null);
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState(null);
@@ -2647,6 +2649,7 @@ export default function App() {
       [COLLECTIONS.fabricasCompetencia]: setFabricasCompetencia,
       [COLLECTIONS.recordatorios]: setRecordatorios,
       [COLLECTIONS.objetivos]: setObjetivos,
+      [COLLECTIONS.historialClientes]: setHistorialClientes,
     };
     const names = Object.keys(setters);
     const pending = new Set(names);
@@ -3259,6 +3262,11 @@ export default function App() {
   const addCotizacion = (data) => {
     if (data.cuentaObra === "principal") demoverPrincipalDeObra(data);
     addItem(COLLECTIONS.cotizaciones, data);
+    const r = data.cliente ? resolverEmpresa(data.cliente, gruposEmpresas) : null;
+    if (r) {
+      const nombreCot = data.nombre || data.categoria || "Cotización";
+      registrarHistorialAuto(r.key, r.nombre, `Cotización creada: "${nombreCot}"${data.obra ? ` — obra ${data.obra}` : ""} — ${usd(calcularTotalCotizacion(data))}`);
+    }
   };
   // A diferencia de addItem/updateItem (que solo loguean el error), acá el error se propaga: si las
   // reglas de Firestore todavía no incluyen "pedidosFacturacion", el formulario tiene que avisarlo.
@@ -3426,6 +3434,14 @@ export default function App() {
     if (c && patch.estado !== undefined) {
       // Un estado que no es Ganada/Perdida/Sin efecto (volver a Pendiente) borra el motivo anterior.
       if (patch.motivoEstado === undefined && !MOTIVOS_ESTADO_COTIZACION[patch.estado]) patch = { ...patch, motivoEstado: "", comentarioEstado: "", fechaEstado: "" };
+      if (patch.estado !== c.estado) {
+        const r = c.cliente ? resolverEmpresa(c.cliente, gruposEmpresas) : null;
+        if (r) {
+          const nombreCot = c.nombre || c.categoria || "Cotización";
+          const motivo = patch.motivoEstado || c.motivoEstado;
+          registrarHistorialAuto(r.key, r.nombre, `Cotización "${nombreCot}"${c.obra ? ` — obra ${c.obra}` : ""} pasó a ${patch.estado}${motivo ? ` (${motivo})` : ""}`);
+        }
+      }
     }
     updateItem(COLLECTIONS.cotizaciones, id, patch);
   };
@@ -3941,6 +3957,33 @@ export default function App() {
   const deleteObjetivo = (id) => deleteItem(COLLECTIONS.objetivos, id);
   const reabrirObjetivo = (id) => updateItem(COLLECTIONS.objetivos, id, { estado: "activo", fechaCumplido: null, celebradoEn: null });
   const cerrarCelebracionObjetivo = (id) => updateItem(COLLECTIONS.objetivos, id, { celebradoEn: Date.now() });
+
+  // Historial de contacto por cliente (CRM): llamadas, mensajes, reuniones y notas cargadas a
+  // mano, más entradas automáticas (cotización creada / cambio de estado — ver addCotizacion y
+  // updateCotizacion) para que quede un registro único de todo lo que pasó con ese cliente, sin
+  // tener que ir a buscarlo a Cotizaciones por separado.
+  const addHistorialCliente = (data) => {
+    addItem(COLLECTIONS.historialClientes, { fecha: todayISO(), automatico: false, ...data });
+    // "Próximo contacto" no inventa un sistema de alertas aparte — crea un Recordatorio normal
+    // vinculado al cliente, así aparece solo en Recordatorios/la campana con todo lo que ya tienen
+    // esos recordatorios (marcar hecho, botón "Ver", etc.) en vez de duplicar esa lógica acá.
+    if (data.proximoContacto) {
+      addItem(COLLECTIONS.recordatorios, {
+        hecho: false, titulo: `Contactar a ${data.empresaNombre}`, fecha: data.proximoContacto, notas: data.texto || "",
+        vinculoTipo: "cliente", vinculoKey: `${data.empresaNombre}|`, vinculoLabel: data.empresaNombre,
+        vinculoNavTab: "clientes", vinculoNavFiltro: data.empresaNombre,
+      });
+    }
+  };
+  const deleteHistorialCliente = (id) => deleteItem(COLLECTIONS.historialClientes, id);
+  // Entrada automática: no pasa por el formulario, así que no espera confirmación ni bloquea el
+  // flujo que la disparó — si falla, igual se logueó el error (ver addItem) sin romper nada más.
+  const registrarHistorialAuto = (empresaKey, empresaNombre, texto) => {
+    if (!empresaKey) return;
+    addItem(COLLECTIONS.historialClientes, {
+      empresaKey, empresaNombre, tipo: "cotizacion", texto, fecha: todayISO(), automatico: true,
+    });
+  };
 
   const addPlaya = (data) => addItem(COLLECTIONS.playa, { estado: "En playa", ...data });
   const updatePlayaField = (id, field, value) => updateItem(COLLECTIONS.playa, id, { [field]: value });
@@ -5166,6 +5209,9 @@ export default function App() {
             onDelete={deleteCliente}
             onUpdateField={(id, field, value) => updateCliente(id, { [field]: value })}
             onPedido={(g) => { setPedidoTarget(g); setDrawer("pedido-facturacion"); }}
+            historialClientes={historialClientes}
+            onAgregarHistorial={addHistorialCliente}
+            onEliminarHistorial={deleteHistorialCliente}
           />
         )}
 
@@ -19139,7 +19185,107 @@ function DatosEmpresa({ e, empresas, grupos, onGuardar }) {
   );
 }
 
-function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, notasCredito, productos, grupos, onGuardarGrupos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura, onGuardarNotaCredito, onBorrarNotaCredito }) {
+// Historial de contacto (CRM): llamadas, mensajes, reuniones y notas cargadas a mano, más las
+// automáticas de cotizaciones (ver registrarHistorialAuto en App) — todo junto, orden cronológico
+// descendente, para no tener que reconstruir "qué pasó con este cliente" mirando Cotizaciones aparte.
+const TIPOS_HISTORIAL_CLIENTE = {
+  llamada: { label: "Llamada", icon: Phone, color: "#1D4ED8" },
+  mensaje: { label: "Mensaje", icon: MessageCircle, color: "#15803D" },
+  reunion: { label: "Reunión", icon: CalendarCheck, color: "#9333EA" },
+  nota: { label: "Nota", icon: Pencil, color: MUTED },
+  cotizacion: { label: "Cotización", icon: Receipt, color: "#B45309" },
+};
+function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgregar, onEliminar }) {
+  const [abierto, setAbierto] = useState(false);
+  const [tipo, setTipo] = useState("llamada");
+  const [fecha, setFecha] = useState(todayISO());
+  const [texto, setTexto] = useState("");
+  const [proximoContacto, setProximoContacto] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const lista = [...(historial || [])].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || 0) - (a.createdAt || 0));
+
+  const guardar = async () => {
+    if (!texto.trim()) return;
+    setGuardando(true);
+    await onAgregar({
+      empresaKey, empresaNombre, tipo, fecha, texto: texto.trim(),
+      proximoContacto: proximoContacto || null,
+    });
+    setGuardando(false);
+    setTexto(""); setProximoContacto(""); setTipo("llamada"); setFecha(todayISO());
+    setAbierto(false);
+  };
+
+  return (
+    <div className="rounded-lg p-3" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>
+          Historial de contacto {lista.length > 0 ? `(${lista.length})` : ""}
+        </p>
+        <button type="button" onClick={() => setAbierto((v) => !v)} className="text-xs px-2 py-1 rounded border flex items-center gap-1" style={{ borderColor: BORDER, color: ACCENT }}>
+          <Plus size={12} /> Agregar
+        </button>
+      </div>
+
+      {abierto && (
+        <div className="mb-3 p-2.5 rounded-lg space-y-2" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div style={{ width: 140 }}>
+              <Select value={tipo} onChange={(ev) => setTipo(ev.target.value)}>
+                {Object.entries(TIPOS_HISTORIAL_CLIENTE).filter(([k]) => k !== "cotizacion").map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}
+              </Select>
+            </div>
+            <div style={{ width: 150 }}>
+              <input type="date" value={fecha} onChange={(ev) => setFecha(ev.target.value)} className={inputClass} style={inputStyle} />
+            </div>
+          </div>
+          <Textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} placeholder="Qué se habló / qué quedó pendiente…" rows={3} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs" style={{ color: MUTED }}>Próximo contacto (opcional, crea recordatorio):</label>
+            <div style={{ width: 150 }}>
+              <input type="date" value={proximoContacto} onChange={(ev) => setProximoContacto(ev.target.value)} className={inputClass} style={inputStyle} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <PrimaryButton onClick={guardar} disabled={guardando || !texto.trim()}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
+            <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
+          </div>
+        </div>
+      )}
+
+      {lista.length === 0 ? (
+        <p className="text-xs" style={{ color: MUTED }}>Todavía no hay nada cargado — llamadas, mensajes, reuniones y notas quedan acá, junto con lo que vaya pasando con sus cotizaciones.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {lista.map((h) => {
+            const cfg = TIPOS_HISTORIAL_CLIENTE[h.tipo] || TIPOS_HISTORIAL_CLIENTE.nota;
+            const Icon = cfg.icon;
+            return (
+              <div key={h.id} className="flex items-start justify-between gap-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: "#FFFFFF" }}>
+                <div className="flex items-start gap-2 min-w-0">
+                  <span className="p-1 rounded shrink-0 mt-0.5" style={{ backgroundColor: ACCENT_LIGHT }}><Icon size={12} style={{ color: cfg.color }} /></span>
+                  <div className="min-w-0">
+                    <p className="text-xs" style={{ color: MUTED }}>{fmtDate(h.fecha)} · {cfg.label}</p>
+                    <p className="text-sm" style={{ color: INK }}>{h.texto}</p>
+                    {h.proximoContacto && <p className="text-xs mt-0.5" style={{ color: "#B45309" }}>Próximo contacto: {fmtDate(h.proximoContacto)}</p>}
+                  </div>
+                </div>
+                {!h.automatico && (
+                  <button type="button" onClick={() => onEliminar(h.id)} className="p-1 rounded hover:bg-gray-100 shrink-0">
+                    <Trash2 size={12} style={{ color: MUTED }} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra, notasCredito, productos, grupos, onGuardarGrupos, query, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura, onGuardarNotaCredito, onBorrarNotaCredito, historialClientes, onAgregarHistorial, onEliminarHistorial }) {
   const [abiertos, setAbiertos] = useState(() => new Set());
   const toggle = (k) => setAbiertos((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const norm = normClave;
@@ -19184,6 +19330,11 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
             {abierto && (
               <div className="px-4 pb-4 space-y-3">
                 <DatosEmpresa e={e} empresas={empresas} grupos={grupos} onGuardar={onGuardarGrupos} />
+                <HistorialClienteSection
+                  empresaKey={e.key} empresaNombre={e.nombre}
+                  historial={(historialClientes || []).filter((h) => h.empresaKey === e.key)}
+                  onAgregar={onAgregarHistorial} onEliminar={onEliminarHistorial}
+                />
                 {obras.length > 1 && (
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Cuenta del cliente (todas las obras)</p>
@@ -19279,7 +19430,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
   );
 }
 
-function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, notasCredito, productos, grupos, onGuardarGrupos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura, onGuardarNotaCredito, onBorrarNotaCredito }) {
+function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, facturasObra, notasCredito, productos, grupos, onGuardarGrupos, query, onQuery, onNew, onDelete, onUpdateField, onPedido, onGuardarFicha, onGuardarFactura, onBorrarFactura, onGuardarNotaCredito, onBorrarNotaCredito, historialClientes, onAgregarHistorial, onEliminarHistorial }) {
   const [vista, setVista] = useState("fichas");
   const toggleVista = (
     <div className="flex gap-2 mb-3">
@@ -19308,6 +19459,7 @@ function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, factu
           notasCredito={notasCredito} productos={productos}
           grupos={grupos} onGuardarGrupos={onGuardarGrupos} query={query} onPedido={onPedido} onGuardarFicha={onGuardarFicha} onGuardarFactura={onGuardarFactura} onBorrarFactura={onBorrarFactura}
           onGuardarNotaCredito={onGuardarNotaCredito} onBorrarNotaCredito={onBorrarNotaCredito}
+          historialClientes={historialClientes} onAgregarHistorial={onAgregarHistorial} onEliminarHistorial={onEliminarHistorial}
         />
       </Section>
     );

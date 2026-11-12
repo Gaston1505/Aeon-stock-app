@@ -126,6 +126,9 @@ service cloud.firestore {
     // — solo para admin, igual que recordatorios/objetivos. El envío real lo hace una rutina
     // aparte con credenciales de servicio, no la app.
     match /pushTokens/{docId} { allow read, write: if esAdmin(); }
+    // Historial de contacto por cliente (CRM): llamadas, mensajes, reuniones, notas y las
+    // entradas automáticas de cotizaciones — solo admin, no depósito.
+    match /historialClientes/{docId} { allow read, write: if esAdmin(); }
 
     // El PDF de la ficha técnica de cada producto vive acá (no en productos/{docId}) para que
     // el catálogo entero no se descargue cargado de PDFs cada vez que se abre la app — se pide

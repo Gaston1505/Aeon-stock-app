@@ -8104,6 +8104,7 @@ function Resumen({ equipos, transito, cotizaciones, comprometidas, cuentaPorCoti
         <ResumenCotizaciones
           resumen={resumenCot} grupos={gruposCotizacion} productos={productos}
           cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
+          cobradoReal={totalCobranza.cobrado}
         />
       </div>
 
@@ -16678,7 +16679,7 @@ const INFO_ESTADOS_COTIZACION = {
   Cobrada: "Ya se cobró todo lo que corresponde, según la cuenta de la obra (ficha de obra + Ventas comprometidas). Si la obra tiene varios rubros Ganados, se marca a mano (botón \"Marcar como cobrada\"), porque ahí los pagos no vienen separados por rubro.",
   Perdida: "Se perdió — el motivo queda cargado en cada cotización.",
 };
-function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cobradoReal }) {
   const [sel, setSel] = useState(null); // "Total" | estado
   const [detalle, setDetalle] = useState(null);
   // Mismo criterio que resumirCotizaciones: una Ganada puede mostrarse como En curso o Cobrada
@@ -16721,6 +16722,15 @@ function ResumenCotizaciones({ resumen, grupos, productos, cuentaPorCotizacionId
         {tile("Total", "Total cotizado", null, resumen.total, ACCENT, ACCENT_LIGHT)}
         {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => tile(estado, estado, resumen[estado].n, resumen[estado].total, ESTADO_COTIZACION_BADGE[estado].color, ESTADO_COTIZACION_BADGE[estado].bg))}
       </div>
+      {cobradoReal != null && (
+        <div className="mt-2 rounded-lg px-3 py-2 flex items-center justify-between flex-wrap gap-1" style={{ backgroundColor: "#E8EEFB" }}>
+          <span className="text-xs flex items-center gap-1" style={{ color: "#1D4ED8" }}>
+            Cobrado real (todas las obras ganadas, completo + parcial)
+            <InfoTip><p>Suma lo que ya entró en efectivo de todas las obras Ganadas, se haya terminado de cobrar o no — a diferencia de los recuadros de arriba, que muestran el total cotizado (el contrato), no lo cobrado. Un pago parcial como el de una obra En curso ya está contado acá.</p></InfoTip>
+          </span>
+          <span className="text-sm font-semibold" style={{ color: "#1D4ED8" }}>U$S {cobradoReal.toLocaleString("es-PY")}</span>
+        </div>
+      )}
       {sel && (
         <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
           <p className="text-xs font-semibold mb-1.5" style={{ color: INK }}>

@@ -6303,16 +6303,53 @@ function armarPedidoDesdeGrupo(g, { productos, equipos, cotizaciones, pedidos, g
   };
 }
 
-// Arma el Pedido de Facturación de un ANTICIPO: a diferencia de un remito real, todavía no hay
-// mercadería que itemizar (puede pedirse con 0 unidades retiradas) — una sola línea "Anticipo" por
-// el monto fijo o el % de la cotización que se elija en el formulario (ver PedidoFacturacionForm),
-// en vez de inventar un desglose de productos que todavía no se sabe qué se va a retirar primero.
+// Sugiere, código por código, lo que está incluido en una cotización (productos + instalación/
+// servicios si los tiene), al precio real ya con el descuento de la cotización aplicado (mismo
+// factor que usa armarPedidoDesdeGrupo para un remito real) — "basePrecioUnit" guarda ese precio
+// al 100% para poder escalarlo después al % o monto que se termine pidiendo (ver aplicarFactor en
+// PedidoFacturacionForm), sin perder de referencia cuál era el precio lleno.
+function itemizarCotizacionParaFacturar(cot) {
+  const d = desglosarTotalCotizacion(cot);
+  const factorDescuento = d.subtotal > 0 ? (d.subtotal - d.descuentoMonto) / d.subtotal : 1;
+  const lineasProducto = (cot.lineas || []).map((lin) => ({
+    cantidad: Number(lin.cantidad) || 1, marca: "AEON", codigo: lin.codigo || "",
+    producto: lin.producto || lin.nombre || "", familia: lin.familia || "",
+    basePrecioUnit: Math.round((Number(lin.precioUnit) || 0) * factorDescuento * 100) / 100,
+  }));
+  const lineasServicio = [];
+  if (cot.incluirInstalacion) {
+    const servicios = cot.serviciosAdicionales || [];
+    if (servicios.length > 0) {
+      for (const s of servicios) {
+        lineasServicio.push({
+          cantidad: 1, marca: "AEON", codigo: "",
+          producto: `${s.tipo || "Servicio"}${s.descripcion ? `: ${s.descripcion}` : ""}${s.notaInterna ? ` (${s.notaInterna})` : ""}`,
+          familia: "Servicios", basePrecioUnit: Math.round((Number(s.monto) || 0) * 100) / 100,
+        });
+      }
+    } else if (Number(cot.instalacionMonto) > 0) {
+      lineasServicio.push({
+        cantidad: 1, marca: "AEON", codigo: "", producto: "Instalación / Servicios", familia: "Servicios",
+        basePrecioUnit: Math.round(Number(cot.instalacionMonto) * 100) / 100,
+      });
+    }
+  }
+  return [...lineasProducto, ...lineasServicio].map((l) => ({ ...l, precioUnit: l.basePrecioUnit }));
+}
+
+// Arma el Pedido de Facturación de un ANTICIPO: sugiere de entrada el detalle real de la
+// cotización (ver itemizarCotizacionParaFacturar) — si es una cotización grande y preferís
+// facturar con una sola línea general, borrá esas líneas sugeridas y agregá una manual (botones de
+// abajo); si preferís el detalle (el caso típico de 1-2 productos), dejalas como están. Si la
+// cotización no tiene líneas cargadas (caso raro), cae a una sola línea "Anticipo" para no dejar el
+// formulario vacío.
 function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos }) {
   const cliente = (cot.cliente || "").trim();
   const previo = [...(pedidos || [])]
     .filter((p) => p.cliente && p.cliente.trim().toLowerCase() === cliente.toLowerCase())
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
   const centro = centroCostoPorCodigo(centroCostoSugerido(cot.obra));
+  const itemizadas = itemizarCotizacionParaFacturar(cot);
   return {
     tipoPedido: "anticipo", cotizacionId: cot.id, remitoKey: "", remito: "",
     fecha: todayISO(),
@@ -6320,7 +6357,7 @@ function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos }) {
     condicion: previo?.condicion || "Crédito", termino: "",
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
     obra: (cot.obra || "").trim(),
-    lineas: [{ cantidad: 1, marca: "AEON", codigo: "", producto: "Anticipo", familia: "Anticipo", precioUnit: 0 }],
+    lineas: itemizadas.length > 0 ? itemizadas : [{ cantidad: 1, marca: "AEON", codigo: "", producto: "Anticipo", familia: "Anticipo", precioUnit: 0, basePrecioUnit: 0 }],
     origenPrecios: `Anticipo de la cotización "${cot.nombre || cot.categoria || "Cotización"}" (${fmtDate(cot.fecha)}) — Total cotizado: U$S ${fmtN(calcularTotalCotizacion(cot))}. Mercadería sin entregar todavía. Definí el % o el monto arriba.`,
     estado: "Borrador",
   };
@@ -6568,11 +6605,13 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
   const [idDoc, setIdDoc] = useState(pedidoExistente?.id || null);
   const [msg, setMsg] = useState(null); // { tipo: "ok" | "error", texto }
   const [ocupado, setOcupado] = useState("");
-  // Solo aplica en modo anticipo (cotizacionAnticipo viene seteado): "total" carga el 100% de la
-  // cotización de una, "monto fijo" carga directo el precioUnit de la línea de Anticipo, y
-  // "porcentaje" lo calcula a partir del total de la cotización.
+  // Solo aplica en modo anticipo (cotizacionAnticipo viene seteado): "total" deja cada línea a su
+  // precio lleno (factor 1), "porcentaje" y "monto fijo" escalan todas las líneas sugeridas por el
+  // mismo factor (ver aplicarFactor) — así el detalle de productos se mantiene proporcional sea
+  // cual sea el % o monto que se termine pidiendo, en vez de desarmar el desglose.
   const [modoAnticipo, setModoAnticipo] = useState("porcentaje");
   const [pctAnticipo, setPctAnticipo] = useState("");
+  const [montoFijoAnticipo, setMontoFijoAnticipo] = useState("");
 
   const set = (campo, valor) => setP((prev) => ({ ...prev, [campo]: valor }));
   const setLinea = (i, campo, valor) => setP((prev) => ({ ...prev, lineas: prev.lineas.map((l, j) => (j === i ? { ...l, [campo]: valor } : l)) }));
@@ -6585,20 +6624,34 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
   const total = totalPedido(p);
   const totalCotizacionAnticipo = cotizacionAnticipo ? calcularTotalCotizacion(cotizacionAnticipo) : 0;
   const yaPedidoCotizacion = cotizacionAnticipo ? montoYaPedidoDeCotizacion(cotizacionAnticipo.id, pedidos, idDoc) : 0;
+  // Escala TODAS las líneas (cada una desde su basePrecioUnit, el precio lleno con el descuento de
+  // la cotización ya aplicado) por el mismo factor — así una línea por producto sigue sumando
+  // exactamente el % o monto fijo elegido, en vez de perder esa proporción.
+  const aplicarFactor = (factor) => {
+    setP((prev) => ({
+      ...prev,
+      lineas: prev.lineas.map((l) => ({ ...l, precioUnit: Math.round((Number(l.basePrecioUnit ?? l.precioUnit) || 0) * factor * 100) / 100 })),
+    }));
+  };
   const aplicarPorcentaje = (valor) => {
     setPctAnticipo(valor);
-    const monto = totalCotizacionAnticipo > 0 ? Math.round(totalCotizacionAnticipo * ((Number(valor) || 0) / 100) * 100) / 100 : 0;
-    setLinea(0, "precioUnit", monto);
+    aplicarFactor((Number(valor) || 0) / 100);
   };
   const aplicarTotal = () => {
     setModoAnticipo("total");
-    setLinea(0, "precioUnit", Math.round(totalCotizacionAnticipo * 100) / 100);
+    aplicarFactor(1);
+  };
+  const aplicarMontoFijo = (valor) => {
+    setMontoFijoAnticipo(valor);
+    const factor = totalCotizacionAnticipo > 0 ? (Number(valor) || 0) / totalCotizacionAnticipo : 0;
+    aplicarFactor(factor);
   };
   // El texto que va al mail/PDF/Excel (origenPrecios) tiene que quedar siempre consistente con lo
   // que realmente se va a facturar: el total de la cotización y el % real (se calcule por "% del
   // total" o por "monto fijo") — así nunca queda la aclaración genérica de cuando todavía no se
-  // había definido el monto.
-  const montoAnticipoElegido = Number(p.lineas[0]?.precioUnit) || 0;
+  // había definido el monto. Es el total real del pedido (suma de TODAS las líneas, no solo la
+  // primera), para que itemizar por producto no rompa esta cuenta.
+  const montoAnticipoElegido = total;
   useEffect(() => {
     if (!cotizacionAnticipo) return;
     const nombreCot = cotizacionAnticipo.nombre || cotizacionAnticipo.categoria || "Cotización";
@@ -6692,7 +6745,7 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
             </Field>
           ) : (
             <Field label="Monto fijo del anticipo (U$S)">
-              <TextInput type="number" value={p.lineas[0]?.precioUnit ?? ""} onChange={(e) => setLinea(0, "precioUnit", Number(e.target.value) || 0)} placeholder="Ej: 5000" />
+              <TextInput type="number" value={montoFijoAnticipo} onChange={(e) => aplicarMontoFijo(e.target.value)} placeholder="Ej: 5000" />
             </Field>
           )}
         </div>

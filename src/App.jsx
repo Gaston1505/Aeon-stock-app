@@ -1429,6 +1429,19 @@ function daysUntil(dateStr) {
   const target = new Date(dateStr + "T00:00:00");
   return Math.round((target - today) / (1000 * 60 * 60 * 24));
 }
+// Momento exacto (epoch ms) en que corresponde avisar un "próximo contacto" del CRM — "antes"
+// corre un día hacia atrás la fecha del aviso, y la hora (si no se cargó) cae a las 8:00. Lo
+// calcula el navegador en su propia hora local (Paraguay) — por eso Date.getTime() ya da un
+// epoch correcto sin tener que lidiar con zonas horarias del lado de la Cloud Function que lo lee.
+function calcularAvisoEn(fechaISO, offset, hora) {
+  if (!fechaISO) return null;
+  const [y, m, d] = fechaISO.split("-").map(Number);
+  const dia = new Date(y, m - 1, d);
+  if (offset === "antes") dia.setDate(dia.getDate() - 1);
+  const [hh, mm] = (hora || "08:00").split(":").map(Number);
+  dia.setHours(hh || 0, mm || 0, 0, 0);
+  return dia.getTime();
+}
 function addBusinessDaysISO(dateStr, days) {
   if (!dateStr) return "";
   const d = new Date(dateStr + "T00:00:00");
@@ -19281,6 +19294,8 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
   const [fecha, setFecha] = useState(todayISO());
   const [texto, setTexto] = useState("");
   const [proximoContacto, setProximoContacto] = useState("");
+  const [avisoOffset, setAvisoOffset] = useState("mismo");
+  const [avisoHora, setAvisoHora] = useState("08:00");
   const [guardando, setGuardando] = useState(false);
 
   const lista = [...(historial || [])].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || 0) - (a.createdAt || 0));
@@ -19291,9 +19306,13 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
     await onAgregar({
       empresaKey, empresaNombre, tipo, fecha, texto: texto.trim(),
       proximoContacto: proximoContacto || null,
+      avisoOffset: proximoContacto ? avisoOffset : null, avisoHora: proximoContacto ? avisoHora : null,
+      avisoEn: proximoContacto ? calcularAvisoEn(proximoContacto, avisoOffset, avisoHora) : null,
+      avisoEnviado: false,
     });
     setGuardando(false);
     setTexto(""); setProximoContacto(""); setTipo("llamada"); setFecha(todayISO());
+    setAvisoOffset("mismo"); setAvisoHora("08:00");
     setAbierto(false);
   };
 
@@ -19327,6 +19346,21 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
               <input type="date" value={proximoContacto} onChange={(ev) => setProximoContacto(ev.target.value)} className={inputClass} style={inputStyle} />
             </div>
           </div>
+          {proximoContacto && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-xs" style={{ color: MUTED }}>Avisarme:</label>
+              <div style={{ width: 140 }}>
+                <Select value={avisoOffset} onChange={(ev) => setAvisoOffset(ev.target.value)}>
+                  <option value="mismo">Ese mismo día</option>
+                  <option value="antes">Un día antes</option>
+                </Select>
+              </div>
+              <label className="text-xs" style={{ color: MUTED }}>a las</label>
+              <div style={{ width: 110 }}>
+                <input type="time" value={avisoHora} onChange={(ev) => setAvisoHora(ev.target.value)} className={inputClass} style={inputStyle} />
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <PrimaryButton onClick={guardar} disabled={guardando || !texto.trim()}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
             <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
@@ -19382,6 +19416,8 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
   const [fecha, setFecha] = useState(todayISO());
   const [texto, setTexto] = useState("");
   const [proximoContacto, setProximoContacto] = useState("");
+  const [avisoOffset, setAvisoOffset] = useState("mismo");
+  const [avisoHora, setAvisoHora] = useState("08:00");
   const [guardando, setGuardando] = useState(false);
   const [editandoId, setEditandoId] = useState(null);
   const [editFecha, setEditFecha] = useState("");
@@ -19407,6 +19443,7 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
     setSeguimientoDe(seguimientoDeEntry || null);
     setEmpresaNueva(seguimientoDeEntry ? seguimientoDeEntry.empresaNombre : "");
     setTipo("llamada"); setFecha(todayISO()); setTexto(""); setProximoContacto("");
+    setAvisoOffset("mismo"); setAvisoHora("08:00");
     setFormAbierto(true);
   };
 
@@ -19417,6 +19454,9 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
     await onAgregar({
       empresaKey: empresa ? empresa.key : normClave(empresaNueva), empresaNombre: empresaNueva.trim(),
       tipo, fecha, texto: texto.trim(), proximoContacto: proximoContacto || null,
+      avisoOffset: proximoContacto ? avisoOffset : null, avisoHora: proximoContacto ? avisoHora : null,
+      avisoEn: proximoContacto ? calcularAvisoEn(proximoContacto, avisoOffset, avisoHora) : null,
+      avisoEnviado: false,
       origenId: seguimientoDe ? seguimientoDe.id : null,
     });
     if (seguimientoDe) await onActualizar(seguimientoDe.id, { proximoContactoHecho: true });
@@ -19467,6 +19507,21 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
               <input type="date" value={proximoContacto} onChange={(ev) => setProximoContacto(ev.target.value)} className={inputClass} style={inputStyle} />
             </div>
           </div>
+          {proximoContacto && (
+            <div className="flex items-center gap-2 flex-wrap mt-2">
+              <label className="text-xs" style={{ color: MUTED }}>Avisarme:</label>
+              <div style={{ width: 140 }}>
+                <Select value={avisoOffset} onChange={(ev) => setAvisoOffset(ev.target.value)}>
+                  <option value="mismo">Ese mismo día</option>
+                  <option value="antes">Un día antes</option>
+                </Select>
+              </div>
+              <label className="text-xs" style={{ color: MUTED }}>a las</label>
+              <div style={{ width: 110 }}>
+                <input type="time" value={avisoHora} onChange={(ev) => setAvisoHora(ev.target.value)} className={inputClass} style={inputStyle} />
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2 mt-3">
             <PrimaryButton onClick={guardar} disabled={guardando || !texto.trim() || !empresaNueva.trim()}>{guardando ? "Guardando…" : "Guardar"}</PrimaryButton>
             <SecondaryButton onClick={() => { setFormAbierto(false); setSeguimientoDe(null); }}>Cancelar</SecondaryButton>
@@ -19488,6 +19543,11 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
                 <div className="min-w-0">
                   <p className="text-sm font-medium" style={{ color: INK }}>{h.empresaNombre}</p>
                   <p className="text-xs truncate" style={{ color: MUTED }}>{h.texto}</p>
+                  {h.avisoEn && (
+                    <p className="text-xs" style={{ color: MUTED }}>
+                      Push: {new Date(h.avisoEn).toLocaleString("es-PY", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}{h.avisoEnviado ? " · enviado" : ""}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs whitespace-nowrap"><FechaAlerta dias={daysUntil(h.proximoContacto)} /></span>

@@ -38,15 +38,14 @@ function numeroDeSemana(fecha) {
   return Math.floor((dias + inicio.getDay()) / 7);
 }
 
-async function mandarMotivacion(titulo, frases) {
-  const hoy = new Date();
-  const cuerpo = frases[numeroDeSemana(hoy) % frases.length];
-
+// Manda el mismo push a todos los dispositivos activados, y de paso limpia los tokens que ya no
+// sirven (dispositivo desinstaló la app, permiso revocado) para no seguir intentándoles en vano.
+async function enviarPushATodos(titulo, cuerpo) {
   const snap = await getFirestore().collection("pushTokens").get();
   const tokens = snap.docs.map((d) => d.data().token).filter(Boolean);
   if (tokens.length === 0) {
     console.log("Sin dispositivos con notificaciones activadas — nada que mandar.");
-    return;
+    return { successCount: 0, failureCount: 0 };
   }
 
   const resp = await getMessaging().sendEachForMulticast({
@@ -55,8 +54,6 @@ async function mandarMotivacion(titulo, frases) {
     webpush: { fcmOptions: { link: "https://gaston1505.github.io/Aeon-stock-app/" } },
   });
 
-  // Un token puede quedar inválido (dispositivo desinstaló la app, permiso revocado, etc.) — lo
-  // sacamos de pushTokens para no seguir intentando mandarle en vano cada semana.
   const bajas = [];
   resp.responses.forEach((r, i) => {
     if (!r.success && ["messaging/registration-token-not-registered", "messaging/invalid-argument"].includes(r.error?.code)) {
@@ -66,6 +63,13 @@ async function mandarMotivacion(titulo, frases) {
   await Promise.all(bajas.map((id) => getFirestore().collection("pushTokens").doc(id).delete()));
 
   console.log(`Push "${titulo}" enviado: ${resp.successCount} ok, ${resp.failureCount} fallidos, ${bajas.length} token(s) de baja.`);
+  return resp;
+}
+
+async function mandarMotivacion(titulo, frases) {
+  const hoy = new Date();
+  const cuerpo = frases[numeroDeSemana(hoy) % frases.length];
+  await enviarPushATodos(titulo, cuerpo);
 }
 
 exports.motivacionLunes = onSchedule(
@@ -76,4 +80,29 @@ exports.motivacionLunes = onSchedule(
 exports.motivacionMiercoles = onSchedule(
   { schedule: "0 8 * * 3", timeZone: "America/Asuncion" },
   () => mandarMotivacion("Mitad de semana", FRASES_MIERCOLES)
+);
+
+// Avisos del CRM ("próximo contacto"): corre cada 15 minutos y manda el push apenas se cumple el
+// momento que se eligió al cargarlo (avisoEn, calculado en el navegador — ver calcularAvisoEn en
+// src/App.jsx). Filtra por proximoContactoHecho == false nomás (un solo campo, sin índice
+// compuesto) y el resto (avisoEnviado, avisoEn vencido) lo resuelve acá — el volumen de esta
+// colección es chico, no hace falta más que eso.
+exports.avisosCrm = onSchedule(
+  { schedule: "every 15 minutes", timeZone: "America/Asuncion" },
+  async () => {
+    const db = getFirestore();
+    const snap = await db.collection("historialClientes").where("proximoContactoHecho", "==", false).get();
+    const ahora = Date.now();
+    const vencidos = snap.docs.filter((doc) => {
+      const d = doc.data();
+      return d.avisoEn && !d.avisoEnviado && d.avisoEn <= ahora;
+    });
+    if (vencidos.length === 0) return;
+    for (const doc of vencidos) {
+      const d = doc.data();
+      await enviarPushATodos(`CRM — Contactar a ${d.empresaNombre}`, d.texto || "Tenés un seguimiento pendiente.");
+      await doc.ref.update({ avisoEnviado: true });
+    }
+    console.log(`Avisos de CRM enviados: ${vencidos.length}.`);
+  }
 );

@@ -5154,7 +5154,7 @@ export default function App() {
         {tab === "cotizaciones" && (
           <CotizacionesView
             cotizaciones={filteredCotizaciones} productos={productos} matrizCostos={matrizCostosEfectiva} query={query} onQuery={setQuery}
-            cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
+            cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId} cuentasObras={listaObrasCuenta}
             onNew={() => { setCotizacionEditando(null); setDrawer("cotizacion"); }}
             onDelete={deleteCotizacion}
             onUpdate={updateCotizacion}
@@ -5179,6 +5179,7 @@ export default function App() {
             query={query} onQuery={setQuery}
             cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
             onGenerarFicha={(c) => { setCotizacionParaVenta(c); setDrawer("venta-cotizacion"); }}
+            cuentasObras={listaObrasCuenta}
           />
         )}
 
@@ -17709,7 +17710,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
@@ -17737,7 +17738,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
         <EmptyState icon={FileSignature} title="Todavía no hay cotizaciones" subtitle="Usá el botón de arriba para armar la primera." />
       ) : (
         <>
-          <ResumenCotizaciones resumen={resumen} grupos={grupos} productos={productos} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId} />
+          <ResumenCotizaciones resumen={resumen} grupos={grupos} productos={productos} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId} cuentasObras={cuentasObras} />
           <ResumenMotivosCotizaciones grupos={grupos} />
           <div className="space-y-3">
             {grupos.map((g) => (
@@ -17765,7 +17766,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
 // así (mismo criterio Ganada/En curso/Cobrada que en Cotizaciones — ver cotizacionEstadoGanadaVisual),
 // sin pedir salida ni ficha. Garantías sigue exactamente igual que antes: el service de 12/24
 // meses, que es un paso aparte y opcional, y sigue necesitando una entrega real.
-function VentasGanadasView({ cotizaciones, productos, ventas, movimientos, query, onQuery, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, onGenerarFicha }) {
+function VentasGanadasView({ cotizaciones, productos, ventas, movimientos, query, onQuery, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, onGenerarFicha, cuentasObras }) {
   const ganadas = useMemo(() => cotizaciones.filter((c) => c.estado === "Ganada"), [cotizaciones]);
   const grupos = useMemo(() => agruparCotizaciones(ganadas), [ganadas]);
   const [detalle, setDetalle] = useState(null);
@@ -17792,8 +17793,14 @@ function VentasGanadasView({ cotizaciones, productos, ventas, movimientos, query
       out[f.estado].n += 1;
       out[f.estado].total += monto;
     }
+    // "Cobrada" se pisa con lo efectivamente cobrado por obra (completo o parcial) — mismo
+    // criterio que en Resumen y Cotizaciones, para que los tres no muestren números distintos.
+    if (cuentasObras) {
+      const obrasConCobro = cuentasObras.filter((f) => f.cuenta.cobrado > 0);
+      out.Cobrada = { n: obrasConCobro.length, total: totalesCuentasObras(cuentasObras).cobrado };
+    }
     return out;
-  }, [filas]);
+  }, [filas, cuentasObras]);
 
   return (
     <div>
@@ -23164,10 +23171,16 @@ function ReporteJoelView({ mercaderia, transito, productos, comprometidas, cotiz
   // ResumenCotizaciones) — antes este reporte llamaba resumirCotizaciones sin los mapas de cuenta/
   // movimiento, así que todo lo Ganado quedaba en un solo balde que no era comparable con el
   // "Ganada" de los otros reportes.
-  const resumenCot = useMemo(
-    () => resumirCotizaciones(gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId),
-    [gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]
-  );
+  const resumenCot = useMemo(() => {
+    const out = resumirCotizaciones(gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId);
+    // "Cobrada" se pisa con lo efectivamente cobrado por obra (completo o parcial) — mismo
+    // criterio que en Resumen, Cotizaciones y Ventas, para que ningún reporte muestre otro número.
+    if (cuentasObras) {
+      const obrasConCobro = cuentasObras.filter((f) => f.cuenta.cobrado > 0);
+      out.Cobrada = { n: obrasConCobro.length, total: totalesCuentasObras(cuentasObras).cobrado };
+    }
+    return out;
+  }, [gruposCotizacion, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras]);
   // Por obra: además del monto y estado, un desglose de a qué categorías generales de producto
   // (Aire Acondicionado, Anafes, Campanas, Hornos, Termocalefones) corresponde la plata cotizada
   // — cruzando cada línea contra el catálogo, mismas categorías que ya usa Catálogo de productos.

@@ -106,3 +106,52 @@ exports.avisosCrm = onSchedule(
     console.log(`Avisos de CRM enviados: ${vencidos.length}.`);
   }
 );
+
+// Avisos de Mantenimiento postventa ("Programar visita"): dos por visita, independientes —
+// avisoEn (configurable: mismo día o el día antes, a la hora elegida — ver calcularAvisoEn en
+// src/App.jsx) y avisoDiaEn (fijo, el día mismo de la visita a primera hora, con el detalle de
+// qué toca ese día, para que nunca dependa de haber configurado bien el primero). Mismo criterio
+// de query liviana que avisosCrm: un solo campo booleano (tieneAvisoPendiente) para no necesitar
+// índice compuesto, y acá adentro se resuelve cuál de los dos avisos corresponde mandar.
+function resumenUnidadesVisita(unidades) {
+  return (unidades || [])
+    .filter((u) => !u.hecho)
+    .map((u) => {
+      const n = (u.equipos || []).length;
+      return `Depto ${u.apartamento} (${n} equipo${n === 1 ? "" : "s"})`;
+    })
+    .join(", ");
+}
+exports.avisosMantenimiento = onSchedule(
+  { schedule: "every 15 minutes", timeZone: "America/Asuncion" },
+  async () => {
+    const db = getFirestore();
+    const snap = await db.collection("visitasPostventa").where("tieneAvisoPendiente", "==", true).get();
+    const ahora = Date.now();
+    let enviados = 0;
+    for (const doc of snap.docs) {
+      const v = doc.data();
+      const pendientes = (v.unidades || []).filter((u) => !u.hecho);
+      // Si ya no queda ninguna unidad pendiente (se completó la visita antes de que tocara algún
+      // aviso), no tiene sentido mandar un push vacío — se da de baja directo.
+      if (pendientes.length === 0) { await doc.ref.update({ tieneAvisoPendiente: false }); continue; }
+      const resumen = resumenUnidadesVisita(v.unidades);
+      const patch = {};
+      if (v.avisoEn && !v.avisoEnviado && v.avisoEn <= ahora) {
+        await enviarPushATodos(`Mantenimiento programado — ${v.edificioNombre || "Edificio"}`, `Para el ${v.fechaProgramada}: ${resumen}`);
+        patch.avisoEnviado = true;
+        enviados++;
+      }
+      if (v.avisoDiaEn && !v.avisoDiaEnviado && v.avisoDiaEn <= ahora) {
+        await enviarPushATodos(`Hoy toca mantenimiento — ${v.edificioNombre || "Edificio"}`, resumen);
+        patch.avisoDiaEnviado = true;
+        enviados++;
+      }
+      const avisoEnviadoFinal = patch.avisoEnviado ?? v.avisoEnviado;
+      const avisoDiaEnviadoFinal = patch.avisoDiaEnviado ?? v.avisoDiaEnviado;
+      if (avisoEnviadoFinal && avisoDiaEnviadoFinal) patch.tieneAvisoPendiente = false;
+      if (Object.keys(patch).length > 0) await doc.ref.update(patch);
+    }
+    if (enviados > 0) console.log(`Avisos de Mantenimiento enviados: ${enviados}.`);
+  }
+);

@@ -21979,9 +21979,17 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
 
 // Agenda: elegir fecha + qué unidades entran en esta ronda de visitas — precarga las que ya tienen
 // aviso activo (service por vencer o vencido), pero se puede sumar/sacar cualquier otra.
+// Dos avisos por visita programada, independientes entre sí (ver avisosMantenimiento en
+// functions/index.js): uno configurable (mismo día o el día antes, a la hora que se elija — mismo
+// mecanismo que ya usa el "próximo contacto" del CRM, ver calcularAvisoEn) para avisar con
+// anticipación, y otro fijo el día mismo de la visita a primera hora, con el detalle de qué toca
+// ese día — para que nunca dependa de haber configurado bien el primero.
+const HORA_AVISO_DIA_FIJO = "07:00";
 function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
   const [fechaProgramada, setFechaProgramada] = useState(todayISO());
   const [notas, setNotas] = useState("");
+  const [avisoOffset, setAvisoOffset] = useState("antes");
+  const [avisoHora, setAvisoHora] = useState("08:00");
   const [elegidas, setElegidas] = useState(() => new Set(unidades.filter((u) => alertaUnidadPostventa(u)).map((u) => u.id)));
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -21994,7 +22002,12 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
         const alerta = alertaUnidadPostventa(u);
         return { unidadId: u.id, apartamento: u.apartamento, cliente: u.cliente, equipos: equiposDeUnidad(u), hito: alerta?.hito || null, hecho: false, fechaHecho: null, informe: "" };
       });
-      await onGuardar({ edificioId: edificio.id, fechaProgramada, notas: notas.trim(), unidades: lineas });
+      await onGuardar({
+        edificioId: edificio.id, edificioNombre: edificio.nombre, fechaProgramada, notas: notas.trim(), unidades: lineas,
+        avisoOffset, avisoHora, avisoEn: calcularAvisoEn(fechaProgramada, avisoOffset, avisoHora), avisoEnviado: false,
+        avisoDiaEn: calcularAvisoEn(fechaProgramada, "mismo", HORA_AVISO_DIA_FIJO), avisoDiaEnviado: false,
+        tieneAvisoPendiente: true,
+      });
       onCancelar();
     } catch (e) { setMsg(textoErrorFirestore(e, "visitasPostventa")); }
     setOcupado(false);
@@ -22004,6 +22017,18 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
       <p className="text-sm font-semibold mb-2" style={{ color: INK }}>Programar visita</p>
       <Field label="Fecha programada"><TextInput type="date" value={fechaProgramada} onChange={(e) => setFechaProgramada(e.target.value)} /></Field>
       <Field label="Notas (opcional)"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: coordinar con portería" /></Field>
+      <div className="flex gap-2">
+        <Field label="Avisarme">
+          <Select value={avisoOffset} onChange={(e) => setAvisoOffset(e.target.value)}>
+            <option value="antes">El día antes</option>
+            <option value="mismo">El mismo día</option>
+          </Select>
+        </Field>
+        <Field label="A qué hora"><TextInput type="time" value={avisoHora} onChange={(e) => setAvisoHora(e.target.value)} /></Field>
+      </div>
+      <p className="text-xs mb-2 -mt-1" style={{ color: MUTED }}>
+        Además de ese aviso, siempre llega un recordatorio el día de la visita a las {HORA_AVISO_DIA_FIJO} con el detalle de qué toca.
+      </p>
       <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Unidades a visitar</p>
       <div className="space-y-1 mb-2 max-h-64 overflow-auto">
         {unidades.map((u) => {
@@ -22228,6 +22253,8 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
   const [notas, setNotas] = useState(visita.notas || "");
+  const [avisoOffset, setAvisoOffset] = useState(visita.avisoOffset || "antes");
+  const [avisoHora, setAvisoHora] = useState(visita.avisoHora || "08:00");
   const [ocupado, setOcupado] = useState(false);
   const hechas = visita.unidades.filter((u) => u.hecho).length;
   const completa = hechas === visita.unidades.length;
@@ -22235,12 +22262,22 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
     e.stopPropagation();
     setFechaProgramada(visita.fechaProgramada || todayISO());
     setNotas(visita.notas || "");
+    setAvisoOffset(visita.avisoOffset || "antes");
+    setAvisoHora(visita.avisoHora || "08:00");
     setEditando(true);
     setAbierto(true);
   };
   const guardarEdicion = async () => {
     setOcupado(true);
-    await onGuardarVisita({ id: visita.id, fechaProgramada, notas: notas.trim() });
+    // Si cambió la fecha o el horario de aviso, los dos avisos se recalculan y "se reabren"
+    // (avisoEnviado/avisoDiaEnviado vuelven a false) — si no, un aviso ya mandado para la fecha
+    // vieja iba a quedar marcado como enviado aunque la visita se haya movido a otro día.
+    await onGuardarVisita({
+      id: visita.id, fechaProgramada, notas: notas.trim(), avisoOffset, avisoHora,
+      avisoEn: calcularAvisoEn(fechaProgramada, avisoOffset, avisoHora), avisoEnviado: false,
+      avisoDiaEn: calcularAvisoEn(fechaProgramada, "mismo", HORA_AVISO_DIA_FIJO), avisoDiaEnviado: false,
+      tieneAvisoPendiente: !completa,
+    });
     setOcupado(false);
     setEditando(false);
   };
@@ -22250,6 +22287,9 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
         <span className="text-sm" style={{ color: INK }}>
           <b>{fmtDate(visita.fechaProgramada)}</b> · {hechas}/{visita.unidades.length} unidades
           {visita.notas ? ` · ${visita.notas}` : ""}
+          {!completa && visita.avisoEn && (
+            <span style={{ color: MUTED }}> · avisa {visita.avisoOffset === "mismo" ? "el mismo día" : "el día antes"} a las {visita.avisoHora}</span>
+          )}
         </span>
         <span className="flex items-center gap-2 shrink-0">
           <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: completa ? "#E9F7EF" : "#FDF1E0", color: completa ? "#15803D" : "#B45309" }}>
@@ -22268,6 +22308,13 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
               <div style={{ minWidth: 200, flex: 1 }}>
                 <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
               </div>
+              <Field label="Avisarme">
+                <Select value={avisoOffset} onChange={(e) => setAvisoOffset(e.target.value)}>
+                  <option value="antes">El día antes</option>
+                  <option value="mismo">El mismo día</option>
+                </Select>
+              </Field>
+              <Field label="A qué hora"><TextInput type="time" value={avisoHora} onChange={(e) => setAvisoHora(e.target.value)} /></Field>
               <PrimaryButton onClick={guardarEdicion} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
               <SecondaryButton onClick={() => setEditando(false)}>Cancelar</SecondaryButton>
             </div>

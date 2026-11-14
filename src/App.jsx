@@ -2025,7 +2025,7 @@ function Table({ columns, rows, onDelete, renderCell }) {
 
 function SearchBox({ value, onChange, placeholder }) {
   return (
-    <div className="relative w-64">
+    <div className="relative w-64 max-w-full">
       <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: MUTED }} />
       <input
         value={value}
@@ -6936,7 +6936,7 @@ function Section({ title, subtitle, query, onQuery, onNew, newLabel, extraAction
           <h2 className="text-xl font-bold" style={{ color: INK }}>{title}</h2>
           <p className="text-sm mt-0.5" style={{ color: MUTED }}>{subtitle}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
           {extraActions}
           <PrimaryButton onClick={onNew}><Plus size={15} /> {newLabel}</PrimaryButton>
@@ -17730,7 +17730,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
           <p className="text-lg font-bold truncate" style={{ color: INK }}>{grupo.cliente}</p>
           <p className="text-xs mt-0.5" style={{ color: MUTED }}>{nObras} obra{nObras > 1 ? "s" : ""}</p>
         </div>
-        <div className="flex items-center gap-3 text-xs flex-wrap shrink-0">
+        <div className="flex items-center gap-3 text-xs flex-wrap w-full sm:w-auto sm:shrink-0">
           <span style={{ color: ACCENT }}>Cotizado U$S {resumen.total.toLocaleString("es-PY")}</span>
           {ESTADOS_RESUMEN_COTIZACIONES.map((estado) => (
             <span key={estado} style={{ color: ESTADO_COTIZACION_BADGE[estado].color }}>

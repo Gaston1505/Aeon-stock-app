@@ -3431,12 +3431,25 @@ export default function App() {
     const entrada = visita.unidades[idx];
     await aplicarServiceHechoAUnidad(entrada.unidadId, entrada.hito, datos.fechaHecho);
   };
-  // Cargar un service que ya se hizo, sin pasar por "Programar visita" — para ir tomando registro
-  // de los que se hacen sobre la marcha o de los que ya se hicieron antes de tener esta sección.
-  // Crea una visita de un solo renglón, ya marcado hecho, con el mismo esquema que una programada.
+  // Cargar un service directo sobre una unidad, sin pasar por "Programar visita" (que exige elegir
+  // unidades a mano) — un solo atajo que, según la fecha elegida, cae en uno de dos casos: ya
+  // realizado (fecha de hoy o anterior, con informe/costos) o a futuro (con los mismos dos avisos
+  // que "Programar visita", ver avisosMantenimiento en functions/index.js). Crea una visita de un
+  // solo renglón en ambos casos, con el mismo esquema que una programada.
   const registrarServiceRealizado = async (unidad, datos) => {
     const alerta = alertaUnidadPostventa(unidad);
     const hito = alerta?.hito || null;
+    if (datos.fechaHecho > todayISO()) {
+      const entrada = { unidadId: unidad.id, apartamento: unidad.apartamento, cliente: unidad.cliente, equipos: equiposDeUnidad(unidad), hito, hecho: false };
+      await guardarVisitaPostventa({
+        edificioId: unidad.edificioId, fechaProgramada: datos.fechaHecho, notas: datos.notas || "", unidades: [entrada],
+        avisoOffset: datos.avisoOffset, avisoHora: datos.avisoHora,
+        avisoEn: calcularAvisoEn(datos.fechaHecho, datos.avisoOffset, datos.avisoHora), avisoEnviado: false,
+        avisoDiaEn: calcularAvisoEn(datos.fechaHecho, "mismo", HORA_AVISO_DIA_FIJO), avisoDiaEnviado: false,
+        tieneAvisoPendiente: true,
+      });
+      return;
+    }
     const entrada = { unidadId: unidad.id, apartamento: unidad.apartamento, cliente: unidad.cliente, equipos: equiposDeUnidad(unidad), hito, hecho: true, ...datos };
     await guardarVisitaPostventa({ edificioId: unidad.edificioId, fechaProgramada: datos.fechaHecho, notas: "Cargado directamente como service ya realizado", unidades: [entrada] });
     await aplicarServiceHechoAUnidad(unidad.id, hito, datos.fechaHecho);
@@ -22209,38 +22222,68 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
   );
 }
 
-// Mismo flujo que "Marcar hecho" de una visita programada, pero disparado directo desde la unidad
-// (sin pasar por el paso de agendar) — para ir cargando service que ya se hicieron.
+// Atajo directo desde la unidad (sin pasar por "Programar visita"): según la fecha elegida, sirve
+// para cargar un service ya realizado (hoy o antes, con informe/costos — mismo flujo que "Marcar
+// hecho" de una visita programada) o para agendar uno a futuro ahí mismo, con los mismos avisos
+// que ofrece "Programar visita" (ver HORA_AVISO_DIA_FIJO / avisosMantenimiento).
 function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   const [fechaHecho, setFechaHecho] = useState(todayISO());
   const [informe, setInforme] = useState("");
+  const [notas, setNotas] = useState("");
+  const [avisoOffset, setAvisoOffset] = useState("antes");
+  const [avisoHora, setAvisoHora] = useState("08:00");
   const equipos = equiposDeUnidad(unidad);
   const [costos, setCostos] = useState(() => equipos.map(() => ({ montoCliente: "", montoInstalador: "" })));
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState(null);
+  const esFutura = fechaHecho > todayISO();
   const guardar = async () => {
     setOcupado(true);
     try {
-      const costosPorEquipo = costos.map((c) => ({ montoCliente: Number(c.montoCliente) || 0, montoInstalador: Number(c.montoInstalador) || 0 }));
-      await onGuardar({
-        fechaHecho, informe: informe.trim(), costosPorEquipo,
-        montoCliente: costosPorEquipo.reduce((acc, c) => acc + c.montoCliente, 0),
-        montoInstalador: costosPorEquipo.reduce((acc, c) => acc + c.montoInstalador, 0),
-      });
+      if (esFutura) {
+        await onGuardar({ fechaHecho, notas: notas.trim(), avisoOffset, avisoHora });
+      } else {
+        const costosPorEquipo = costos.map((c) => ({ montoCliente: Number(c.montoCliente) || 0, montoInstalador: Number(c.montoInstalador) || 0 }));
+        await onGuardar({
+          fechaHecho, informe: informe.trim(), costosPorEquipo,
+          montoCliente: costosPorEquipo.reduce((acc, c) => acc + c.montoCliente, 0),
+          montoInstalador: costosPorEquipo.reduce((acc, c) => acc + c.montoInstalador, 0),
+        });
+      }
       onCancelar();
     } catch (e) { setMsg(textoErrorFirestore(e, "visitasPostventa")); }
     setOcupado(false);
   };
   return (
     <div className="p-3 rounded-lg border mt-1.5 mb-1.5" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
-      <p className="text-sm font-semibold mb-2" style={{ color: INK }}>Registrar service ya realizado — Depto {unidad.apartamento}</p>
+      <p className="text-sm font-semibold mb-2" style={{ color: INK }}>
+        {esFutura ? "Agendar visita" : "Registrar service ya realizado"} — Depto {unidad.apartamento}
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
-        <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
-        <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
+        <Field label={esFutura ? "Fecha programada" : "Fecha real"}><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
+        {!esFutura && <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>}
       </div>
-      <CostosPorEquipoLineas equipos={equipos} costos={costos} onChange={setCostos} />
-      <div className="flex gap-2">
-        <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
+      {esFutura ? (
+        <>
+          <Field label="Notas (opcional)"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: coordinar con portería" /></Field>
+          <div className="flex gap-3 flex-wrap items-end mt-1">
+            <Field label="Avisarme">
+              <select className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: BORDER, color: INK }} value={avisoOffset} onChange={(e) => setAvisoOffset(e.target.value)}>
+                <option value="antes">El día antes</option>
+                <option value="mismo">El mismo día</option>
+              </select>
+            </Field>
+            <Field label="A qué hora"><TextInput type="time" value={avisoHora} onChange={(e) => setAvisoHora(e.target.value)} /></Field>
+          </div>
+          <p className="text-xs mt-1" style={{ color: MUTED }}>
+            Además de ese aviso, siempre llega un recordatorio el día de la visita a las {HORA_AVISO_DIA_FIJO} con el detalle de qué toca.
+          </p>
+        </>
+      ) : (
+        <CostosPorEquipoLineas equipos={equipos} costos={costos} onChange={setCostos} />
+      )}
+      <div className="flex gap-2 mt-2">
+        <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : esFutura ? "Agendar" : "Guardar"}</PrimaryButton>
         <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
       </div>
       {msg && <p className="text-xs mt-1.5" style={{ color: "#B91C1C" }}>{msg}</p>}
@@ -22405,7 +22448,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
                   {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? "vencido" : `en ${alerta.dias}d`}</span>}
                 </span>
                 <span className="flex gap-1 shrink-0 items-center">
-                  <button type="button" onClick={() => setRegistrandoUnidadId((v) => (v === u.id ? null : u.id))} title="Registrar service ya realizado" className="p-1 rounded hover:bg-gray-100"><Wrench size={12} style={{ color: ACCENT }} /></button>
+                  <button type="button" onClick={() => setRegistrandoUnidadId((v) => (v === u.id ? null : u.id))} title="Registrar service ya realizado o agendar uno a futuro" className="p-1 rounded hover:bg-gray-100"><Wrench size={12} style={{ color: ACCENT }} /></button>
                   <button type="button" onClick={() => setFormUnidad(u)} className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
                   <button type="button" onClick={() => onBorrarUnidad(u.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 size={12} style={{ color: MUTED }} /></button>
                 </span>

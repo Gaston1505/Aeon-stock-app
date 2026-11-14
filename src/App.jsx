@@ -27,7 +27,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
-  downloadReciboServicioPdf,
+  downloadReciboServicioPdf, downloadFacturaMantenimientoPdf,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
@@ -3702,6 +3702,21 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  // A diferencia del recibo de servicio (que nunca lleva montos), esta es la que se manda para
+  // cobrarle al cliente: mismo desglose por equipo que se cargó al marcar el service hecho, con
+  // el total a facturar.
+  const handleDescargarFacturaMantenimiento = async (datos) => {
+    setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:factura`);
+    setPdfError("");
+    try {
+      await downloadFacturaMantenimientoPdf(datos);
+    } catch (e) {
+      console.error("Error generando factura de mantenimiento", e);
+      setPdfError("No se pudo generar la factura de mantenimiento. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const addPresupuestoReparacion = (data) => addItem(COLLECTIONS.presupuestosReparacion, data);
   const deletePresupuestoReparacion = (id) => deleteItem(COLLECTIONS.presupuestosReparacion, id);
 
@@ -5090,6 +5105,7 @@ export default function App() {
             onImportarClientes={handleImportarClientesPostventa} importandoClientes={importandoClientesPostventa}
             importResultadoClientes={importResultadoPostventa}
             onDescargarRecibo={handleDescargarReciboServicio} descargandoRecibo={descargandoId}
+            onDescargarFactura={handleDescargarFacturaMantenimiento} descargandoFactura={descargandoId}
           />
         )}
 
@@ -13494,7 +13510,11 @@ function SelectorEquipo({ equiposDisponibles, productos, comprometidas, value, o
 // carga manual como alternativa (un modelo que todavía no está cargado en el Catálogo), con un
 // link para pasar de un modo al otro.
 function SelectorModeloOTexto({ productos, value, onChange, placeholder, modelosExtra }) {
-  const [modoManual, setModoManual] = useState(false);
+  // Si el valor ya cargado (ej. al reabrir una unidad guardada) no matchea ningún producto real
+  // del catálogo — como "Split Pared ON-OFF 9.000 BTU", que ya no se vende pero sigue instalado
+  // en varios edificios — hay que arrancar directo en modo manual. Si no, el selector de catálogo
+  // no encuentra a qué producto apunta y lo muestra vacío, como si no se hubiera guardado nada.
+  const [modoManual, setModoManual] = useState(() => !!value && !(productos || []).some((p) => p.nombre === value));
   const datalistId = useRef(`selector-modelo-${Math.random().toString(36).slice(2)}`).current;
   const productosDisponibles = useMemo(() => (productos || []).filter((p) => !p.noDisponible), [productos]);
   const productosPorGrupo = useMemo(() => agruparProductosPorCategoria(productosDisponibles), [productosDisponibles]);
@@ -22006,39 +22026,88 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
   );
 }
 
+// Costo al cliente / a la instaladora de cada service, desglosado por equipo (un depto puede
+// tener 2 o 3 aires, cada uno con su propio costo) — para poder facturarle al cliente el detalle
+// equipo por equipo y que el total salga de sumar esas líneas, no de un monto único a ojo.
+function costosPorEquipoIniciales(entrada) {
+  const equipos = equiposDeUnidad(entrada);
+  const guardados = entrada.costosPorEquipo;
+  if (Array.isArray(guardados) && guardados.length === equipos.length) {
+    return guardados.map((c) => ({
+      montoCliente: c?.montoCliente ? String(c.montoCliente) : "",
+      montoInstalador: c?.montoInstalador ? String(c.montoInstalador) : "",
+    }));
+  }
+  // Compatibilidad con visitas viejas (un solo monto para todo el depto, de antes de desglosar
+  // por equipo): el total ya cargado queda en la primera línea, para no perderlo — se puede
+  // reacomodar a mano entre los equipos si hace falta.
+  return equipos.map((_, i) => ({
+    montoCliente: i === 0 && entrada.montoCliente ? String(entrada.montoCliente) : "",
+    montoInstalador: i === 0 && entrada.montoInstalador ? String(entrada.montoInstalador) : "",
+  }));
+}
+function CostosPorEquipoLineas({ equipos, costos, onChange }) {
+  const set = (i, patch) => onChange(costos.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  const totalCliente = costos.reduce((acc, c) => acc + (Number(c.montoCliente) || 0), 0);
+  const totalInstalador = costos.reduce((acc, c) => acc + (Number(c.montoInstalador) || 0), 0);
+  return (
+    <div className="mb-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: MUTED }}>Costo por equipo (Gs) — para facturarle al cliente</p>
+      <div className="space-y-1.5">
+        {equipos.map((eq, i) => (
+          <div key={i} className="flex items-center gap-2 flex-wrap p-1.5 rounded border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+            <span className="text-xs min-w-0" style={{ color: INK, flexBasis: 160, flexGrow: 1 }}>
+              {eq.modelo || "Equipo sin modelo"}{eq.capacidad ? ` (${eq.capacidad})` : ""}
+            </span>
+            <div style={{ width: 130 }}><Field label="Al cliente"><TextInput type="number" value={costos[i]?.montoCliente ?? ""} onChange={(e) => set(i, { montoCliente: e.target.value })} placeholder="Ej: 330000" /></Field></div>
+            <div style={{ width: 130 }}><Field label="Instaladora"><TextInput type="number" value={costos[i]?.montoInstalador ?? ""} onChange={(e) => set(i, { montoInstalador: e.target.value })} placeholder="Ej: 165000" /></Field></div>
+            <span className="text-[11px] shrink-0" style={{ color: MUTED }}>Ganancia AEON: {fmtGs(gananciaAeonService(costos[i]?.montoCliente, costos[i]?.montoInstalador))}</span>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs mt-1.5" style={{ color: INK }}>
+        Total cliente: <b>{fmtGs(totalCliente)}</b> · Total instaladora: <b>{fmtGs(totalInstalador)}</b> · Ganancia AEON total: <b>{fmtGs(gananciaAeonService(totalCliente, totalInstalador))}</b>
+      </p>
+    </div>
+  );
+}
+
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRecibo, descargandoRecibo }) {
+function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
   const [informe, setInforme] = useState(entrada.informe || "");
-  const [montoCliente, setMontoCliente] = useState(entrada.montoCliente ? String(entrada.montoCliente) : "");
-  const [montoInstalador, setMontoInstalador] = useState(entrada.montoInstalador ? String(entrada.montoInstalador) : "");
+  const [costos, setCostos] = useState(() => costosPorEquipoIniciales(entrada));
   const [garantiaTexto, setGarantiaTexto] = useState(entrada.garantiaTexto ?? defaultsReciboServicio(entrada.hito).garantiaTexto);
   const [proximoServicioTexto, setProximoServicioTexto] = useState(entrada.proximoServicioTexto ?? defaultsReciboServicio(entrada.hito).proximoServicioTexto);
   const [ocupado, setOcupado] = useState(false);
+  const equipos = equiposDeUnidad(entrada);
   // Al abrir para editar un hecho ya cargado, arranca de los valores guardados — abrir con un
   // formulario en blanco era lo que obligaba a "recargar de cero" en vez de corregir un dato.
   const abrir = () => {
     setFechaHecho(entrada.fechaHecho || todayISO());
     setInforme(entrada.informe || "");
-    setMontoCliente(entrada.montoCliente ? String(entrada.montoCliente) : "");
-    setMontoInstalador(entrada.montoInstalador ? String(entrada.montoInstalador) : "");
+    setCostos(costosPorEquipoIniciales(entrada));
     setGarantiaTexto(entrada.garantiaTexto ?? defaultsReciboServicio(entrada.hito).garantiaTexto);
     setProximoServicioTexto(entrada.proximoServicioTexto ?? defaultsReciboServicio(entrada.hito).proximoServicioTexto);
     setAbierto(true);
   };
   const confirmar = async () => {
     setOcupado(true);
+    const costosPorEquipo = costos.map((c) => ({ montoCliente: Number(c.montoCliente) || 0, montoInstalador: Number(c.montoInstalador) || 0 }));
     await onMarcarHecha({
-      fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0,
+      fechaHecho, informe: informe.trim(), costosPorEquipo,
+      montoCliente: costosPorEquipo.reduce((acc, c) => acc + c.montoCliente, 0),
+      montoInstalador: costosPorEquipo.reduce((acc, c) => acc + c.montoInstalador, 0),
       garantiaTexto: garantiaTexto.trim(), proximoServicioTexto: proximoServicioTexto.trim(),
     });
     setOcupado(false);
     setAbierto(false);
   };
   const idRecibo = `${entrada.apartamento}:${entrada.fechaHecho}:recibo`;
+  const idFactura = `${entrada.apartamento}:${entrada.fechaHecho}:factura`;
   return (
     <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -22060,10 +22129,25 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
                   garantiaTexto: entrada.garantiaTexto, proximoServicioTexto: entrada.proximoServicioTexto,
                 })}
                 disabled={descargandoRecibo === idRecibo}
-                title="Descargar recibo de servicio para el cliente"
+                title="Descargar recibo de servicio para el cliente (sin costos)"
                 className="p-1 rounded hover:bg-gray-100"
               >
                 <FileText size={12} style={{ color: ACCENT }} />
+              </button>
+            )}
+            {onDescargarFactura && (entrada.montoCliente > 0) && (
+              <button
+                type="button"
+                onClick={() => onDescargarFactura({
+                  edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
+                  equipos: equiposDeUnidad(entrada), fechaServicio: entrada.fechaHecho, informe: entrada.informe,
+                  costosPorEquipo: entrada.costosPorEquipo,
+                })}
+                disabled={descargandoFactura === idFactura}
+                title="Descargar detalle de mantenimiento con costos, para facturarle al cliente"
+                className="p-1 rounded hover:bg-gray-100"
+              >
+                <BadgeDollarSign size={12} style={{ color: ACCENT }} />
               </button>
             )}
             <button type="button" onClick={abrir} title="Corregir este service" className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
@@ -22086,10 +22170,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
               <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap items-end">
-            <Field label="Costo al cliente (Gs)"><TextInput type="number" value={montoCliente} onChange={(e) => setMontoCliente(e.target.value)} placeholder="Ej: 330000" /></Field>
-            <Field label="Costo de la instaladora (Gs)"><TextInput type="number" value={montoInstalador} onChange={(e) => setMontoInstalador(e.target.value)} placeholder="Ej: 180000" /></Field>
-          </div>
+          <CostosPorEquipoLineas equipos={equipos} costos={costos} onChange={setCostos} />
           <p className="text-[11px] font-semibold uppercase tracking-wide mt-1 mb-1" style={{ color: MUTED }}>Para el recibo del cliente</p>
           <Field label="Garantía (opcional)"><TextInput value={garantiaTexto} onChange={(e) => setGarantiaTexto(e.target.value)} placeholder="Ej: cobertura vigente hasta 36 meses..." /></Field>
           <Field label="Próximo mantenimiento (opcional)"><TextInput value={proximoServicioTexto} onChange={(e) => setProximoServicioTexto(e.target.value)} placeholder="Ej: a los 24 meses desde la compra" /></Field>
@@ -22097,9 +22178,6 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
             <PrimaryButton onClick={confirmar} disabled={ocupado}>{ocupado ? "Guardando..." : "Confirmar"}</PrimaryButton>
             <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>
           </div>
-          {(montoCliente || montoInstalador) && (
-            <p className="text-xs mt-1" style={{ color: MUTED }}>Ganancia AEON (mitad de la diferencia): <b style={{ color: INK }}>{fmtGs(gananciaAeonService(montoCliente, montoInstalador))}</b></p>
-          )}
         </div>
       )}
     </div>
@@ -22111,14 +22189,19 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
 function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   const [fechaHecho, setFechaHecho] = useState(todayISO());
   const [informe, setInforme] = useState("");
-  const [montoCliente, setMontoCliente] = useState("");
-  const [montoInstalador, setMontoInstalador] = useState("");
+  const equipos = equiposDeUnidad(unidad);
+  const [costos, setCostos] = useState(() => equipos.map(() => ({ montoCliente: "", montoInstalador: "" })));
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState(null);
   const guardar = async () => {
     setOcupado(true);
     try {
-      await onGuardar({ fechaHecho, informe: informe.trim(), montoCliente: Number(montoCliente) || 0, montoInstalador: Number(montoInstalador) || 0 });
+      const costosPorEquipo = costos.map((c) => ({ montoCliente: Number(c.montoCliente) || 0, montoInstalador: Number(c.montoInstalador) || 0 }));
+      await onGuardar({
+        fechaHecho, informe: informe.trim(), costosPorEquipo,
+        montoCliente: costosPorEquipo.reduce((acc, c) => acc + c.montoCliente, 0),
+        montoInstalador: costosPorEquipo.reduce((acc, c) => acc + c.montoInstalador, 0),
+      });
       onCancelar();
     } catch (e) { setMsg(textoErrorFirestore(e, "visitasPostventa")); }
     setOcupado(false);
@@ -22130,13 +22213,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
         <Field label="Fecha real"><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
         <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
-        <Field label="Costo al cliente (Gs)"><TextInput type="number" value={montoCliente} onChange={(e) => setMontoCliente(e.target.value)} placeholder="Ej: 330000" /></Field>
-        <Field label="Costo de la instaladora (Gs)"><TextInput type="number" value={montoInstalador} onChange={(e) => setMontoInstalador(e.target.value)} placeholder="Ej: 180000" /></Field>
-      </div>
-      {(montoCliente || montoInstalador) && (
-        <p className="text-xs mb-2" style={{ color: MUTED }}>Ganancia AEON (mitad de la diferencia): <b style={{ color: INK }}>{fmtGs(gananciaAeonService(montoCliente, montoInstalador))}</b></p>
-      )}
+      <CostosPorEquipoLineas equipos={equipos} costos={costos} onChange={setCostos} />
       <div className="flex gap-2">
         <PrimaryButton onClick={guardar} disabled={ocupado}>{ocupado ? "Guardando..." : "Guardar"}</PrimaryButton>
         <SecondaryButton onClick={onCancelar}>Cancelar</SecondaryButton>
@@ -22146,7 +22223,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarRecibo, descargandoRecibo }) {
+function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -22200,6 +22277,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
               key={u.unidadId} entrada={u} edificioNombre={edificioNombre}
               onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
               onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
+              onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
             />
           ))}
         </div>
@@ -22208,7 +22286,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarRecibo, descargandoRecibo }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -22314,6 +22392,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
             key={v.id} visita={v} edificioNombre={edificio.nombre}
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
             onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
+            onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
           />
         ))}
       </div>
@@ -22321,7 +22400,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarRecibo, descargandoRecibo }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const fileInputRef = useRef(null);
@@ -22347,6 +22426,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
         onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
+        onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
       />
     );
   }

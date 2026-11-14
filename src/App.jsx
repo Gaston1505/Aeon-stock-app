@@ -3453,7 +3453,7 @@ export default function App() {
     if (datos.fechaHecho > todayISO()) {
       const entrada = { unidadId: unidad.id, apartamento: unidad.apartamento, cliente: unidad.cliente, equipos: equiposDeUnidad(unidad), hito, hecho: false };
       await guardarVisitaPostventa({
-        edificioId: unidad.edificioId, fechaProgramada: datos.fechaHecho, notas: datos.notas || "", unidades: [entrada],
+        edificioId: unidad.edificioId, fechaProgramada: datos.fechaHecho, horaProgramada: datos.horaProgramada || "", notas: datos.notas || "", unidades: [entrada],
         avisoOffset: datos.avisoOffset, avisoHora: datos.avisoHora,
         avisoEn: calcularAvisoEn(datos.fechaHecho, datos.avisoOffset, datos.avisoHora), avisoEnviado: false,
         avisoDiaEn: calcularAvisoEn(datos.fechaHecho, "mismo", HORA_AVISO_DIA_FIJO), avisoDiaEnviado: false,
@@ -22167,6 +22167,7 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
 const HORA_AVISO_DIA_FIJO = "07:00";
 function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
   const [fechaProgramada, setFechaProgramada] = useState(todayISO());
+  const [horaProgramada, setHoraProgramada] = useState("");
   const [notas, setNotas] = useState("");
   const [avisoOffset, setAvisoOffset] = useState("antes");
   const [avisoHora, setAvisoHora] = useState("08:00");
@@ -22183,7 +22184,7 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
         return { unidadId: u.id, apartamento: u.apartamento, cliente: u.cliente, equipos: equiposDeUnidad(u), hito: alerta?.hito || null, hecho: false, fechaHecho: null, informe: "" };
       });
       await onGuardar({
-        edificioId: edificio.id, edificioNombre: edificio.nombre, fechaProgramada, notas: notas.trim(), unidades: lineas,
+        edificioId: edificio.id, edificioNombre: edificio.nombre, fechaProgramada, horaProgramada, notas: notas.trim(), unidades: lineas,
         avisoOffset, avisoHora, avisoEn: calcularAvisoEn(fechaProgramada, avisoOffset, avisoHora), avisoEnviado: false,
         avisoDiaEn: calcularAvisoEn(fechaProgramada, "mismo", HORA_AVISO_DIA_FIJO), avisoDiaEnviado: false,
         tieneAvisoPendiente: true,
@@ -22195,7 +22196,10 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
   return (
     <div className="p-3 rounded-lg border mb-3" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
       <p className="text-sm font-semibold mb-2" style={{ color: INK }}>Programar visita</p>
-      <Field label="Fecha programada"><TextInput type="date" value={fechaProgramada} onChange={(e) => setFechaProgramada(e.target.value)} /></Field>
+      <div className="flex gap-2">
+        <Field label="Fecha programada"><TextInput type="date" value={fechaProgramada} onChange={(e) => setFechaProgramada(e.target.value)} /></Field>
+        <Field label="Hora del trabajo (opcional)"><TextInput type="time" value={horaProgramada} onChange={(e) => setHoraProgramada(e.target.value)} /></Field>
+      </div>
       <Field label="Notas (opcional)"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: coordinar con portería" /></Field>
       <div className="flex gap-2">
         <Field label="Avisarme">
@@ -22395,6 +22399,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
 // que ofrece "Programar visita" (ver HORA_AVISO_DIA_FIJO / avisosMantenimiento).
 function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   const [fechaHecho, setFechaHecho] = useState(todayISO());
+  const [horaProgramada, setHoraProgramada] = useState("");
   const [informe, setInforme] = useState("");
   const [notas, setNotas] = useState("");
   const [avisoOffset, setAvisoOffset] = useState("antes");
@@ -22408,7 +22413,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
     setOcupado(true);
     try {
       if (esFutura) {
-        await onGuardar({ fechaHecho, notas: notas.trim(), avisoOffset, avisoHora });
+        await onGuardar({ fechaHecho, horaProgramada, notas: notas.trim(), avisoOffset, avisoHora });
       } else {
         const costosPorEquipo = costos.map((c) => ({ montoCliente: Number(c.montoCliente) || 0, montoInstalador: Number(c.montoInstalador) || 0 }));
         await onGuardar({
@@ -22428,7 +22433,9 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
         <Field label={esFutura ? "Fecha programada" : "Fecha real"}><TextInput type="date" value={fechaHecho} onChange={(e) => setFechaHecho(e.target.value)} /></Field>
-        {!esFutura && <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>}
+        {esFutura
+          ? <Field label="Hora del trabajo (opcional)"><TextInput type="time" value={horaProgramada} onChange={(e) => setHoraProgramada(e.target.value)} /></Field>
+          : <Field label="Informe del técnico"><TextInput value={informe} onChange={(e) => setInforme(e.target.value)} placeholder="Ej: limpieza de filtros, carga de gas OK" /></Field>}
       </div>
       {esFutura ? (
         <>
@@ -22462,6 +22469,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
+  const [horaProgramada, setHoraProgramada] = useState(visita.horaProgramada || "");
   const [notas, setNotas] = useState(visita.notas || "");
   const [avisoOffset, setAvisoOffset] = useState(visita.avisoOffset || "antes");
   const [avisoHora, setAvisoHora] = useState(visita.avisoHora || "08:00");
@@ -22471,6 +22479,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
   const abrirEdicion = (e) => {
     e.stopPropagation();
     setFechaProgramada(visita.fechaProgramada || todayISO());
+    setHoraProgramada(visita.horaProgramada || "");
     setNotas(visita.notas || "");
     setAvisoOffset(visita.avisoOffset || "antes");
     setAvisoHora(visita.avisoHora || "08:00");
@@ -22483,7 +22492,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
     // (avisoEnviado/avisoDiaEnviado vuelven a false) — si no, un aviso ya mandado para la fecha
     // vieja iba a quedar marcado como enviado aunque la visita se haya movido a otro día.
     await onGuardarVisita({
-      id: visita.id, fechaProgramada, notas: notas.trim(), avisoOffset, avisoHora,
+      id: visita.id, fechaProgramada, horaProgramada, notas: notas.trim(), avisoOffset, avisoHora,
       avisoEn: calcularAvisoEn(fechaProgramada, avisoOffset, avisoHora), avisoEnviado: false,
       avisoDiaEn: calcularAvisoEn(fechaProgramada, "mismo", HORA_AVISO_DIA_FIJO), avisoDiaEnviado: false,
       tieneAvisoPendiente: !completa,
@@ -22495,7 +22504,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
     <div className="rounded-lg border" style={{ borderColor: BORDER, backgroundColor: "#FAFBFC" }}>
       <button onClick={() => setAbierto((v) => !v)} className="w-full flex items-center justify-between gap-2 p-2.5 text-left">
         <span className="text-sm" style={{ color: INK }}>
-          <b>{fmtDate(visita.fechaProgramada)}</b> · {hechas}/{visita.unidades.length} unidades
+          <b>{fmtDate(visita.fechaProgramada)}{visita.horaProgramada ? ` ${visita.horaProgramada}` : ""}</b> · {hechas}/{visita.unidades.length} unidades
           {visita.notas ? ` · ${visita.notas}` : ""}
           {!completa && visita.avisoEn && (
             <span style={{ color: MUTED }}> · avisa {visita.avisoOffset === "mismo" ? "el mismo día" : "el día antes"} a las {visita.avisoHora}</span>
@@ -22515,6 +22524,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
           {editando && (
             <div className="p-2 rounded border flex gap-2 flex-wrap items-end" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
               <Field label="Fecha programada"><TextInput type="date" value={fechaProgramada} onChange={(e) => setFechaProgramada(e.target.value)} /></Field>
+              <Field label="Hora del trabajo"><TextInput type="time" value={horaProgramada} onChange={(e) => setHoraProgramada(e.target.value)} /></Field>
               <div style={{ minWidth: 200, flex: 1 }}>
                 <Field label="Notas"><TextInput value={notas} onChange={(e) => setNotas(e.target.value)} /></Field>
               </div>
@@ -22550,6 +22560,22 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
   const [registrandoUnidadId, setRegistrandoUnidadId] = useState(null);
   const activas = unidades.filter((u) => u.activo !== false);
   const alertas = activas.map((u) => ({ u, alerta: alertaUnidadPostventa(u) })).filter((x) => x.alerta);
+  // Sin esto, una unidad con una visita ya agendada (pero todavía no realizada) no muestra nada acá
+  // abajo — queda visualmente igual que una unidad sin nada pendiente, lo que confunde ("parece que
+  // ya está hecho" cuando en realidad solo está coordinado para más adelante).
+  const proximaVisitaPorUnidad = useMemo(() => {
+    const map = {};
+    for (const v of visitas) {
+      for (const linea of v.unidades || []) {
+        if (linea.hecho) continue;
+        const actual = map[linea.unidadId];
+        if (!actual || (v.fechaProgramada || "") < actual.fechaProgramada) {
+          map[linea.unidadId] = { fechaProgramada: v.fechaProgramada, horaProgramada: v.horaProgramada };
+        }
+      }
+    }
+    return map;
+  }, [visitas]);
   const visitasOrdenadas = [...visitas].sort((a, b) => (b.fechaProgramada || "").localeCompare(a.fechaProgramada || ""));
   const serviciosHechos = visitas.flatMap((v) => (v.unidades || []).filter((u) => u.hecho));
   const gananciaTotal = serviciosHechos.reduce((a, u) => a + gananciaAeonService(u.montoCliente, u.montoInstalador), 0);
@@ -22606,6 +22632,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
         {activas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay unidades cargadas en este edificio.</p>}
         {activas.map((u) => {
           const alerta = alertaUnidadPostventa(u);
+          const proxima = proximaVisitaPorUnidad[u.id];
           return (
             <div key={u.id}>
               <div className="flex items-center justify-between gap-2 text-xs p-2 rounded" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
@@ -22613,6 +22640,11 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
                   <b>Depto {u.apartamento}</b> · {u.cliente} · {textoEquiposUnidad(u)}
                   <span style={{ color: MUTED }}> · {u.tipoObra === "ventaCero" ? `venta ${fmtDate(u.fechaVenta)}` : "obra activa"}</span>
                   {alerta && <span style={{ color: alerta.vencido ? "#B91C1C" : "#B45309" }}> · service {alerta.hito} {alerta.vencido ? "vencido" : `en ${alerta.dias}d`}</span>}
+                  {proxima && (
+                    <span style={{ color: "#1D4ED8" }}>
+                      {" "}· visita programada {fmtDate(proxima.fechaProgramada)}{proxima.horaProgramada ? ` ${proxima.horaProgramada}` : ""}
+                    </span>
+                  )}
                 </span>
                 <span className="flex gap-1 shrink-0 items-center">
                   <button type="button" onClick={() => setRegistrandoUnidadId((v) => (v === u.id ? null : u.id))} title="Registrar service ya realizado o agendar uno a futuro" className="p-1 rounded hover:bg-gray-100"><Wrench size={12} style={{ color: ACCENT }} /></button>

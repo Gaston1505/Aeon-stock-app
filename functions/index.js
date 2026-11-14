@@ -136,14 +136,15 @@ exports.avisosMantenimiento = onSchedule(
       // aviso), no tiene sentido mandar un push vacío — se da de baja directo.
       if (pendientes.length === 0) { await doc.ref.update({ tieneAvisoPendiente: false }); continue; }
       const resumen = resumenUnidadesVisita(v.unidades);
+      const horaTexto = v.horaProgramada ? ` a las ${v.horaProgramada}` : "";
       const patch = {};
       if (v.avisoEn && !v.avisoEnviado && v.avisoEn <= ahora) {
-        await enviarPushATodos(`Mantenimiento programado — ${v.edificioNombre || "Edificio"}`, `Para el ${v.fechaProgramada}: ${resumen}`);
+        await enviarPushATodos(`Mantenimiento programado — ${v.edificioNombre || "Edificio"}`, `Para el ${v.fechaProgramada}${horaTexto}: ${resumen}`);
         patch.avisoEnviado = true;
         enviados++;
       }
       if (v.avisoDiaEn && !v.avisoDiaEnviado && v.avisoDiaEn <= ahora) {
-        await enviarPushATodos(`Hoy toca mantenimiento — ${v.edificioNombre || "Edificio"}`, resumen);
+        await enviarPushATodos(`Hoy toca mantenimiento${horaTexto} — ${v.edificioNombre || "Edificio"}`, resumen);
         patch.avisoDiaEnviado = true;
         enviados++;
       }

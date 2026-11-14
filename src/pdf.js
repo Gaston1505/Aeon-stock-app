@@ -15,6 +15,10 @@ export const COMPANY = {
   instagram: "@aeon.py",
 };
 
+// Los documentos de Mantenimiento postventa (Recibo de servicio y Factura de mantenimiento) van
+// con un único número de contacto, no los dos de COMPANY.telefonos.
+const TEL_MANTENIMIENTO = "+595 976 167335";
+
 // Texto del certificado de garantía (no de una cotización) — misma cláusula de alcance que
 // Certificado_Garantia_AEON_v4.docx, sin las menciones a precios/vigencia de cotización que
 // no aplican a una venta ya confirmada. Se aplica a toda venta por igual — qué productos tienen
@@ -1179,8 +1183,12 @@ export async function generateReciboServicioPdf(datos) {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
   const base = import.meta.env.BASE_URL;
-  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const [logoBytes, firmaBytes] = await Promise.all([
+    fetchBytes(`${base}aeon-logo.jpg`),
+    fetchBytes(`${base}firma-gaston.png`),
+  ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
 
   const equipos = datos.equipos || [];
   const colModelo = CONTENT_W * 0.55;
@@ -1232,7 +1240,7 @@ export async function generateReciboServicioPdf(datos) {
   y -= 9;
   text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
   y -= 9;
-  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  text(TEL_MANTENIMIENTO, MARGIN, y, { size: 7.5, color: MUTED });
 
   y -= 14;
 
@@ -1287,14 +1295,22 @@ export async function generateReciboServicioPdf(datos) {
   const contactoH = 44;
   rect(MARGIN, y - contactoH, CONTENT_W, contactoH, { fill: ACCENT_LIGHT });
   text("¿Consultas o querés coordinar tu próximo service?", MARGIN + 6, y - 12, { bold: true, size: 8, color: ACCENT });
-  text(`Tel.: ${COMPANY.telefonos}`, MARGIN + 6, y - 23, { size: 7.5 });
+  text(`Tel.: ${TEL_MANTENIMIENTO}`, MARGIN + 6, y - 23, { size: 7.5 });
   text(`Web: ${COMPANY.web}`, MARGIN + 6, y - 33, { size: 7.5 });
   text(`Instagram: ${COMPANY.instagram}`, MARGIN + 260, y - 33, { size: 7.5 });
   y -= contactoH + 24;
 
   // Firma AEON
-  ensureSpace(40);
+  ensureSpace(70);
   const aeonLineX = PAGE_W - MARGIN - 160;
+  if (firmaImg) {
+    const w = 110;
+    const h = (firmaImg.height / firmaImg.width) * w;
+    page.drawImage(firmaImg, { x: aeonLineX + 25, y: y - h + 6, width: w, height: h });
+    y -= h - 4;
+  } else {
+    y -= 30;
+  }
   page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
   y -= 11;
   const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
@@ -1329,8 +1345,12 @@ export async function generateFacturaMantenimientoPdf(datos) {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
   const base = import.meta.env.BASE_URL;
-  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const [logoBytes, firmaBytes] = await Promise.all([
+    fetchBytes(`${base}aeon-logo.jpg`),
+    fetchBytes(`${base}firma-gaston.png`),
+  ]);
   const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
 
   const equipos = datos.equipos || [];
   const costos = datos.costosPorEquipo || [];
@@ -1391,7 +1411,7 @@ export async function generateFacturaMantenimientoPdf(datos) {
   y -= 9;
   text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
   y -= 9;
-  text(COMPANY.telefonos, MARGIN, y, { size: 7.5, color: MUTED });
+  text(TEL_MANTENIMIENTO, MARGIN, y, { size: 7.5, color: MUTED });
 
   y -= 14;
 
@@ -1450,7 +1470,30 @@ export async function generateFacturaMantenimientoPdf(datos) {
   const contactoH = 32;
   rect(MARGIN, y - contactoH, CONTENT_W, contactoH, { fill: ACCENT_LIGHT });
   text("¿Consultas sobre esta factura?", MARGIN + 6, y - 12, { bold: true, size: 8, color: ACCENT });
-  text(`Tel.: ${COMPANY.telefonos}`, MARGIN + 6, y - 23, { size: 7.5 });
+  text(`Tel.: ${TEL_MANTENIMIENTO}`, MARGIN + 6, y - 23, { size: 7.5 });
+  y -= contactoH + 24;
+
+  // Firma AEON
+  ensureSpace(70);
+  const aeonLineX = PAGE_W - MARGIN - 160;
+  if (firmaImg) {
+    const w = 110;
+    const h = (firmaImg.height / firmaImg.width) * w;
+    page.drawImage(firmaImg, { x: aeonLineX + 25, y: y - h + 6, width: w, height: h });
+    y -= h - 4;
+  } else {
+    y -= 30;
+  }
+  page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
+  y -= 11;
+  const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
+  text(COMPANY.firmante, aeonLineX + 80 - nameW / 2, y, { size: 8 });
+  y -= 10;
+  const razW = font.widthOfTextAtSize(COMPANY.razonSocial, 7.5);
+  text(COMPANY.razonSocial, aeonLineX + 80 - razW / 2, y, { size: 7.5 });
+  y -= 9;
+  const rucW = font.widthOfTextAtSize(COMPANY.ruc, 7.5);
+  text(COMPANY.ruc, aeonLineX + 80 - rucW / 2, y, { size: 7.5 });
 
   return pdf.save();
 }

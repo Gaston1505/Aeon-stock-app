@@ -19709,7 +19709,7 @@ function ListaItemsEditor({ items, onChange, placeholder }) {
   );
 }
 
-const PERFIL_EMPRESA_VACIO = { tipoEmpresa: "", contactoNombre: "", contactoCargo: "", obrasRealizadas: [], obrasEnDesarrollo: [], obrasAFuturo: [] };
+const PERFIL_EMPRESA_VACIO = { tipoEmpresa: "", contactoNombre: "", contactoCargo: "", contactoTelefono: "", contactoCorreo: "", obrasRealizadas: [], obrasEnDesarrollo: [], obrasAFuturo: [] };
 
 // Campos del perfil de empresa, compartidos entre el alta rápida desde CRM (la primera vez que
 // aparece una empresa) y la edición posterior desde su ficha en Clientes (ver PerfilEmpresaSection).
@@ -19735,6 +19735,16 @@ function PerfilEmpresaCampos({ valor, onChange }) {
         <label className="text-xs block mb-1" style={{ color: MUTED }}>Nombre del contacto</label>
         <TextInput value={valor.contactoNombre} onChange={(ev) => set({ contactoNombre: ev.target.value })} placeholder="Nombre de la persona" />
       </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs block mb-1" style={{ color: MUTED }}>Teléfono</label>
+          <TextInput value={valor.contactoTelefono} onChange={(ev) => set({ contactoTelefono: ev.target.value })} placeholder="Ej: 0981 123 456" />
+        </div>
+        <div>
+          <label className="text-xs block mb-1" style={{ color: MUTED }}>Correo</label>
+          <TextInput value={valor.contactoCorreo} onChange={(ev) => set({ contactoCorreo: ev.target.value })} placeholder="Ej: nombre@empresa.com" />
+        </div>
+      </div>
       <div>
         <label className="text-xs block mb-1" style={{ color: MUTED }}>Obras realizadas</label>
         <ListaItemsEditor items={valor.obrasRealizadas} onChange={(v) => set({ obrasRealizadas: v })} placeholder="Ej: Torre Aurora" />
@@ -19751,9 +19761,33 @@ function PerfilEmpresaCampos({ valor, onChange }) {
   );
 }
 
+// "Ya compró": al menos una cotización Ganada en alguna obra de la empresa — mismo criterio acá,
+// en Clientes (resaltado verde de la ficha) y en CRM (resaltado verde de sus filas), para que
+// "a quién ya le vendí" se vea igual en las dos pantallas.
+function empresaYaCompro(empresa) {
+  if (!empresa?.obras) return false;
+  return Array.from(empresa.obras.values()).some((o) => (o.cotizaciones || []).some((c) => c.estado === "Ganada"));
+}
+// Agrupa las obras de la empresa según el estado de su cotización (gana > pendiente > perdida, la
+// primera que tenga algo activo) — para responder de un vistazo "para cuáles ya vendí, cuáles
+// tengo cotización pendiente y cuáles perdí" sin tener que abrir obra por obra en la ficha.
+function obrasPorEstadoCotizacion(empresa) {
+  const ganadas = [], pendientes = [], perdidas = [];
+  if (empresa?.obras) {
+    for (const o of empresa.obras.values()) {
+      const r = resumirCotizaciones(agruparCotizaciones(o.cotizaciones || []));
+      if (r.Ganada.n > 0) ganadas.push(o.nombre);
+      else if (r.Pendiente.n > 0) pendientes.push(o.nombre);
+      else if (r.Perdida.n > 0) perdidas.push(o.nombre);
+    }
+  }
+  return { ganadas, pendientes, perdidas };
+}
 // Bloque editable del perfil de empresa dentro de la ficha de Clientes — una vez cargado (desde acá
 // o desde el alta rápida en CRM, ver CrmView) queda disponible para corregir cuando haga falta.
-function PerfilEmpresaSection({ empresaKey, perfil, onGuardar }) {
+// `empresa` (opcional, el objeto de empresasObras) solo sirve para mostrar el resumen de obras
+// ganadas/pendientes/perdidas — no se guarda nada de ahí, es puro cálculo a partir de cotizaciones.
+function PerfilEmpresaSection({ empresaKey, perfil, onGuardar, empresa }) {
   const [editando, setEditando] = useState(false);
   const [valor, setValor] = useState(perfil || PERFIL_EMPRESA_VACIO);
   const [guardando, setGuardando] = useState(false);
@@ -19765,6 +19799,8 @@ function PerfilEmpresaSection({ empresaKey, perfil, onGuardar }) {
     setEditando(false);
   };
   const TIPO_LABEL = { constructora: "Constructora", desarrolladora: "Desarrolladora" };
+  const { ganadas, pendientes, perdidas } = obrasPorEstadoCotizacion(empresa);
+  const hayResumenObras = ganadas.length + pendientes.length + perdidas.length > 0;
   return (
     <div className="rounded-lg p-3" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -19775,6 +19811,13 @@ function PerfilEmpresaSection({ empresaKey, perfil, onGuardar }) {
           </button>
         )}
       </div>
+      {hayResumenObras && (
+        <div className="text-xs mb-2 space-y-0.5">
+          {ganadas.length > 0 && <p style={{ color: "#15803D" }}>Compró / ganadas: {ganadas.join(", ")}</p>}
+          {pendientes.length > 0 && <p style={{ color: "#B45309" }}>Cotización pendiente: {pendientes.join(", ")}</p>}
+          {perdidas.length > 0 && <p style={{ color: "#B91C1C" }}>Perdidas: {perdidas.join(", ")}</p>}
+        </div>
+      )}
       {editando ? (
         <div className="p-2.5 rounded-lg space-y-2" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
           <PerfilEmpresaCampos valor={valor} onChange={setValor} />
@@ -19790,6 +19833,11 @@ function PerfilEmpresaSection({ empresaKey, perfil, onGuardar }) {
               {TIPO_LABEL[perfil.tipoEmpresa] || "Empresa"}
               {perfil.contactoNombre ? ` · ${perfil.contactoNombre}` : ""}
               {perfil.contactoCargo ? ` (${perfil.contactoCargo})` : ""}
+            </p>
+          )}
+          {(perfil.contactoTelefono || perfil.contactoCorreo) && (
+            <p className="text-xs mt-0.5" style={{ color: MUTED }}>
+              {perfil.contactoTelefono}{perfil.contactoTelefono && perfil.contactoCorreo ? " · " : ""}{perfil.contactoCorreo}
             </p>
           )}
           {perfil.obrasRealizadas?.length > 0 && <p className="text-xs mt-1" style={{ color: MUTED }}>Obras realizadas: {perfil.obrasRealizadas.join(", ")}</p>}
@@ -19933,14 +19981,10 @@ function HistorialClienteSection({ empresaKey, empresaNombre, historial, onAgreg
 // cliente por cliente. "Próximo contacto" sin marcar como hecho es la única fuente de verdad de
 // un pendiente (también sale en Recordatorios/la campana, ver construirAlertasAutomaticas); "+
 // Seguimiento" cierra ese pendiente y encadena uno nuevo a partir de la charla (origenId).
-function perfilTieneDatos(p) {
-  return !!(p && (p.tipoEmpresa || p.contactoNombre || p.contactoCargo || p.obrasRealizadas?.length || p.obrasEnDesarrollo?.length || p.obrasAFuturo?.length));
-}
 function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar, onEliminar, onNavigate, perfilesEmpresas, onGuardarPerfilEmpresa }) {
   const [formAbierto, setFormAbierto] = useState(false);
   const [seguimientoDe, setSeguimientoDe] = useState(null);
   const [empresaNueva, setEmpresaNueva] = useState("");
-  const [perfilNuevo, setPerfilNuevo] = useState(PERFIL_EMPRESA_VACIO);
   const [tipo, setTipo] = useState("llamada");
   const [fecha, setFecha] = useState(todayISO());
   const [texto, setTexto] = useState("");
@@ -19953,6 +19997,10 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
   const [editTexto, setEditTexto] = useState("");
 
   const q = (query || "").toLowerCase();
+
+  // Para resaltar en verde las filas de empresas que ya compraron (mismo criterio que en Clientes,
+  // ver empresaYaCompro) sin recorrer `empresas` por cada fila.
+  const empresaPorKey = useMemo(() => new Map(empresas.map((e) => [e.key, e])), [empresas]);
 
   const pendientes = useMemo(
     () => (historial || [])
@@ -19971,7 +20019,6 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
   const abrirForm = (seguimientoDeEntry) => {
     setSeguimientoDe(seguimientoDeEntry || null);
     setEmpresaNueva(seguimientoDeEntry ? seguimientoDeEntry.empresaNombre : "");
-    setPerfilNuevo(PERFIL_EMPRESA_VACIO);
     setTipo("llamada"); setFecha(todayISO()); setTexto(""); setProximoContacto("");
     setAvisoOffset("mismo"); setAvisoHora("08:00");
     setFormAbierto(true);
@@ -19980,7 +20027,6 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
   const empresaActual = empresas.find((e) => e.nombre === empresaNueva);
   const empresaKeyActual = empresaActual ? empresaActual.key : normClave(empresaNueva);
   const perfilExistente = (perfilesEmpresas || []).find((p) => p.empresaKey === empresaKeyActual) || null;
-  const esEmpresaNueva = !seguimientoDe && !!empresaNueva.trim() && !perfilExistente;
 
   const guardar = async () => {
     if (!empresaNueva.trim() || !texto.trim()) return;
@@ -19994,7 +20040,6 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
       origenId: seguimientoDe ? seguimientoDe.id : null,
     });
     if (seguimientoDe) await onActualizar(seguimientoDe.id, { proximoContactoHecho: true });
-    if (esEmpresaNueva && perfilTieneDatos(perfilNuevo)) await onGuardarPerfilEmpresa(empresaKeyActual, perfilNuevo);
     setGuardando(false);
     setFormAbierto(false); setSeguimientoDe(null);
   };
@@ -20036,12 +20081,12 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
             </div>
           </div>
           <Textarea value={texto} onChange={(ev) => setTexto(ev.target.value)} placeholder="Qué se habló / qué quedó pendiente…" rows={3} />
-          {esEmpresaNueva && (
-            <div className="mt-3 p-2.5 rounded-lg" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
-              <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MUTED }}>
-                Perfil de "{empresaNueva.trim()}" (empresa nueva — opcional, queda guardado y editable después)
-              </p>
-              <PerfilEmpresaCampos valor={perfilNuevo} onChange={setPerfilNuevo} />
+          {!seguimientoDe && empresaNueva.trim() && (
+            <div className="mt-3">
+              <PerfilEmpresaSection
+                empresaKey={empresaKeyActual} perfil={perfilExistente} empresa={empresaActual}
+                onGuardar={(patch) => onGuardarPerfilEmpresa(empresaKeyActual, patch)}
+              />
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap mt-2">
@@ -20082,7 +20127,7 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
         ) : (
           <div className="space-y-1.5">
             {pendientes.map((h) => (
-              <div key={h.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg flex-wrap" style={{ backgroundColor: "#FAFBFC" }}>
+              <div key={h.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg flex-wrap" style={{ backgroundColor: empresaYaCompro(empresaPorKey.get(h.empresaKey)) ? "#F0FDF4" : "#FAFBFC" }}>
                 <div className="min-w-0">
                   <p className="text-sm font-medium" style={{ color: INK }}>{h.empresaNombre}</p>
                   <p className="text-xs truncate" style={{ color: MUTED }}>{h.texto}</p>
@@ -20114,7 +20159,7 @@ function CrmView({ historial, empresas, query, onQuery, onAgregar, onActualizar,
               const Icon = cfg.icon;
               const enEdicion = editandoId === h.id;
               return (
-                <div key={h.id} className="flex items-start justify-between gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: "#FAFBFC" }}>
+                <div key={h.id} className="flex items-start justify-between gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: empresaYaCompro(empresaPorKey.get(h.empresaKey)) ? "#F0FDF4" : "#FAFBFC" }}>
                   <div className="flex items-start gap-2 min-w-0 flex-1">
                     <span className="p-1 rounded shrink-0 mt-0.5" style={{ backgroundColor: ACCENT_LIGHT }}><Icon size={12} style={{ color: cfg.color }} /></span>
                     <div className="min-w-0 flex-1">
@@ -20172,8 +20217,9 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
         const abierto = abiertos.has(e.key) || !!q;
         const obras = Array.from(e.obras.values());
         const totalCliente = sumarCuentas(obras.map((o) => cuentas.get(`${e.key}|${o.key}`)));
+        const yaCompro = empresaYaCompro(e);
         return (
-          <div key={e.key} className="rounded-xl" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+          <div key={e.key} className="rounded-xl" style={{ backgroundColor: yaCompro ? "#F0FDF4" : "#FFFFFF", border: `0.5px solid ${yaCompro ? "#BBF7D0" : BORDER}` }}>
             <button onClick={() => toggle(e.key)} className="w-full flex items-center justify-between gap-3 p-4 text-left">
               <div className="min-w-0">
                 <p className="text-base font-bold" style={{ color: INK }}>{e.nombre}</p>
@@ -20203,7 +20249,7 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
               <div className="px-4 pb-4 space-y-3">
                 <DatosEmpresa e={e} empresas={empresas} grupos={grupos} onGuardar={onGuardarGrupos} />
                 <PerfilEmpresaSection
-                  empresaKey={e.key}
+                  empresaKey={e.key} empresa={e}
                   perfil={(perfilesEmpresas || []).find((p) => p.empresaKey === e.key) || null}
                   onGuardar={(patch) => onGuardarPerfilEmpresa(e.key, patch)}
                 />

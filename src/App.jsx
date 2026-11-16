@@ -19788,7 +19788,9 @@ function obrasPorEstadoCotizacion(empresa) {
 // `empresa` (opcional, el objeto de empresasObras) solo sirve para mostrar el resumen de obras
 // ganadas/pendientes/perdidas — no se guarda nada de ahí, es puro cálculo a partir de cotizaciones.
 function PerfilEmpresaSection({ empresaKey, perfil, onGuardar, empresa }) {
-  const [editando, setEditando] = useState(false);
+  // Si todavía no hay nada cargado, arranca ya desplegado — evita el paso extra de "Completar"
+  // cuando lo más común es que el usuario vaya a cargar la ficha completa de una vez.
+  const [editando, setEditando] = useState(!perfil);
   const [valor, setValor] = useState(perfil || PERFIL_EMPRESA_VACIO);
   const [guardando, setGuardando] = useState(false);
   const abrir = () => { setValor(perfil || PERFIL_EMPRESA_VACIO); setEditando(true); };

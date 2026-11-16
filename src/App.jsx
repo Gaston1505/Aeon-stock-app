@@ -6939,7 +6939,7 @@ function Section({ title, subtitle, query, onQuery, onNew, newLabel, extraAction
         <div className="flex items-center gap-2 flex-wrap">
           <SearchBox value={query} onChange={onQuery} />
           {extraActions}
-          <PrimaryButton onClick={onNew}><Plus size={15} /> {newLabel}</PrimaryButton>
+          {newLabel && <PrimaryButton onClick={onNew}><Plus size={15} /> {newLabel}</PrimaryButton>}
         </div>
       </div>
       {children}
@@ -20208,7 +20208,10 @@ function FichasClientes({ empresas, cuentas, pedidos, fichasObras, facturasObra,
   const norm = normClave;
 
   const q = norm(query);
-  const visibles = empresas.filter((e) => !q || norm(e.nombre).includes(q) || Array.from(e.obras.values()).some((o) => norm(o.nombre).includes(q)));
+  // Una empresa cargada solo como contacto (CRM, o "Nuevo cliente" en Contactos), sin ninguna obra
+  // real todavía, no es "cliente" en el sentido de esta ficha — se la deja afuera para que la
+  // lista no se llene de prospectos que todavía no cotizaron nada (eso vive en CRM).
+  const visibles = empresas.filter((e) => e.obras.size > 0 && (!q || norm(e.nombre).includes(q) || Array.from(e.obras.values()).some((o) => norm(o.nombre).includes(q))));
   if (visibles.length === 0) return <EmptyState icon={Phone} title="Sin clientes para mostrar" subtitle="Las fichas se arman solas con lo que cargues en cotizaciones y salidas." />;
 
   return (
@@ -20372,9 +20375,8 @@ function ClientesView({ clientes, empresas, cuentas, pedidos, fichasObras, factu
     return (
       <Section
         title="Clientes"
-        subtitle="Una ficha por cliente, obra por obra: contrato, mercadería entregada, pagos recibidos, remisiones y facturas."
+        subtitle="Una ficha por cliente, obra por obra: contrato, mercadería entregada, pagos recibidos, remisiones y facturas. Para anotar un contacto nuevo que todavía no cotizó nada, usá CRM — acá aparece solo en cuanto tenga una cotización, un movimiento o un pedido."
         query={query} onQuery={onQuery}
-        onNew={onNew} newLabel="Nuevo contacto"
       >
         {toggleVista}
         <FichasClientes

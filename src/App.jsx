@@ -512,7 +512,7 @@ function redondearArriba5(n) {
 // de esas combinaciones se puede ARMAR HOY se decide en tiempo real cruzando contra el catálogo
 // (ver combosDisponiblesMultiSplit) — si mañana el 7.000 tiene precio y deja de estar "no
 // disponible", esas combinaciones quedan utilizables solas, sin tocar esta tabla.
-const MULTI_SPLIT_COMBINACIONES = {
+const MULTI_SPLIT_COMBINACIONES_MIDEA = {
   18: [
     { n: 1, valores: [12], verificar: false },
     { n: 1, valores: [18], verificar: false },
@@ -893,21 +893,88 @@ const MULTI_SPLIT_COMBINACIONES = {
   ],
 };
 
-// Cruza la tabla de Midea contra lo que HOY existe y está disponible para vender en el
-// catálogo (Multi Split Interior) — así una capacidad sin precio (ej. la de 7.000 BTU al
-// principio) no aparece como opción hasta que se le cargue precio y se saque "no disponible".
-function interiorMultiSplitPorBtu(productos, btuMiles) {
+// Tabla de combinaciones de TCL para Multi Split (hoja "Multi split outdoor" del Excel oficial
+// TCL, exteriores TFM2-18CHD/TFM3-27CHD/FMA-36I4HD/FMA-42I5HD). El archivo original usa también
+// capacidades de 7.000 y 24.000 BTU en varias combinaciones, pero la hoja "Multi split Indoor"
+// del mismo Excel no documenta ningún modelo interior TCL en esas capacidades, y lo que TCL
+// mandó para Paraguay confirma que el interior Multi Split solo viene en 9K/12K/18K — por eso
+// acá quedan sacadas directamente (no "a verificar", ya resuelto) en vez de dejarlas y confiar
+// en que el catálogo nunca tenga un producto de 7K/24K cargado por error.
+const MULTI_SPLIT_COMBINACIONES_TCL = {
+  18: [ // TFM2-18CHD — el archivo dice "None" para 3, 4 y 5 unidades
+    { n: 1, valores: [9] }, { n: 1, valores: [12] }, { n: 1, valores: [18] },
+    { n: 2, valores: [9, 9] }, { n: 2, valores: [9, 12] }, { n: 2, valores: [9, 18] }, { n: 2, valores: [12, 12] },
+  ],
+  27: [ // TFM3-27CHD — el archivo dice "None" para 4 y 5 unidades
+    { n: 1, valores: [9] }, { n: 1, valores: [12] }, { n: 1, valores: [18] },
+    { n: 2, valores: [9, 9] }, { n: 2, valores: [9, 12] }, { n: 2, valores: [12, 12] }, { n: 2, valores: [9, 18] },
+    { n: 2, valores: [12, 18] }, { n: 2, valores: [18, 18] },
+    { n: 3, valores: [9, 9, 9] }, { n: 3, valores: [9, 9, 12] }, { n: 3, valores: [9, 9, 18] }, { n: 3, valores: [9, 12, 12] },
+    { n: 3, valores: [9, 12, 18] }, { n: 3, valores: [12, 12, 12] },
+  ],
+  36: [ // FMA-36I4HD — el archivo dice "None" para 5 unidades
+    { n: 1, valores: [9] }, { n: 1, valores: [12] }, { n: 1, valores: [18] },
+    { n: 2, valores: [9, 9] }, { n: 2, valores: [9, 12] }, { n: 2, valores: [9, 18] },
+    { n: 2, valores: [12, 12] }, { n: 2, valores: [12, 18] },
+    { n: 2, valores: [18, 18] },
+    { n: 3, valores: [9, 9, 9] }, { n: 3, valores: [9, 9, 12] }, { n: 3, valores: [9, 9, 18] },
+    { n: 3, valores: [9, 12, 12] }, { n: 3, valores: [9, 12, 18] },
+    { n: 3, valores: [12, 12, 12] }, { n: 3, valores: [12, 12, 18] }, { n: 3, valores: [12, 18, 18] },
+    // La celda original tiene "09+09+09+0909+09+09+12" sin separador (error de tipeo de TCL) —
+    // interpretado como estos 2 combos pegados; marcados "a verificar" porque es una inferencia,
+    // no texto inequívoco del archivo.
+    { n: 4, valores: [9, 9, 9, 9], verificar: true }, { n: 4, valores: [9, 9, 9, 12], verificar: true },
+    { n: 4, valores: [9, 9, 9, 18] }, { n: 4, valores: [9, 9, 12, 12] }, { n: 4, valores: [9, 12, 12, 12] },
+  ],
+  42: [ // FMA-42I5HD
+    { n: 1, valores: [9] }, { n: 1, valores: [12] }, { n: 1, valores: [18] },
+    { n: 2, valores: [9, 9] }, { n: 2, valores: [9, 12] }, { n: 2, valores: [12, 12] }, { n: 2, valores: [9, 18] },
+    { n: 2, valores: [12, 18] }, { n: 2, valores: [18, 18] },
+    { n: 3, valores: [9, 9, 9] }, { n: 3, valores: [9, 9, 12] }, { n: 3, valores: [9, 12, 12] }, { n: 3, valores: [9, 9, 18] },
+    { n: 3, valores: [9, 12, 18] }, { n: 3, valores: [12, 12, 12] }, { n: 3, valores: [12, 12, 18] }, { n: 3, valores: [12, 18, 18] },
+    { n: 3, valores: [18, 18, 18] },
+    { n: 4, valores: [9, 9, 9, 9] }, { n: 4, valores: [9, 9, 9, 12] }, { n: 4, valores: [9, 9, 9, 18] }, { n: 4, valores: [9, 9, 12, 12] },
+    { n: 4, valores: [9, 9, 12, 18] },
+    { n: 4, valores: [9, 12, 12, 12] }, { n: 4, valores: [9, 12, 12, 18] }, { n: 4, valores: [9, 12, 18, 18] }, { n: 4, valores: [9, 18, 18, 18] },
+    { n: 4, valores: [12, 12, 12, 12] }, { n: 4, valores: [12, 12, 12, 18] }, { n: 4, valores: [12, 12, 18, 18] },
+    { n: 5, valores: [9, 9, 9, 9, 9] }, { n: 5, valores: [9, 9, 9, 9, 12] }, { n: 5, valores: [9, 9, 9, 9, 18] }, { n: 5, valores: [9, 9, 9, 12, 12] }, { n: 5, valores: [9, 9, 9, 12, 18] },
+    { n: 5, valores: [9, 9, 9, 18, 18] }, { n: 5, valores: [9, 9, 12, 12, 12] }, { n: 5, valores: [9, 9, 12, 12, 18] }, { n: 5, valores: [9, 12, 12, 12, 12] },
+    { n: 5, valores: [9, 12, 12, 12, 18] }, { n: 5, valores: [12, 12, 12, 12, 12] },
+  ],
+};
+
+// Registro explícito: cada fábrica que vende Multi Split tiene acá su propia tabla (no son
+// intercambiables — un exterior TCL solo admite interiores TCL, uno Midea solo interiores
+// Midea). A propósito NO hay un "default" que caiga en la tabla de otra marca: si una fábrica
+// no tiene entrada acá (hoy, Chigo — no vende Multi Split todavía), tablaCombinacionMultiSplit
+// devuelve vacío y no se ofrece ningún combo, en vez de prestarle por error la tabla de Midea o
+// TCL. Antes de habilitar Multi Split para una fábrica nueva, cargarle acá su tabla real.
+const MULTI_SPLIT_COMBINACIONES_POR_FABRICA = {
+  Midea: MULTI_SPLIT_COMBINACIONES_MIDEA,
+  TCL: MULTI_SPLIT_COMBINACIONES_TCL,
+};
+function tablaCombinacionMultiSplit(fabrica) {
+  return MULTI_SPLIT_COMBINACIONES_POR_FABRICA[fabrica] || {};
+}
+
+// Cruza la tabla de la fábrica contra lo que HOY existe y está disponible para vender en el
+// catálogo (Multi Split Interior), filtrando también por fabrica — así una capacidad sin precio
+// (ej. la de 7.000 BTU al principio) no aparece como opción hasta que se le cargue precio y se
+// saque "no disponible", y un interior Midea nunca se mezcla con un exterior TCL (o viceversa)
+// aunque ambas marcas tengan un modelo de la misma capacidad en BTU.
+function interiorMultiSplitPorBtu(productos, btuMiles, fabrica) {
   return (productos || []).find((p) =>
     p.categoriaPrincipal === "Aire Acondicionado" && p.subcategoria === "Multi Split Interior" &&
-    Number(p.ordenNumerico) === btuMiles * 1000 && !p.noDisponible
+    Number(p.ordenNumerico) === btuMiles * 1000 && !p.noDisponible &&
+    (fabrica === undefined || fabricaDe(p) === fabrica)
   );
 }
 
-function combosDisponiblesMultiSplit(productos, btuExterior, cantidad) {
-  const tabla = MULTI_SPLIT_COMBINACIONES[btuExterior] || [];
+function combosDisponiblesMultiSplit(productos, btuExterior, cantidad, fabrica) {
+  const tabla = tablaCombinacionMultiSplit(fabrica)[btuExterior] || [];
   return tabla
     .filter((c) => c.n === cantidad)
-    .filter((c) => c.valores.every((btu) => interiorMultiSplitPorBtu(productos, btu)));
+    .filter((c) => c.valores.every((btu) => interiorMultiSplitPorBtu(productos, btu, fabrica)));
 }
 
 // Motor de costo: a partir de lo único que se carga a mano por producto (costoOrigen,
@@ -12927,51 +12994,92 @@ function CategoriaNodo({ nodo, nivel, onEdit, onDelete, onQuitarFicha, stockPorM
 // Vista de solo consulta de la tabla completa de Midea — misma fuente de datos que usa el
 // sugeridor de Cotizaciones, para poder mirarla sin estar armando una cotización.
 function TablaCombinacionesMultiSplit({ productos }) {
-  const exteriores = [18, 27, 36, 42, 48]
-    .map((btu) => ({
-      btu,
-      producto: (productos || []).find((p) =>
-        p.categoriaPrincipal === "Aire Acondicionado" && p.subcategoria === "Multi Split Exterior" && Number(p.ordenNumerico) === btu * 1000
-      ),
-    }))
-    .filter((e) => e.producto);
+  // Cada fábrica tiene su propia tabla (no son intercambiables) — se agrupa por fabrica y,
+  // dentro de cada una, por las capacidades de exterior que ya existen en el catálogo.
+  const exterioresPorFabrica = useMemo(() => {
+    const mapa = new Map();
+    for (const p of productos || []) {
+      if (p.categoriaPrincipal !== "Aire Acondicionado" || p.subcategoria !== "Multi Split Exterior") continue;
+      const fabrica = fabricaDe(p);
+      const btu = Math.round((Number(p.ordenNumerico) || 0) / 1000);
+      if (!btu) continue;
+      if (!mapa.has(fabrica)) mapa.set(fabrica, []);
+      mapa.get(fabrica).push({ btu, producto: p });
+    }
+    for (const lista of mapa.values()) lista.sort((a, b) => a.btu - b.btu);
+    return [...mapa.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [productos]);
+  const fabricas = exterioresPorFabrica.map(([fabrica]) => fabrica);
 
-  if (exteriores.length === 0) {
+  // Siempre arranca en una sola fábrica a la vez (nunca "todas" mezcladas) — así ver la tabla
+  // es tan a prueba de cruce entre marcas como armar la combinación en el sugeridor.
+  const [fabricaVista, setFabricaVista] = useState(fabricas[0] || "");
+  useEffect(() => {
+    if (!fabricas.includes(fabricaVista)) setFabricaVista(fabricas[0] || "");
+  }, [fabricas.join("|")]);
+
+  if (exterioresPorFabrica.length === 0) {
     return <p className="text-sm" style={{ color: MUTED }}>No hay unidades Multi Split Exterior cargadas en el catálogo todavía.</p>;
   }
 
   return (
     <div>
-      <p className="text-xs mb-4" style={{ color: MUTED }}>
-        Tabla de combinación de equipos R32 para Latinoamérica (20260422-V2), según la fábrica. En <span style={{ color: "#15803D", fontWeight: 600 }}>verde</span> las combinaciones armables hoy
+      <p className="text-xs mb-3" style={{ color: MUTED }}>
+        Tabla de combinación de equipos R32 según la fábrica (cada fábrica tiene la suya — un exterior solo admite interiores de la misma marca). En <span style={{ color: "#15803D", fontWeight: 600 }}>verde</span> las combinaciones armables hoy
         con lo que tenés disponible en el catálogo; en gris las que necesitan una capacidad que todavía no tenés cargada o disponible.
         {" "}<span style={{ color: "#B45309", fontWeight: 600 }}>⚠</span> = la fábrica la marca "a verificar/probar" antes de confirmarla para Sudamérica.
       </p>
-      {exteriores.map(({ btu, producto }) => {
-        const cantidades = [...new Set((MULTI_SPLIT_COMBINACIONES[btu] || []).map((c) => c.n))].sort((a, b) => a - b);
+      {fabricas.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <span className="text-xs font-medium" style={{ color: MUTED }}>Fábrica:</span>
+          {fabricas.map((f) => (
+            <button
+              key={f} type="button" onClick={() => setFabricaVista(f)}
+              className="text-xs px-2.5 py-1 rounded-md font-medium uppercase tracking-wide"
+              style={fabricaVista === f
+                ? { backgroundColor: ACCENT, color: "#FFFFFF" }
+                : { backgroundColor: "#FFFFFF", color: MUTED, border: `0.5px solid ${BORDER}` }}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      )}
+      {exterioresPorFabrica.filter(([fabrica]) => fabrica === fabricaVista).map(([fabrica, exteriores]) => {
+        const tabla = tablaCombinacionMultiSplit(fabrica);
         return (
-          <div key={btu} className="mb-5">
-            <p className="text-sm font-bold mb-2" style={{ color: INK }}>{producto.nombre} — {btu.toLocaleString("es-PY")} BTU exterior</p>
-            {cantidades.map((n) => {
-              const combosDeN = (MULTI_SPLIT_COMBINACIONES[btu] || []).filter((c) => c.n === n);
+          <div key={fabrica} className="mb-7">
+            {exteriores.map(({ btu, producto }) => {
+              const cantidades = [...new Set((tabla[btu] || []).map((c) => c.n))].sort((a, b) => a - b);
               return (
-                <div key={n} className="mb-2.5">
-                  <p className="text-xs font-semibold mb-1" style={{ color: MUTED }}>{n} interior{n > 1 ? "es" : ""}</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {combosDeN.map((c, i) => {
-                      const armable = c.valores.every((v) => interiorMultiSplitPorBtu(productos, v));
-                      const label = [...c.valores].sort((a, b) => b - a).map((v) => `${v}K`).join(" + ");
-                      return (
-                        <span
-                          key={i}
-                          className="text-[11px] px-2 py-1 rounded-full font-medium"
-                          style={armable ? { backgroundColor: "#E9F7EF", color: "#15803D" } : { backgroundColor: "#F2F3F4", color: MUTED }}
-                        >
-                          {label}{c.verificar ? " ⚠" : ""}
-                        </span>
-                      );
-                    })}
-                  </div>
+                <div key={btu} className="mb-5">
+                  <p className="text-sm font-bold mb-2" style={{ color: INK }}>{producto.nombre} — {btu.toLocaleString("es-PY")} BTU exterior</p>
+                  {cantidades.length === 0 && (
+                    <p className="text-xs" style={{ color: MUTED }}>Todavía no hay tabla de combinación cargada para esta capacidad.</p>
+                  )}
+                  {cantidades.map((n) => {
+                    const combosDeN = (tabla[btu] || []).filter((c) => c.n === n);
+                    return (
+                      <div key={n} className="mb-2.5">
+                        <p className="text-xs font-semibold mb-1" style={{ color: MUTED }}>{n} interior{n > 1 ? "es" : ""}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {combosDeN.map((c, i) => {
+                            const armable = c.valores.every((v) => interiorMultiSplitPorBtu(productos, v, fabrica));
+                            const label = [...c.valores].sort((a, b) => b - a).map((v) => `${v}K`).join(" + ");
+                            return (
+                              <span
+                                key={i}
+                                className="text-[11px] px-2 py-1 rounded-full font-medium"
+                                style={armable ? { backgroundColor: "#E9F7EF", color: "#15803D" } : { backgroundColor: "#F2F3F4", color: MUTED }}
+                              >
+                                {label}{c.verificar ? " ⚠" : ""}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -14020,17 +14128,18 @@ function SugeridorServicioTecnico({ onAgregar, initial }) {
 // (tabla de Midea, cruzada contra lo que hoy está disponible en el catálogo) — evita tener que
 // calcular a mano cuáles interiores son compatibles y agregarlas una por una.
 function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
+  const fabrica = fabricaDe(exterior);
   const btuExterior = Math.round((Number(exterior.ordenNumerico) || 0) / 1000);
   const cantidadesDisponibles = useMemo(
-    () => [...new Set((MULTI_SPLIT_COMBINACIONES[btuExterior] || []).map((c) => c.n))].sort((a, b) => a - b),
-    [btuExterior]
+    () => [...new Set((tablaCombinacionMultiSplit(fabrica)[btuExterior] || []).map((c) => c.n))].sort((a, b) => a - b),
+    [fabrica, btuExterior]
   );
   const [cantidad, setCantidad] = useState(cantidadesDisponibles[0] || 2);
   const [comboSel, setComboSel] = useState(null);
 
   const combos = useMemo(
-    () => combosDisponiblesMultiSplit(productos, btuExterior, cantidad),
-    [productos, btuExterior, cantidad]
+    () => combosDisponiblesMultiSplit(productos, btuExterior, cantidad, fabrica),
+    [productos, btuExterior, cantidad, fabrica]
   );
 
   const agregar = (combo) => {
@@ -14042,7 +14151,7 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
       cantidad: 1, precioUnit: Number(exterior.precioLista) || 0,
     }];
     for (const [btu, cant] of [...agrupado.entries()].sort((a, b) => b[0] - a[0])) {
-      const interior = interiorMultiSplitPorBtu(productos, btu);
+      const interior = interiorMultiSplitPorBtu(productos, btu, fabrica);
       if (!interior) continue;
       lineasNuevas.push({
         codigo: interior.nombre, descripcion: interior.descripcion,
@@ -14057,7 +14166,11 @@ function SugeridorMultiSplit({ exterior, productos, onAgregar }) {
 
   return (
     <div className="p-2.5 rounded mt-2 mb-2" style={{ backgroundColor: "#FFFFFF", border: `1px dashed ${BORDER}` }}>
-      <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>Armar combinación con interiores (tabla de fábrica)</p>
+      <p className="text-xs font-semibold mb-2" style={{ color: MUTED }}>
+        Armar combinación con interiores — tabla de{" "}
+        <span className="uppercase tracking-wide" style={{ color: ACCENT }}>{fabrica}</span>
+        {" "}(solo interiores {fabrica}, no se mezcla con otra marca)
+      </p>
       <div className="flex gap-1.5 mb-2 flex-wrap">
         {cantidadesDisponibles.map((n) => (
           <button

@@ -3039,21 +3039,32 @@ export async function generateFichaTecnicaAirePdf(datos) {
   const footerH = 20;
   const tablaTop = y;
 
+  // Aviso en rojo y negrita cuando la ficha dice explícitamente que NO incluye cañería de cobre
+  // ni cable — es la excepción al "incluye" estándar, así que tiene que resaltar antes de que el
+  // cliente arme el pedido pensando que sí viene. La negrita es más ancha que la fuente regular a
+  // igual tamaño: hay que medir el wrap con la MISMA fuente con la que se va a dibujar (acá y en
+  // el cálculo de alto de fila de abajo), si no el texto se desborda de la celda.
+  const esAvisoSinCobreCable = (key, valorTexto) =>
+    key === "incluye" && /no incluye/i.test(valorTexto) && /(cobre|cable)/i.test(valorTexto);
+
   const filaHs = FICHA_AIRE_CAMPOS.map(([key, label]) => {
+    const valorTexto = datos[key] || "—";
     const lineasLabel = wrapText(bold, label, 7.5, labelW - 10);
-    const lineasValor = wrapText(font, datos[key] || "—", 7.5, valorW - 10);
+    const lineasValor = wrapText(esAvisoSinCobreCable(key, valorTexto) ? bold : font, valorTexto, 7.5, valorW - 10);
     return Math.max(lineasLabel.length, lineasValor.length) * 10 + 8;
   });
 
   let fy = tablaTop;
   FICHA_AIRE_CAMPOS.forEach(([key, label], i) => {
     const h = filaHs[i];
+    const valorTexto = datos[key] || "—";
+    const esAviso = esAvisoSinCobreCable(key, valorTexto);
     rect(AC_MARGIN, fy - h, labelW, h, { border: BORDER, fill: i === 0 ? ACCENT_LIGHT : undefined });
     rect(AC_MARGIN + labelW, fy - h, valorW, h, { border: BORDER });
     const lineasLabel = wrapText(bold, label, 7.5, labelW - 10);
-    const lineasValor = wrapText(font, datos[key] || "—", 7.5, valorW - 10);
+    const lineasValor = wrapText(esAviso ? bold : font, valorTexto, 7.5, valorW - 10);
     lineasLabel.forEach((l, j) => text(l, AC_MARGIN + 5, fy - 12 - j * 10, { bold: true, size: 7.5 }));
-    lineasValor.forEach((l, j) => text(l, AC_MARGIN + labelW + 5, fy - 12 - j * 10, { size: 7.5 }));
+    lineasValor.forEach((l, j) => text(l, AC_MARGIN + labelW + 5, fy - 12 - j * 10, esAviso ? { size: 7.5, bold: true, color: ROJO } : { size: 7.5 }));
     fy -= h;
   });
   const tablaBottom = fy;

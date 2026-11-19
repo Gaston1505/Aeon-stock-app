@@ -129,6 +129,9 @@ service cloud.firestore {
     // Historial de contacto por cliente (CRM): llamadas, mensajes, reuniones, notas y las
     // entradas automáticas de cotizaciones — solo admin, no depósito.
     match /historialClientes/{docId} { allow read, write: if esAdmin(); }
+    // Perfil de empresa (CRM/Clientes): teléfono, correo y demás datos de la empresa — mismo
+    // acceso que historialClientes/clientes, solo admin, no depósito.
+    match /perfilesEmpresas/{docId} { allow read, write: if esAdmin(); }
 
     // El PDF de la ficha técnica de cada producto vive acá (no en productos/{docId}) para que
     // el catálogo entero no se descargue cargado de PDFs cada vez que se abre la app — se pide

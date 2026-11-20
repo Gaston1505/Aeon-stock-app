@@ -236,6 +236,12 @@ function addMonthsISO(dateStr, months) {
   d.setMonth(d.getMonth() + months);
   return d.toISOString().slice(0, 10);
 }
+function addDaysISO(dateStr, dias) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
 function fmtDate(d) {
   if (!d) return "—";
   const [y, m, day] = d.split("-");
@@ -3523,11 +3529,18 @@ export default function App() {
     await setDoc(doc(db, COLLECTIONS.perfilesEmpresas, id), { ...patch, empresaKey, modificadoPorEmail: auth.currentUser?.email || null, modificadoEn: Date.now() }, { merge: true });
   };
   // Si el hito cerrado era el service de 12 o 24 meses, deja la fecha en la unidad para que la
-  // alerta no la siga marcando como pendiente — un service "a demanda" (obra activa, sin hito) no
-  // toca nada acá, solo queda el registro de la visita.
-  const aplicarServiceHechoAUnidad = async (unidadId, hito, fechaHecho) => {
-    if (hito === "12m") await guardarUnidadPostventa({ id: unidadId, service12Hecho: true, service12Fecha: fechaHecho });
-    else if (hito === "24m") await guardarUnidadPostventa({ id: unidadId, service24Hecho: true, service24Fecha: fechaHecho });
+  // alerta no la siga marcando como pendiente. Además, haya hito fijo o no (obra activa incluida),
+  // el próximo mantenimiento coordinado al cerrar ESTE service (ver datos.coordinarProximo en
+  // UnidadVisitaRow) reemplaza siempre lo que hubiera antes en la unidad: si se coordina, queda esa
+  // fecha nueva; si no, se borra — así cerrar el service de hoy "consume" el aviso que lo trajo.
+  const aplicarServiceHechoAUnidad = async (unidadId, hito, datos) => {
+    const patch = {
+      id: unidadId,
+      proximoMantenimientoFecha: datos.coordinarProximo ? addMonthsISO(datos.fechaHecho, Number(datos.proximoMeses) || 12) : null,
+    };
+    if (hito === "12m") { patch.service12Hecho = true; patch.service12Fecha = datos.fechaHecho; }
+    else if (hito === "24m") { patch.service24Hecho = true; patch.service24Fecha = datos.fechaHecho; }
+    await guardarUnidadPostventa(patch);
   };
   // Marcar una unidad como hecha dentro de una visita ya programada: actualiza esa línea puntual
   // (no toda la visita).
@@ -3535,7 +3548,7 @@ export default function App() {
     const unidades = visita.unidades.map((u, i) => (i === idx ? { ...u, hecho: true, ...datos } : u));
     await guardarVisitaPostventa({ id: visita.id, unidades });
     const entrada = visita.unidades[idx];
-    await aplicarServiceHechoAUnidad(entrada.unidadId, entrada.hito, datos.fechaHecho);
+    await aplicarServiceHechoAUnidad(entrada.unidadId, entrada.hito, datos);
   };
   // Pago recibido de un service de mantenimiento — no depende de haber generado un Pedido de
   // facturación (se puede cobrar en mano/transferencia en el momento), así que es un marcador
@@ -3565,7 +3578,7 @@ export default function App() {
     }
     const entrada = { unidadId: unidad.id, apartamento: unidad.apartamento, cliente: unidad.cliente, equipos: equiposDeUnidad(unidad), hito, hecho: true, ...datos };
     await guardarVisitaPostventa({ edificioId: unidad.edificioId, fechaProgramada: datos.fechaHecho, notas: "Cargado directamente como service ya realizado", unidades: [entrada] });
-    await aplicarServiceHechoAUnidad(unidad.id, hito, datos.fechaHecho);
+    await aplicarServiceHechoAUnidad(unidad.id, hito, datos);
   };
   const deleteCotizacion = (id) => deleteItem(COLLECTIONS.cotizaciones, id);
   // El estado (Pendiente/Ganada/Perdida/Sin efecto) y si la cotización cuenta para la obra
@@ -6616,15 +6629,25 @@ function remitoKeyServicePostventa(edificioNombre, entrada) {
 function armarPedidoDesdeServicePostventa(entrada, edificioNombre, { pedidos, grupos } = {}) {
   const equipos = equiposDeUnidad(entrada);
   const costos = entrada.costosPorEquipo || [];
-  const cliente = (entrada.cliente || "").trim();
+  // Si el service se factura a otra empresa/persona (ver "Facturar a" en UnidadVisitaRow), el
+  // pedido va a nombre de esa empresa, no del inquilino/dueño del depto — el RUC cargado ahí se usa
+  // siempre, sea cual sea el destinatario.
+  const facturarAOtro = entrada.facturarA === "otro";
+  const cliente = (facturarAOtro ? entrada.facturarNombre : entrada.cliente || "").trim();
   const previo = [...(pedidos || [])]
     .filter((p) => p.cliente && p.cliente.trim().toLowerCase() === cliente.toLowerCase())
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
   const centro = centroCostoPorCodigo(centroCostoSugerido(edificioNombre));
+  const notas = [`Service de mantenimiento — ${edificioNombre || ""}, Depto ${entrada.apartamento} (${fmtDate(entrada.fechaHecho)}).`];
+  if (facturarAOtro) notas.push(`Se factura a ${entrada.facturarNombre || "(sin nombre)"}, no al inquilino/dueño del depto (${entrada.cliente || "s/d"}).`);
+  if (entrada.garantiaTexto) notas.push(`Garantía: ${entrada.garantiaTexto}`);
+  notas.push(entrada.proximoMantenimientoCoordinado
+    ? `Próximo mantenimiento: coordinado para dentro de ${entrada.proximoMeses || 12} meses.`
+    : "Próximo mantenimiento: no se coordinó otro por ahora.");
   return {
     moneda: "PYG",
     remitoKey: remitoKeyServicePostventa(edificioNombre, entrada), remito: "", fecha: entrada.fechaHecho || todayISO(),
-    cliente, ruc: (rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
+    cliente, ruc: (entrada.facturarRuc || rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
     condicion: previo?.condicion || "Contado", termino: "",
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
     obra: edificioNombre || "",
@@ -6633,7 +6656,7 @@ function armarPedidoDesdeServicePostventa(entrada, edificioNombre, { pedidos, gr
       producto: `${eq.modelo || "Equipo"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`, familia: "Mantenimiento",
       precioUnit: Number(costos[i]?.montoCliente) || 0,
     })),
-    origenPrecios: `Service de mantenimiento — ${edificioNombre || ""}, Depto ${entrada.apartamento} (${fmtDate(entrada.fechaHecho)}).`,
+    origenPrecios: notas.join(" "),
     estado: "Borrador",
   };
 }
@@ -22261,8 +22284,17 @@ function ReclamoCard({ reclamo, onResolver, onReinstalar, onDelete }) {
 // Unidad de venta nueva ("ventaCero"): a los 11 y 23 meses desde la venta hay que avisar para
 // coordinar el service obligatorio de los 12 y 24 meses. Devuelve el primer hito pendiente (12m
 // antes que 24m) o null si no hay nada que avisar todavía — una unidad "activa" (obra en curso, sin
-// venta de cero) no tiene este calendario fijo, el service ahí se agenda a demanda.
+// venta de cero) no tiene este calendario fijo, el service ahí se agenda a demanda... salvo que se
+// haya coordinado un próximo mantenimiento puntual al cerrar el último service (ver
+// proximoMantenimientoFecha más abajo), que aplica para CUALQUIER unidad, venta cero o activa.
 function alertaUnidadPostventa(u) {
+  if (u.proximoMantenimientoFecha) {
+    const diasAviso = daysUntil(addDaysISO(u.proximoMantenimientoFecha, -30));
+    if (diasAviso <= 0) {
+      const diasVto = daysUntil(u.proximoMantenimientoFecha);
+      return { hito: "coordinado", vencido: diasVto < 0, dias: diasVto };
+    }
+  }
   if (u.tipoObra !== "ventaCero" || !u.fechaVenta) return null;
   for (const meses of [12, 24]) {
     if (u[`service${meses}Hecho`]) continue;
@@ -22652,6 +22684,18 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
   const [costos, setCostos] = useState(() => costosPorEquipoIniciales(entrada));
   const [garantiaTexto, setGarantiaTexto] = useState(entrada.garantiaTexto ?? defaultsReciboServicio(entrada.hito).garantiaTexto);
   const [proximoServicioTexto, setProximoServicioTexto] = useState(entrada.proximoServicioTexto ?? defaultsReciboServicio(entrada.hito).proximoServicioTexto);
+  // A quién se le hace la factura: por defecto el mismo cliente (inquilino/dueño del depto) — si
+  // la paga otra empresa (ej. la administración del edificio), se carga aparte con su propio RUC,
+  // sin pisar el nombre del cliente real que figura en la unidad.
+  const [facturarA, setFacturarA] = useState(entrada.facturarA || "mismoCliente");
+  const [facturarNombre, setFacturarNombre] = useState(entrada.facturarNombre || "");
+  const [facturarRuc, setFacturarRuc] = useState(entrada.facturarRuc || "");
+  // Próximo mantenimiento: a diferencia de garantiaTexto/proximoServicioTexto (solo texto libre
+  // para el recibo), esto es una fecha real que alimenta la alerta de "service por coordinar" —
+  // ver alertaUnidadPostventa/aplicarServiceHechoAUnidad. Arranca sin marcar: no asumir que se
+  // coordina de nuevo solo porque se cerró este service (ver nota de "por única vez" en Morra 1).
+  const [coordinarProximo, setCoordinarProximo] = useState(!!entrada.proximoMantenimientoCoordinado);
+  const [proximoMeses, setProximoMeses] = useState(entrada.proximoMeses || "12");
   const [ocupado, setOcupado] = useState(false);
   const equipos = equiposDeUnidad(entrada);
   // Al abrir para editar un hecho ya cargado, arranca de los valores guardados — abrir con un
@@ -22662,6 +22706,11 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
     setCostos(costosPorEquipoIniciales(entrada));
     setGarantiaTexto(entrada.garantiaTexto ?? defaultsReciboServicio(entrada.hito).garantiaTexto);
     setProximoServicioTexto(entrada.proximoServicioTexto ?? defaultsReciboServicio(entrada.hito).proximoServicioTexto);
+    setFacturarA(entrada.facturarA || "mismoCliente");
+    setFacturarNombre(entrada.facturarNombre || "");
+    setFacturarRuc(entrada.facturarRuc || "");
+    setCoordinarProximo(!!entrada.proximoMantenimientoCoordinado);
+    setProximoMeses(entrada.proximoMeses || "12");
     setAbierto(true);
   };
   const confirmar = async () => {
@@ -22672,6 +22721,9 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
       montoCliente: costosPorEquipo.reduce((acc, c) => acc + c.montoCliente, 0),
       montoInstalador: costosPorEquipo.reduce((acc, c) => acc + c.montoInstalador, 0),
       garantiaTexto: garantiaTexto.trim(), proximoServicioTexto: proximoServicioTexto.trim(),
+      facturarA, facturarNombre: facturarNombre.trim(), facturarRuc: facturarRuc.trim(),
+      proximoMantenimientoCoordinado: coordinarProximo, proximoMeses: Number(proximoMeses) || 12,
+      coordinarProximo, // leído por aplicarServiceHechoAUnidad para setear proximoMantenimientoFecha en la unidad
     });
     setOcupado(false);
     setAbierto(false);
@@ -22755,6 +22807,14 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
           )}
         </p>
       )}
+      {entrada.hecho && (entrada.facturarA === "otro" || entrada.facturarRuc || entrada.proximoMantenimientoCoordinado) && (
+        <p className="mt-0.5" style={{ color: MUTED }}>
+          {entrada.facturarA === "otro" && <>Factura a: <b style={{ color: INK }}>{entrada.facturarNombre || "(sin nombre)"}</b>{entrada.facturarRuc ? ` · RUC ${entrada.facturarRuc}` : ""}</>}
+          {entrada.facturarA !== "otro" && entrada.facturarRuc && <>RUC: <b style={{ color: INK }}>{entrada.facturarRuc}</b></>}
+          {(entrada.facturarA === "otro" || entrada.facturarRuc) && entrada.proximoMantenimientoCoordinado ? " · " : ""}
+          {entrada.proximoMantenimientoCoordinado && <>Próximo mantenimiento coordinado: en {entrada.proximoMeses || 12} meses</>}
+        </p>
+      )}
       {entrada.hecho && <AdjuntosFacturaService clave={claveAdjuntoServicePostventa(edificioNombre, entrada)} />}
       {abierto && (
         <div className="mt-2">
@@ -22765,9 +22825,29 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
             </div>
           </div>
           <CostosPorEquipoLineas equipos={equipos} costos={costos} onChange={setCostos} />
-          <p className="text-[11px] font-semibold uppercase tracking-wide mt-1 mb-1" style={{ color: MUTED }}>Para el recibo del cliente</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mt-1 mb-1" style={{ color: MUTED }}>Facturación</p>
+          <Field label="Facturar a">
+            <Select value={facturarA} onChange={(e) => setFacturarA(e.target.value)}>
+              <option value="mismoCliente">Al mismo cliente ({entrada.cliente || "sin nombre"})</option>
+              <option value="otro">A otra empresa/persona</option>
+            </Select>
+          </Field>
+          {facturarA === "otro" && (
+            <Field label="Nombre / razón social"><TextInput value={facturarNombre} onChange={(e) => setFacturarNombre(e.target.value)} placeholder="Ej: Administración del edificio" /></Field>
+          )}
+          <Field label="RUC (opcional)"><TextInput value={facturarRuc} onChange={(e) => setFacturarRuc(e.target.value)} placeholder="Ej: 80012345-6" /></Field>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Para el recibo del cliente</p>
           <Field label="Garantía (opcional)"><TextInput value={garantiaTexto} onChange={(e) => setGarantiaTexto(e.target.value)} placeholder="Ej: cobertura vigente hasta 36 meses..." /></Field>
           <Field label="Próximo mantenimiento (opcional)"><TextInput value={proximoServicioTexto} onChange={(e) => setProximoServicioTexto(e.target.value)} placeholder="Ej: a los 24 meses desde la compra" /></Field>
+          <label className="flex items-center gap-2 text-xs mt-1.5" style={{ color: INK }}>
+            <input type="checkbox" checked={coordinarProximo} onChange={(e) => setCoordinarProximo(e.target.checked)} />
+            ¿Coordinamos el próximo mantenimiento?
+          </label>
+          {coordinarProximo && (
+            <div style={{ width: 160 }}>
+              <Field label="En cuántos meses"><TextInput type="number" min="1" value={proximoMeses} onChange={(e) => setProximoMeses(e.target.value)} /></Field>
+            </div>
+          )}
           <div className="flex gap-2 mt-1">
             <PrimaryButton onClick={confirmar} disabled={ocupado}>{ocupado ? "Guardando..." : "Confirmar"}</PrimaryButton>
             <SecondaryButton onClick={() => setAbierto(false)}>Cancelar</SecondaryButton>

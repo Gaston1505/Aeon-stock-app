@@ -5687,6 +5687,13 @@ export default function App() {
           <PedidoFacturacionForm
             key={pedidoAnticipoTarget.id}
             cotizacionAnticipo={pedidoAnticipoTarget}
+            // Si ya existe un pedido de anticipo para esta cotización, reabrir el drawer edita ESE
+            // (el más reciente) en vez de crear uno nuevo — si no, cada vez que se reabre para
+            // ajustar o reenviar el mismo pedido queda un duplicado nuevo en Firestore (bug real:
+            // 5 pedidos idénticos de "Cocina"/CCI SA el 2026-11-20, ver memoria del pedido de
+            // facturación). Para pedir un anticipo realmente nuevo y aparte de uno ya enviado, hay
+            // que borrar o archivar el anterior primero.
+            pedidoExistente={[...pedidosFacturacion].filter((p) => p.cotizacionId === pedidoAnticipoTarget.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]}
             pedidos={pedidosFacturacion}
             productos={productos} equipos={equipos} cotizaciones={cotizaciones} grupos={gruposEmpresas}
             onGuardar={guardarPedidoFacturacion}

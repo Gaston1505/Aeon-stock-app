@@ -183,6 +183,7 @@ const COLLECTIONS = {
   edificiosPostventa: "edificiosPostventa",
   unidadesPostventa: "unidadesPostventa",
   visitasPostventa: "visitasPostventa",
+  serviciosPostventaAdjuntos: "serviciosPostventaAdjuntos",
   presupuestosReparacion: "presupuestosReparacion",
   clientes: "clientes",
   transito: "transito",
@@ -1630,6 +1631,32 @@ function borrarFichaTecnica(productoId) {
   fichaTecnicaCache.delete(productoId);
   return deleteDoc(doc(db, COLLECTIONS.fichasTecnicas, productoId))
     .catch((e) => console.error("Firestore delete error (fichaTecnica)", productoId, e));
+}
+
+// Fotos de factura de un service de mantenimiento (instaladora/cliente) viven en su propia
+// colección, no en visitasPostventa — mismo motivo que fichasTecnicas: una visita tiene varias
+// unidades (deptos) en un solo documento, y cargar fotos ahí dejaría ese doc pesado para TODOS los
+// que lo abren (toda la agenda del edificio), aunque nadie esté mirando las fotos de un service
+// puntual. `clave` identifica siempre el mismo service (ver claveAdjuntoServicePostventa).
+const adjuntoServiceCache = new Map();
+async function obtenerAdjuntoServicePostventa(clave) {
+  if (!clave) return {};
+  if (adjuntoServiceCache.has(clave)) return adjuntoServiceCache.get(clave);
+  try {
+    const snap = await getDoc(doc(db, COLLECTIONS.serviciosPostventaAdjuntos, clave));
+    const data = snap.exists() ? snap.data() : {};
+    adjuntoServiceCache.set(clave, data);
+    return data;
+  } catch (e) {
+    console.error("Firestore get error (adjuntoServicePostventa)", clave, e);
+    return {};
+  }
+}
+function guardarAdjuntoServicePostventa(clave, patch) {
+  const nuevo = { ...(adjuntoServiceCache.get(clave) || {}), ...patch };
+  adjuntoServiceCache.set(clave, nuevo);
+  return setDoc(doc(db, COLLECTIONS.serviciosPostventaAdjuntos, clave), patch, { merge: true })
+    .catch((e) => console.error("Firestore set error (adjuntoServicePostventa)", clave, e));
 }
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -22255,6 +22282,12 @@ function equiposDeUnidad(u) {
   if (u?.equipo) return [{ modelo: u.equipo, capacidad: u.capacidad || "", cantidad: 1 }];
   return [];
 }
+// Clave estable para las fotos de factura de un service puntual (ver obtenerAdjuntoServicePostventa
+// en guardarAdjuntoServicePostventa) — identifica siempre el mismo service (edificio + depto +
+// fecha en que se hizo), mismo criterio que remitoKeyServicePostventa para el Pedido de facturación.
+function claveAdjuntoServicePostventa(edificioNombre, entrada) {
+  return `${edificioNombre}__${entrada.apartamento}__${entrada.fechaHecho}`.replace(/\//g, "-");
+}
 function textoEquiposUnidad(u) {
   const lista = equiposDeUnidad(u);
   if (lista.length === 0) return "s/d";
@@ -22556,6 +22589,59 @@ function CostosPorEquipoLineas({ equipos, costos, onChange }) {
   );
 }
 
+// Dos fotos de respaldo por service, guardadas aparte (ver obtenerAdjuntoServicePostventa) y
+// cargadas recién al abrir este bloque: la factura que le hace la instaladora a AEON (respaldo
+// interno de ese costo) y la factura real que se le termina haciendo al cliente final — dos cosas
+// distintas, cada una con su propia foto.
+function AdjuntosFacturaService({ clave }) {
+  const [abierto, setAbierto] = useState(false);
+  const [adjuntos, setAdjuntos] = useState(null); // null = todavía no se pidió
+  useEffect(() => {
+    if (!abierto || adjuntos != null) return;
+    let cancelado = false;
+    obtenerAdjuntoServicePostventa(clave).then((d) => { if (!cancelado) setAdjuntos(d || {}); });
+    return () => { cancelado = true; };
+  }, [abierto, clave]); // eslint-disable-line react-hooks/exhaustive-deps
+  const subir = async (campo, file) => {
+    if (!file) return;
+    const dataUrl = await compressImage(file);
+    setAdjuntos((prev) => ({ ...(prev || {}), [campo]: dataUrl }));
+    await guardarAdjuntoServicePostventa(clave, { [campo]: dataUrl });
+  };
+  const quitar = async (campo) => {
+    setAdjuntos((prev) => ({ ...(prev || {}), [campo]: "" }));
+    await guardarAdjuntoServicePostventa(clave, { [campo]: "" });
+  };
+  const bloque = (campo, titulo, ayuda) => (
+    <div className="mb-2 last:mb-0">
+      <p className="text-[11px] font-semibold" style={{ color: INK }}>{titulo}</p>
+      <p className="text-[10px] mb-1" style={{ color: MUTED }}>{ayuda}</p>
+      {adjuntos?.[campo] ? (
+        <FotoCargadaPreview src={adjuntos[campo]} onQuitar={() => quitar(campo)} alt={titulo} />
+      ) : (
+        <FotoPicker onChange={(e) => subir(campo, e.target.files?.[0])} />
+      )}
+    </div>
+  );
+  return (
+    <div className="mt-1.5">
+      <button type="button" onClick={() => setAbierto((v) => !v)} className="text-[11px] flex items-center gap-1" style={{ color: ACCENT }}>
+        <Camera size={11} /> {abierto ? "Ocultar fotos de factura" : "Fotos de factura (instaladora / cliente)"}
+      </button>
+      {abierto && (
+        adjuntos == null ? (
+          <p className="text-[11px] mt-1" style={{ color: MUTED }}>Cargando...</p>
+        ) : (
+          <div className="mt-1.5 p-2 rounded border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+            {bloque("facturaInstaladorFoto", "Factura de la instaladora (respaldo interno)", "Lo que te factura la empresa que hizo el trabajo — queda como respaldo entre vos y ella.")}
+            {bloque("facturaClienteFoto", "Factura al cliente final", "La factura real que se le termina haciendo al cliente por este service.")}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
@@ -22669,6 +22755,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
           )}
         </p>
       )}
+      {entrada.hecho && <AdjuntosFacturaService clave={claveAdjuntoServicePostventa(edificioNombre, entrada)} />}
       {abierto && (
         <div className="mt-2">
           <div className="flex gap-2 flex-wrap items-end">

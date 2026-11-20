@@ -108,6 +108,10 @@ service cloud.firestore {
     match /edificiosPostventa/{docId} { allow read, write: if esAdmin(); }
     match /unidadesPostventa/{docId} { allow read, write: if esAdmin(); }
     match /visitasPostventa/{docId} { allow read, write: if esAdmin(); }
+    // Fotos de factura de un service puntual (instaladora/cliente) — aparte de visitasPostventa
+    // para no cargar el doc de la visita entera (varios deptos) con fotos de todos — mismo motivo
+    // que fichasTecnicas, un doc por service, pedido solo cuando hace falta verlo.
+    match /serviciosPostventaAdjuntos/{docId} { allow read, write: if esAdmin(); }
     match /presupuestosReparacion/{docId} { allow read, write: if esAdmin(); }
     match /clientes/{docId} { allow read, write: if esAdmin(); }
     match /transito/{docId} { allow read, write: if esAdmin(); }

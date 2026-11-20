@@ -7,6 +7,7 @@ export const CENTROS_COSTO = [
   { codigo: "CO005", nombre: "Hit", codigoLargo: "COAEHIT", detalle: "AEON - Hit · contratos de obras" },
   { codigo: "CO006", nombre: "Sun Palace", codigoLargo: "COAESUN", detalle: "AEON - Sun Palace · contratos de obras" },
   { codigo: "CO007", nombre: "Designio", codigoLargo: "COAEDES", detalle: "AEON - Designio · contratos de obras" },
+  { codigo: "CO008", nombre: "De Autor", codigoLargo: "COAUTOR", detalle: "AEON - De Autor · contratos de obras" },
 ];
 
 export function centroCostoPorCodigo(codigo) {
@@ -22,6 +23,7 @@ export function centroCostoSugerido(obra) {
   if (/\bhit\b/.test(t)) return "CO005";
   if (/sun\s*palace/.test(t)) return "CO006";
   if (/designio/.test(t)) return "CO007";
+  if (/de\s*autor/.test(t)) return "CO008";
   return "CO001";
 }
 

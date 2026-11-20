@@ -6778,13 +6778,21 @@ function ContratoForm({ cotizacion, grupos, onGuardarDatos, onSubirFirmado }) {
 const MAILS_ADMINISTRACION = ["administrativo@qi.com.py", "acibils@qi.com.py"];
 
 function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, pedidos, productos, equipos, cotizaciones, grupos, onGuardar }) {
-  const inicial = useMemo(
-    () => pedidoExistente || (
+  const inicial = useMemo(() => {
+    const base = pedidoExistente || (
       grupo
         ? armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos, grupos })
         : armarPedidoAnticipoDesdeCotizacion(cotizacionAnticipo, { pedidos, grupos, productos })
-    ),
-    [] // eslint-disable-line react-hooks/exhaustive-deps
+    );
+    // El centro de costo es 100% automático según la obra (CENTROS_COSTO en centrosCosto.js), nunca
+    // algo para elegir a mano: se recalcula siempre al abrir, incluso si se reusa un pedido ya
+    // guardado (ver pedidoExistente más arriba), para que un centro de costo creado después de que
+    // ese pedido se guardó por primera vez (ej: CO008 — De Autor) se tome solo, sin quedar pegado al
+    // CO001 — COMEX genérico que tenía en ese momento. El selector de abajo sigue ahí por si hace
+    // falta corregirlo a mano en un caso puntual, pero no hace falta tocarlo en el uso normal.
+    const centro = centroCostoPorCodigo(centroCostoSugerido(base.obra));
+    return { ...base, centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre };
+  }, [] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const [p, setP] = useState(inicial);
   const [idDoc, setIdDoc] = useState(pedidoExistente?.id || null);

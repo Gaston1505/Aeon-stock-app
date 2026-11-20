@@ -13,6 +13,13 @@ export const COMPANY = {
   ruc: "RUC 80116329-3",
   web: "aeon.com.py",
   instagram: "@aeon.py",
+  // Mismos datos que el cartel "Datos bancarios" que se comparte suelto desde Reportes
+  // (public/datos-bancarios.jpeg) — acá en texto plano para poder incluirlos dentro de otros PDFs
+  // (ej. el detalle de mantenimiento) con el mismo estilo/color del resto del documento.
+  banco: "Sudameris Bank Saeca",
+  cuentaBancaria: "4150199",
+  tipoCuenta: "Cuenta Unificada",
+  monedasCuenta: "Dólares – Guaraníes",
 };
 
 // Los documentos de Mantenimiento postventa (Recibo de servicio y Factura de mantenimiento) van
@@ -1312,6 +1319,14 @@ export async function generateFacturaMantenimientoPdf(datos) {
   box("Detalle de tareas realizadas", [datos.informe || "Mantenimiento preventivo según protocolo AEON."]);
   if (datos.garantiaTexto) box("Garantía", [datos.garantiaTexto]);
   if (datos.proximoServicioTexto) box("Próximo mantenimiento", [datos.proximoServicioTexto]);
+
+  // Datos bancarios — mismo cuadro (color/estilo) que Garantía/Próximo mantenimiento de arriba,
+  // para que el cliente tenga ahí mismo a qué cuenta transferir sin pedirlo aparte.
+  box("Datos bancarios para transferencia", [
+    `${COMPANY.razonSocial} — ${COMPANY.ruc}`,
+    `Banco: ${COMPANY.banco} — Cuenta N°: ${COMPANY.cuentaBancaria} (${COMPANY.tipoCuenta})`,
+    `Monedas: ${COMPANY.monedasCuenta}`,
+  ]);
 
   // Contacto
   ensureSpace(46);

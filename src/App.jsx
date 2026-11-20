@@ -27,7 +27,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
-  downloadReciboServicioPdf, downloadFacturaMantenimientoPdf,
+  downloadFacturaMantenimientoPdf,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
@@ -3829,17 +3829,6 @@ export default function App() {
     setDescargandoId(null);
   };
 
-  const handleDescargarReciboServicio = async (datos) => {
-    setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:recibo`);
-    setPdfError("");
-    try {
-      await downloadReciboServicioPdf(datos);
-    } catch (e) {
-      console.error("Error generando recibo de servicio", e);
-      setPdfError("No se pudo generar el recibo de servicio. Probá de nuevo.");
-    }
-    setDescargandoId(null);
-  };
 
   // A diferencia del recibo de servicio (que nunca lleva montos), esta es la que se manda para
   // cobrarle al cliente: mismo desglose por equipo que se cargó al marcar el service hecho, con
@@ -5243,7 +5232,6 @@ export default function App() {
             pdfError={pdfError}
             onImportarClientes={handleImportarClientesPostventa} importandoClientes={importandoClientesPostventa}
             importResultadoClientes={importResultadoPostventa}
-            onDescargarRecibo={handleDescargarReciboServicio} descargandoRecibo={descargandoId}
             onDescargarFactura={handleDescargarFacturaMantenimiento} descargandoFactura={descargandoId}
             onPedidoFacturacion={esAdmin ? ((entrada, edificioNombre) => { setPedidoServiceTarget({ entrada, edificioNombre }); setDrawer("pedido-facturacion"); }) : undefined}
             onMarcarPago={marcarPagoServicePostventa}
@@ -22352,7 +22340,10 @@ function defaultsReciboServicio(hito) {
       proximoServicioTexto: "No queda un próximo service obligatorio por garantía; recomendamos un mantenimiento preventivo anual.",
     };
   }
-  return { garantiaTexto: "", proximoServicioTexto: "Recomendamos el próximo mantenimiento preventivo en 12 meses." };
+  // Sugerencia genérica (obra activa, sin hito fijo) — vale sobre todo para equipos recién
+  // instalados; para uno que ya lleva un par de años conviene borrarla o reescribirla a mano, por
+  // eso queda como sugerencia y no como texto fijo.
+  return { garantiaTexto: "", proximoServicioTexto: "Se recomienda realizar el próximo mantenimiento dentro de los próximos 11 meses, extendiendo así la garantía un año más." };
 }
 
 // Una fila por equipo dentro de la unidad — mismo patrón que NotaCreditoLineas (agregar/quitar
@@ -22677,7 +22668,7 @@ function AdjuntosFacturaService({ clave }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
   const [informe, setInforme] = useState(entrada.informe || "");
@@ -22728,8 +22719,10 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
     setOcupado(false);
     setAbierto(false);
   };
-  const idRecibo = `${entrada.apartamento}:${entrada.fechaHecho}:recibo`;
   const idFactura = `${entrada.apartamento}:${entrada.fechaHecho}:factura`;
+  // Categoría de equipo (Split Pared, Cassette, Termocalefón...) para el documento único de
+  // mantenimiento — se resuelve del catálogo por el código/modelo guardado en el equipo.
+  const categoriaDeEquipo = (modelo) => (productos || []).find((p) => p.nombre === modelo)?.subcategoria || "";
   return (
     <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -22742,31 +22735,18 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
             <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
               Hecho {fmtDate(entrada.fechaHecho)}
             </span>
-            {onDescargarRecibo && (
-              <button
-                type="button"
-                onClick={() => onDescargarRecibo({
-                  edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
-                  equipos: equiposDeUnidad(entrada), fechaServicio: entrada.fechaHecho, informe: entrada.informe,
-                  garantiaTexto: entrada.garantiaTexto, proximoServicioTexto: entrada.proximoServicioTexto,
-                })}
-                disabled={descargandoRecibo === idRecibo}
-                title="Descargar recibo de servicio para el cliente (sin costos)"
-                className="p-1 rounded hover:bg-gray-100"
-              >
-                <FileText size={12} style={{ color: ACCENT }} />
-              </button>
-            )}
             {onDescargarFactura && (entrada.montoCliente > 0) && (
               <button
                 type="button"
                 onClick={() => onDescargarFactura({
                   edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
-                  equipos: equiposDeUnidad(entrada), fechaServicio: entrada.fechaHecho, informe: entrada.informe,
+                  equipos: equiposDeUnidad(entrada).map((eq) => ({ ...eq, categoria: categoriaDeEquipo(eq.modelo) })),
+                  fechaServicio: entrada.fechaHecho, informe: entrada.informe,
                   costosPorEquipo: entrada.costosPorEquipo,
+                  garantiaTexto: entrada.garantiaTexto, proximoServicioTexto: entrada.proximoServicioTexto,
                 })}
                 disabled={descargandoFactura === idFactura}
-                title="Descargar detalle de mantenimiento con costos, para facturarle al cliente"
+                title="Descargar detalle de mantenimiento (equipo, garantía y costo) para el cliente"
                 className="p-1 rounded hover:bg-gray-100"
               >
                 <BadgeDollarSign size={12} style={{ color: ACCENT }} />
@@ -22933,7 +22913,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -23009,9 +22989,8 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
           )}
           {visita.unidades.map((u, i) => (
             <UnidadVisitaRow
-              key={u.unidadId} entrada={u} edificioNombre={edificioNombre}
+              key={u.unidadId} entrada={u} edificioNombre={edificioNombre} productos={productos}
               onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
-              onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
               onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
               onPedidoFacturacion={onPedidoFacturacion ? (() => onPedidoFacturacion(u, edificioNombre)) : undefined}
               onMarcarPago={onMarcarPago ? ((pagado) => onMarcarPago(visita, i, pagado)) : undefined}
@@ -23023,7 +23002,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -23148,9 +23127,8 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
         {visitasOrdenadas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay visitas programadas.</p>}
         {visitasOrdenadas.map((v) => (
           <VisitaPostventaCard
-            key={v.id} visita={v} edificioNombre={edificio.nombre}
+            key={v.id} visita={v} edificioNombre={edificio.nombre} productos={productos}
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
-            onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
             onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
             onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
           />
@@ -23160,7 +23138,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const fileInputRef = useRef(null);
@@ -23185,7 +23163,6 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
         onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
-        onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
         onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
         onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
       />

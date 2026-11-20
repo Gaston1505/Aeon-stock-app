@@ -1174,171 +1174,11 @@ export async function downloadGarantiaPdf(venta) {
   downloadBlob(bytes, nombreArchivoGarantia(venta), "application/pdf");
 }
 
-// ---------- Recibo de servicio (mantenimiento postventa ya realizado) ----------
-// Para el cliente final, no para uso interno: nunca incluye montos/costos (eso queda en la
-// planilla de Mantenimiento postventa) — acá solo lo que se hizo, garantía y próximo service.
-export async function generateReciboServicioPdf(datos) {
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-
-  const base = import.meta.env.BASE_URL;
-  const [logoBytes, firmaBytes] = await Promise.all([
-    fetchBytes(`${base}aeon-logo.jpg`),
-    fetchBytes(`${base}firma-gaston.png`),
-  ]);
-  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
-  const firmaImg = firmaBytes ? await pdf.embedPng(firmaBytes) : null;
-
-  const equipos = datos.equipos || [];
-  const colModelo = CONTENT_W * 0.55;
-  const colCapacidad = CONTENT_W - colModelo;
-
-  let page = pdf.addPage([PAGE_W, PAGE_H]);
-  let y = PAGE_H - MARGIN;
-
-  function newPage() {
-    page = pdf.addPage([PAGE_W, PAGE_H]);
-    y = PAGE_H - MARGIN;
-  }
-  function ensureSpace(h) {
-    if (y - h < MARGIN) newPage();
-  }
-  function text(t, x, yy, opts = {}) {
-    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
-  }
-  function rect(x, yy, w, h, opts = {}) {
-    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
-  }
-  function centerText(str, cellX, cellTopY, cellW, cellH, opts = {}) {
-    const { size = 7, bold: isBold = false, color } = opts;
-    const f = isBold ? bold : font;
-    const w = f.widthOfTextAtSize(str, size);
-    text(str, cellX + cellW / 2 - w / 2, cellTopY - cellH / 2 - 3, { size, bold: isBold, color });
-  }
-  function box(titulo, lineas, sizeTexto = 7.5) {
-    ensureSpace(30);
-    const wrapped = lineas.flatMap((l) => wrapText(font, l, sizeTexto, CONTENT_W - 10));
-    const h = 14 + wrapped.length * 9 + 4;
-    ensureSpace(h + 10);
-    rect(MARGIN, y - h, CONTENT_W, h, { border: BORDER });
-    text(titulo, MARGIN + 5, y - 11, { bold: true, size: 8, color: ACCENT });
-    wrapped.forEach((line, i) => text(line, MARGIN + 5, y - 22 - i * 9, { size: sizeTexto }));
-    y -= h + 10;
-  }
-
-  // Header
-  if (logoImg) {
-    const w = 90;
-    const h = (logoImg.height / logoImg.width) * w;
-    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
-    y -= h + 4;
-  }
-  text(COMPANY.razonSocial, MARGIN, y, { bold: true, size: 9 });
-  y -= 11;
-  text(COMPANY.direccion, MARGIN, y, { size: 7.5, color: MUTED });
-  y -= 9;
-  text(COMPANY.direccion2, MARGIN, y, { size: 7.5, color: MUTED });
-  y -= 9;
-  text(TEL_MANTENIMIENTO, MARGIN, y, { size: 7.5, color: MUTED });
-
-  y -= 14;
-
-  // Title bar
-  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
-  const title = "RECIBO DE SERVICIO DE MANTENIMIENTO";
-  const titleW = bold.widthOfTextAtSize(title, 10);
-  text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
-  y -= 18;
-
-  // Cliente / Edificio-Depto / Fecha
-  const rowH = 16;
-  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
-  text("Cliente:", MARGIN + 4, y - 11, { bold: true, size: 8 });
-  text(datos.cliente || "", MARGIN + 60, y - 11, { size: 8 });
-  y -= rowH;
-  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
-  text("Edificio / Unidad:", MARGIN + 4, y - 11, { bold: true, size: 8 });
-  text(`${datos.edificioNombre || ""}${datos.apartamento ? ` — Depto ${datos.apartamento}` : ""}`, MARGIN + 100, y - 11, { size: 8 });
-  y -= rowH;
-  rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
-  text("Fecha de servicio:", MARGIN + 4, y - 11, { bold: true, size: 8 });
-  text(fmtFecha(datos.fechaServicio), MARGIN + 100, y - 11, { size: 8 });
-  y -= rowH + 10;
-
-  // Tabla de equipos atendidos
-  if (equipos.length) {
-    ensureSpace(36);
-    rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
-    centerText("Equipo", MARGIN, y, colModelo, 18, { bold: true, color: ACCENT });
-    centerText("Capacidad", MARGIN + colModelo, y, colCapacidad, 18, { bold: true, color: ACCENT });
-    y -= 18;
-    equipos.forEach((eq) => {
-      ensureSpace(16);
-      const h = 16;
-      const cant = Number(eq.cantidad) || 1;
-      rect(MARGIN, y - h, colModelo, h, { border: BORDER });
-      text(`${cant > 1 ? `${cant}× ` : ""}${eq.modelo || ""}`, MARGIN + 4, y - 11, { size: 7.5 });
-      rect(MARGIN + colModelo, y - h, colCapacidad, h, { border: BORDER });
-      centerText(eq.capacidad || "—", MARGIN + colModelo, y, colCapacidad, h, { size: 7.5 });
-      y -= h;
-    });
-    y -= 10;
-  }
-
-  box("Qué se realizó", [datos.informe || "Mantenimiento preventivo según protocolo AEON."]);
-  if (datos.garantiaTexto) box("Garantía", [datos.garantiaTexto]);
-  if (datos.proximoServicioTexto) box("Próximo mantenimiento", [datos.proximoServicioTexto]);
-
-  // Contacto / redes
-  ensureSpace(46);
-  const contactoH = 44;
-  rect(MARGIN, y - contactoH, CONTENT_W, contactoH, { fill: ACCENT_LIGHT });
-  text("¿Consultas o querés coordinar tu próximo service?", MARGIN + 6, y - 12, { bold: true, size: 8, color: ACCENT });
-  text(`Tel.: ${TEL_MANTENIMIENTO}`, MARGIN + 6, y - 23, { size: 7.5 });
-  text(`Web: ${COMPANY.web}`, MARGIN + 6, y - 33, { size: 7.5 });
-  text(`Instagram: ${COMPANY.instagram}`, MARGIN + 260, y - 33, { size: 7.5 });
-  y -= contactoH + 24;
-
-  // Firma AEON
-  ensureSpace(70);
-  const aeonLineX = PAGE_W - MARGIN - 160;
-  if (firmaImg) {
-    const w = 110;
-    const h = (firmaImg.height / firmaImg.width) * w;
-    page.drawImage(firmaImg, { x: aeonLineX + 25, y: y - h + 6, width: w, height: h });
-    y -= h - 4;
-  } else {
-    y -= 30;
-  }
-  page.drawLine({ start: { x: aeonLineX, y }, end: { x: aeonLineX + 160, y }, thickness: 0.5, color: MUTED });
-  y -= 11;
-  const nameW = font.widthOfTextAtSize(COMPANY.firmante, 8);
-  text(COMPANY.firmante, aeonLineX + 80 - nameW / 2, y, { size: 8 });
-  y -= 10;
-  const razW = font.widthOfTextAtSize(COMPANY.razonSocial, 7.5);
-  text(COMPANY.razonSocial, aeonLineX + 80 - razW / 2, y, { size: 7.5 });
-  y -= 9;
-  const rucW = font.widthOfTextAtSize(COMPANY.ruc, 7.5);
-  text(COMPANY.ruc, aeonLineX + 80 - rucW / 2, y, { size: 7.5 });
-
-  return pdf.save();
-}
-
-export function nombreArchivoReciboServicio(datos) {
-  const partes = ["Recibo_Servicio", datos.fechaServicio || "", limpiarNombreArchivo(datos.cliente) || "cliente", limpiarNombreArchivo(datos.apartamento)].filter(Boolean);
-  return `${partes.join("_")}.pdf`;
-}
-
-export async function downloadReciboServicioPdf(datos) {
-  const bytes = await generateReciboServicioPdf(datos);
-  downloadBlob(bytes, nombreArchivoReciboServicio(datos), "application/pdf");
-}
-
-// ---------- Factura de mantenimiento (mismo service, pero PARA COBRARLE al cliente) ----------
-// A diferencia del recibo de arriba (que a propósito nunca lleva montos), esta sí detalla el
-// costo de cada equipo atendido y el total a facturar — nunca el reparto interno AEON/instaladora,
-// que es de uso interno y queda solo en la planilla de Mantenimiento postventa.
+// ---------- Factura de mantenimiento (un solo documento: para el cliente Y para cobrarle) ----------
+// Antes eran dos PDFs separados (un recibo sin montos para el cliente, y esta factura con montos
+// para uso interno) — ahora es uno solo, con todo: equipo + categoría + capacidad + costo, total,
+// qué se hizo, garantía y próximo mantenimiento recomendado. Nunca lleva el reparto interno
+// AEON/instaladora, que es de uso interno y queda solo en la planilla de Mantenimiento postventa.
 export async function generateFacturaMantenimientoPdf(datos) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -1354,9 +1194,10 @@ export async function generateFacturaMantenimientoPdf(datos) {
 
   const equipos = datos.equipos || [];
   const costos = datos.costosPorEquipo || [];
-  const colModelo = CONTENT_W * 0.55;
-  const colCapacidad = CONTENT_W * 0.2;
-  const colCosto = CONTENT_W - colModelo - colCapacidad;
+  const colModelo = CONTENT_W * 0.33;
+  const colCategoria = CONTENT_W * 0.24;
+  const colCapacidad = CONTENT_W * 0.18;
+  const colCosto = CONTENT_W - colModelo - colCategoria - colCapacidad;
   const total = costos.reduce((acc, c) => acc + (Number(c?.montoCliente) || 0), 0);
 
   let page = pdf.addPage([PAGE_W, PAGE_H]);
@@ -1417,7 +1258,7 @@ export async function generateFacturaMantenimientoPdf(datos) {
 
   // Title bar
   rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
-  const title = "DETALLE DE MANTENIMIENTO A FACTURAR";
+  const title = "DETALLE DE MANTENIMIENTO";
   const titleW = bold.widthOfTextAtSize(title, 10);
   text(title, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
   y -= 18;
@@ -1438,11 +1279,14 @@ export async function generateFacturaMantenimientoPdf(datos) {
   y -= rowH + 10;
 
   // Tabla de equipos con su costo — el total es la suma de esta columna, no un monto aparte.
+  // Categoría (Split Pared, Cassette, Termocalefón...) viene de datos.equipos[i].categoria, que
+  // arma quien llama (UnidadVisitaRow) resolviendo el modelo contra el catálogo.
   ensureSpace(36);
   rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT_LIGHT });
   centerText("Equipo", MARGIN, y, colModelo, 18, { bold: true, color: ACCENT });
-  centerText("Capacidad", MARGIN + colModelo, y, colCapacidad, 18, { bold: true, color: ACCENT });
-  centerText("Costo (Gs.)", MARGIN + colModelo + colCapacidad, y, colCosto, 18, { bold: true, color: ACCENT });
+  centerText("Categoría", MARGIN + colModelo, y, colCategoria, 18, { bold: true, color: ACCENT });
+  centerText("Capacidad", MARGIN + colModelo + colCategoria, y, colCapacidad, 18, { bold: true, color: ACCENT });
+  centerText("Costo (Gs.)", MARGIN + colModelo + colCategoria + colCapacidad, y, colCosto, 18, { bold: true, color: ACCENT });
   y -= 18;
   equipos.forEach((eq, i) => {
     ensureSpace(16);
@@ -1451,19 +1295,23 @@ export async function generateFacturaMantenimientoPdf(datos) {
     const monto = Number(costos[i]?.montoCliente) || 0;
     rect(MARGIN, y - h, colModelo, h, { border: BORDER });
     text(`${cant > 1 ? `${cant}× ` : ""}${eq.modelo || ""}`, MARGIN + 4, y - 11, { size: 7.5 });
-    rect(MARGIN + colModelo, y - h, colCapacidad, h, { border: BORDER });
-    centerText(eq.capacidad || "—", MARGIN + colModelo, y, colCapacidad, h, { size: 7.5 });
-    rect(MARGIN + colModelo + colCapacidad, y - h, colCosto, h, { border: BORDER });
-    rightText(`Gs. ${fmtGs(monto)}`, MARGIN + colModelo + colCapacidad, y, colCosto, h, { size: 7.5 });
+    rect(MARGIN + colModelo, y - h, colCategoria, h, { border: BORDER });
+    centerText(eq.categoria || "—", MARGIN + colModelo, y, colCategoria, h, { size: 7.5 });
+    rect(MARGIN + colModelo + colCategoria, y - h, colCapacidad, h, { border: BORDER });
+    centerText(eq.capacidad || "—", MARGIN + colModelo + colCategoria, y, colCapacidad, h, { size: 7.5 });
+    rect(MARGIN + colModelo + colCategoria + colCapacidad, y - h, colCosto, h, { border: BORDER });
+    rightText(`Gs. ${fmtGs(monto)}`, MARGIN + colModelo + colCategoria + colCapacidad, y, colCosto, h, { size: 7.5 });
     y -= h;
   });
-  rect(MARGIN, y - 18, colModelo + colCapacidad, 18, { fill: ACCENT_LIGHT });
+  rect(MARGIN, y - 18, colModelo + colCategoria + colCapacidad, 18, { fill: ACCENT_LIGHT });
   text("TOTAL A FACTURAR", MARGIN + 6, y - 12, { bold: true, size: 8.5, color: ACCENT });
-  rect(MARGIN + colModelo + colCapacidad, y - 18, colCosto, 18, { fill: ACCENT_LIGHT });
-  rightText(`Gs. ${fmtGs(total)}`, MARGIN + colModelo + colCapacidad, y, colCosto, 18, { bold: true, size: 9, color: ACCENT });
+  rect(MARGIN + colModelo + colCategoria + colCapacidad, y - 18, colCosto, 18, { fill: ACCENT_LIGHT });
+  rightText(`Gs. ${fmtGs(total)}`, MARGIN + colModelo + colCategoria + colCapacidad, y, colCosto, 18, { bold: true, size: 9, color: ACCENT });
   y -= 18 + 10;
 
   box("Detalle de tareas realizadas", [datos.informe || "Mantenimiento preventivo según protocolo AEON."]);
+  if (datos.garantiaTexto) box("Garantía", [datos.garantiaTexto]);
+  if (datos.proximoServicioTexto) box("Próximo mantenimiento", [datos.proximoServicioTexto]);
 
   // Contacto
   ensureSpace(46);

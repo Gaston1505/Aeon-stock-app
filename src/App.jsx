@@ -2644,6 +2644,7 @@ export default function App() {
   const [visitasPostventa, setVisitasPostventa] = useState([]);
   const [pedidoTarget, setPedidoTarget] = useState(null); // grupo de remito sobre el que se arma/edita el pedido
   const [pedidoAnticipoTarget, setPedidoAnticipoTarget] = useState(null); // cotización sobre la que se pide un anticipo (sin remito)
+  const [pedidoServiceTarget, setPedidoServiceTarget] = useState(null); // { entrada, edificioNombre } del service de mantenimiento a facturar
   const [contratoTarget, setContratoTarget] = useState(null); // cotización sobre la que se arma el contrato de provisión
   const [facturaCotizacionTarget, setFacturaCotizacionTarget] = useState(null); // cotización desde la que se carga/ve la factura de su obra
   const [presupuestosReparacion, setPresupuestosReparacion] = useState([]);
@@ -3508,6 +3509,13 @@ export default function App() {
     await guardarVisitaPostventa({ id: visita.id, unidades });
     const entrada = visita.unidades[idx];
     await aplicarServiceHechoAUnidad(entrada.unidadId, entrada.hito, datos.fechaHecho);
+  };
+  // Pago recibido de un service de mantenimiento — no depende de haber generado un Pedido de
+  // facturación (se puede cobrar en mano/transferencia en el momento), así que es un marcador
+  // aparte sobre la misma línea de la visita, no un estado del pedido en pedidosFacturacion.
+  const marcarPagoServicePostventa = async (visita, idx, pagado) => {
+    const unidades = visita.unidades.map((u, i) => (i === idx ? { ...u, pagado, pagadoEn: pagado ? Date.now() : null } : u));
+    await guardarVisitaPostventa({ id: visita.id, unidades });
   };
   // Cargar un service directo sobre una unidad, sin pasar por "Programar visita" (que exige elegir
   // unidades a mano) — un solo atajo que, según la fecha elegida, cae en uno de dos casos: ya
@@ -5197,6 +5205,8 @@ export default function App() {
             importResultadoClientes={importResultadoPostventa}
             onDescargarRecibo={handleDescargarReciboServicio} descargandoRecibo={descargandoId}
             onDescargarFactura={handleDescargarFacturaMantenimiento} descargandoFactura={descargandoId}
+            onPedidoFacturacion={esAdmin ? ((entrada, edificioNombre) => { setPedidoServiceTarget({ entrada, edificioNombre }); setDrawer("pedido-facturacion"); }) : undefined}
+            onMarcarPago={marcarPagoServicePostventa}
           />
         )}
 
@@ -5672,7 +5682,7 @@ export default function App() {
           />
         )}
       </Drawer>
-      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); setPedidoAnticipoTarget(null); }} title="Pedido de facturación">
+      <Drawer open={drawer === "pedido-facturacion"} onClose={() => { setDrawer(null); setPedidoTarget(null); setPedidoAnticipoTarget(null); setPedidoServiceTarget(null); }} title="Pedido de facturación">
         {pedidoTarget && (
           <PedidoFacturacionForm
             key={pedidoTarget.key}
@@ -5694,6 +5704,18 @@ export default function App() {
             // facturación). Para pedir un anticipo realmente nuevo y aparte de uno ya enviado, hay
             // que borrar o archivar el anterior primero.
             pedidoExistente={[...pedidosFacturacion].filter((p) => p.cotizacionId === pedidoAnticipoTarget.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]}
+            pedidos={pedidosFacturacion}
+            productos={productos} equipos={equipos} cotizaciones={cotizaciones} grupos={gruposEmpresas}
+            onGuardar={guardarPedidoFacturacion}
+          />
+        )}
+        {pedidoServiceTarget && (
+          <PedidoFacturacionForm
+            key={remitoKeyServicePostventa(pedidoServiceTarget.edificioNombre, pedidoServiceTarget.entrada)}
+            pedidoBase={armarPedidoDesdeServicePostventa(pedidoServiceTarget.entrada, pedidoServiceTarget.edificioNombre, { pedidos: pedidosFacturacion, grupos: gruposEmpresas })}
+            // Mismo criterio anti-duplicado que el anticipo: reabrir el pedido de ESTE service (mismo
+            // edificio+depto+fecha) edita el que ya existe en vez de crear uno nuevo.
+            pedidoExistente={pedidosFacturacion.find((p) => p.remitoKey === remitoKeyServicePostventa(pedidoServiceTarget.edificioNombre, pedidoServiceTarget.entrada))}
             pedidos={pedidosFacturacion}
             productos={productos} equipos={equipos} cotizaciones={cotizaciones} grupos={gruposEmpresas}
             onGuardar={guardarPedidoFacturacion}
@@ -6548,6 +6570,47 @@ function armarPedidoAnticipoDesdeCotizacion(cot, { pedidos, grupos, productos })
   };
 }
 
+// Clave estable para reusar (no duplicar) el Pedido de facturación de un service de mantenimiento
+// puntual — mismo patrón que remitoKey para remitos reales: identifica SIEMPRE el mismo service
+// (edificio + depto + fecha en que se hizo), así reabrir "Pedido de facturación" para ese service
+// edita el mismo pedido en vez de crear uno nuevo cada vez (ver bug real de pedidos duplicados en
+// Cotizaciones, mismo motivo).
+function remitoKeyServicePostventa(edificioNombre, entrada) {
+  return `service:${edificioNombre}|${entrada.apartamento}|${entrada.fechaHecho}`;
+}
+
+// Arma el Pedido de Facturación de un service de mantenimiento postventa ya realizado — un
+// renglón por equipo, con el monto "al cliente" que ya se cargó al marcar el service como hecho
+// (ver CostosPorEquipoLineas). A diferencia de los pedidos de Cotizaciones/Ventas (en dólares),
+// este se cobra en GUARANÍES — moneda: "PYG" hace que el PDF/Excel/mail usen "Gs." y sin
+// decimales en vez de "U$S" (ver fmtMonto en pedidoFacturacion.js). No está atado a ninguna
+// cotización, así que no hay "pendiente de facturar": el monto es fijo, lo que se cobra por ese
+// service puntual.
+function armarPedidoDesdeServicePostventa(entrada, edificioNombre, { pedidos, grupos } = {}) {
+  const equipos = equiposDeUnidad(entrada);
+  const costos = entrada.costosPorEquipo || [];
+  const cliente = (entrada.cliente || "").trim();
+  const previo = [...(pedidos || [])]
+    .filter((p) => p.cliente && p.cliente.trim().toLowerCase() === cliente.toLowerCase())
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const centro = centroCostoPorCodigo(centroCostoSugerido(edificioNombre));
+  return {
+    moneda: "PYG",
+    remitoKey: remitoKeyServicePostventa(edificioNombre, entrada), remito: "", fecha: entrada.fechaHecho || todayISO(),
+    cliente, ruc: (rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
+    condicion: previo?.condicion || "Contado", termino: "",
+    centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
+    obra: edificioNombre || "",
+    lineas: equipos.map((eq, i) => ({
+      cantidad: Number(eq.cantidad) || 1, marca: "AEON", codigo: eq.modelo || "",
+      producto: `${eq.modelo || "Equipo"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`, familia: "Mantenimiento",
+      precioUnit: Number(costos[i]?.montoCliente) || 0,
+    })),
+    origenPrecios: `Service de mantenimiento — ${edificioNombre || ""}, Depto ${entrada.apartamento} (${fmtDate(entrada.fechaHecho)}).`,
+    estado: "Borrador",
+  };
+}
+
 // Cuánto se pidió facturar en total de una cotización hasta ahora, sumando todos sus pedidos
 // (anticipos + los que salieron de remitos reales) — para no perder la cuenta y pasarse del total
 // de la cotización al pedir otro anticipo. `excluirId` deja afuera el pedido que se está editando
@@ -6777,9 +6840,12 @@ function ContratoForm({ cotizacion, grupos, onGuardarDatos, onSubirFirmado }) {
 // Destinatarios fijos del pedido de facturación (Administración).
 const MAILS_ADMINISTRACION = ["administrativo@qi.com.py", "acibils@qi.com.py"];
 
-function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, pedidos, productos, equipos, cotizaciones, grupos, onGuardar }) {
+function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoBase, pedidoExistente, pedidos, productos, equipos, cotizaciones, grupos, onGuardar }) {
   const inicial = useMemo(() => {
-    const base = pedidoExistente || (
+    // pedidoBase: el pedido ya viene armado por quien llama (ej. un service de mantenimiento
+    // postventa, que no es ni un remito ni una cotización) — se usa tal cual, sin pasar por
+    // armarPedidoDesdeGrupo/armarPedidoAnticipoDesdeCotizacion.
+    const base = pedidoExistente || pedidoBase || (
       grupo
         ? armarPedidoDesdeGrupo(grupo, { productos, equipos, cotizaciones, pedidos, grupos })
         : armarPedidoAnticipoDesdeCotizacion(cotizacionAnticipo, { pedidos, grupos, productos })
@@ -6815,6 +6881,11 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     setP((prev) => ({ ...prev, centroCostoCodigo: codigo, centroCostoNombre: c?.nombre || "" }));
   };
   const total = totalPedido(p);
+  // Casi todos los pedidos son en dólares, pero un service de mantenimiento postventa se cobra en
+  // guaraníes (p.moneda === "PYG", ver armarPedidoDesdeServicePostventa) — acá en el formulario
+  // también hay que mostrar el símbolo/formato correcto, no solo en el PDF/Excel/mail.
+  const monedaSimbolo = p.moneda === "PYG" ? "Gs." : "U$S";
+  const fmtMontoForm = (n) => (p.moneda === "PYG" ? Math.round(Number(n) || 0).toLocaleString("es-PY") : fmtN(n));
   // La cotización vinculada puede venir del modo anticipo (cotizacionAnticipo) o, en un pedido
   // armado desde un remito real, de p.cotizacionId (ver armarPedidoDesdeGrupo) — en ambos casos
   // sirve para mostrar, en el mail/PDF/Excel, el total de la cotización y lo pendiente de facturar
@@ -6988,13 +7059,13 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
               <input value={l.familia} onChange={(e) => setLinea(i, "familia", e.target.value)} placeholder="Familia" className="flex-1 min-w-0 text-sm px-2 py-1.5 rounded border outline-none" style={inputChico} />
               <input type="number" step="0.01" value={l.precioUnit} onChange={(e) => setLinea(i, "precioUnit", e.target.value)} placeholder="Precio unit." className="w-28 text-sm px-2 py-1.5 rounded border outline-none" style={{ ...inputChico, borderColor: l.precioUnit === "" ? "#F59E0B" : BORDER }} />
             </div>
-            <p className="text-xs mt-1 text-right" style={{ color: MUTED }}>Total: U$S {fmtN(totalLineaPedido(l))}</p>
+            <p className="text-xs mt-1 text-right" style={{ color: MUTED }}>Total: {monedaSimbolo} {fmtMontoForm(totalLineaPedido(l))}</p>
           </div>
         ))}
       </div>
       <SecondaryButton onClick={agregarLinea}><Plus size={14} /> Agregar línea (instalación, otro ítem…)</SecondaryButton>
       <div className="flex justify-between items-center mt-3 mb-4 px-3 py-2 rounded-lg" style={{ backgroundColor: "#808080", color: "#FFFFFF" }}>
-        <span className="font-bold">TOTAL</span><span className="font-bold">U$S {fmtN(total)}</span>
+        <span className="font-bold">TOTAL</span><span className="font-bold">{monedaSimbolo} {fmtMontoForm(total)}</span>
       </div>
 
       <p className="text-base font-bold mb-2" style={{ color: ACCENT }}>Enviar a Administración</p>
@@ -22488,7 +22559,7 @@ function CostosPorEquipoLineas({ equipos, costos, onChange }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
+function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
   const [informe, setInforme] = useState(entrada.informe || "");
@@ -22563,6 +22634,16 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
                 <BadgeDollarSign size={12} style={{ color: ACCENT }} />
               </button>
             )}
+            {onPedidoFacturacion && (entrada.montoCliente > 0) && (
+              <button
+                type="button"
+                onClick={onPedidoFacturacion}
+                title="Pedir que Administración facture este service"
+                className="p-1 rounded hover:bg-gray-100"
+              >
+                <Send size={12} style={{ color: ACCENT }} />
+              </button>
+            )}
             <button type="button" onClick={abrir} title="Corregir este service" className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
           </span>
         ) : (
@@ -22571,8 +22652,21 @@ function UnidadVisitaRow({ entrada, edificioNombre, onMarcarHecha, onDescargarRe
       </div>
       {entrada.hecho && entrada.informe && <p className="mt-1" style={{ color: MUTED }}>{entrada.informe}</p>}
       {entrada.hecho && (entrada.montoCliente || entrada.montoInstalador) && (
-        <p className="mt-0.5" style={{ color: MUTED }}>
-          Cliente {fmtGs(entrada.montoCliente)} · Instaladora {fmtGs(entrada.montoInstalador)} · Ganancia AEON {fmtGs(gananciaAeonService(entrada.montoCliente, entrada.montoInstalador))}
+        <p className="mt-0.5 flex items-center gap-2 flex-wrap" style={{ color: MUTED }}>
+          <span>
+            Cliente {fmtGs(entrada.montoCliente)} · Instaladora {fmtGs(entrada.montoInstalador)} · Ganancia AEON {fmtGs(gananciaAeonService(entrada.montoCliente, entrada.montoInstalador))}
+          </span>
+          {onMarcarPago && (entrada.montoCliente > 0) && (
+            entrada.pagado ? (
+              <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
+                Pago recibido{entrada.pagadoEn ? ` (${new Date(entrada.pagadoEn).toLocaleDateString("es-PY")})` : ""}
+              </span>
+            ) : (
+              <button type="button" onClick={() => onMarcarPago(true)} className="px-2 py-0.5 rounded-full font-medium hover:brightness-95" style={{ backgroundColor: "#FDF1E0", color: "#B45309" }}>
+                Marcar pago recibido
+              </button>
+            )
+          )}
         </p>
       )}
       {abierto && (
@@ -22672,7 +22766,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
+function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -22752,6 +22846,8 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
               onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
               onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
               onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
+              onPedidoFacturacion={onPedidoFacturacion ? (() => onPedidoFacturacion(u, edificioNombre)) : undefined}
+              onMarcarPago={onMarcarPago ? ((pagado) => onMarcarPago(visita, i, pagado)) : undefined}
             />
           ))}
         </div>
@@ -22760,7 +22856,7 @@ function VisitaPostventaCard({ visita, edificioNombre, onMarcarHecha, onGuardarV
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -22889,6 +22985,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
             onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
             onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
+            onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
           />
         ))}
       </div>
@@ -22896,7 +22993,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarRecibo, descargandoRecibo, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const fileInputRef = useRef(null);
@@ -22923,6 +23020,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
         onDescargarRecibo={onDescargarRecibo} descargandoRecibo={descargandoRecibo}
         onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
+        onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
       />
     );
   }

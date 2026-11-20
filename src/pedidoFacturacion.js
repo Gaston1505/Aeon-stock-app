@@ -41,6 +41,33 @@ const COLS = [30.78, 19.67, 29, 19.89, 15.67, 17.89, 15.33]; // anchos de column
 const COLOR_ENLACE = rgb(0x2f / 255, 0x6f / 255, 0x8f / 255);
 const TELEFONOS = ["+595 976 167335", "+595 976 144599"];
 const CORREOS = ["ggibernau@aeon.com.py", "info@aeon.com.py"];
+const fmtPct = (n) => (Number(n) || 0).toLocaleString("es-PY", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+// Resumen de facturación: total de la cotización vinculada (si la hay), lo ya facturado antes de
+// este pedido, lo que se factura ahora (y qué % del total representa) y lo que queda pendiente.
+// p.totalCotizacionVinculada/p.montoFacturadoAntes los agrega PedidoFacturacionForm (App.jsx) al
+// armar el PDF/Excel/mail — ver pFinal() ahí. Sin cotización vinculada (pedido suelto, sin %
+// parcial) esto devuelve totalCot: null y solo se muestra el total de este pedido, como antes.
+function resumenFacturacion(p) {
+  const totalEste = totalPedido(p);
+  const totalCot = Number(p.totalCotizacionVinculada) || null;
+  if (!totalCot || totalCot <= 0) return { totalEste, totalCot: null };
+  const antes = Number(p.montoFacturadoAntes) || 0;
+  const pendiente = Math.max(0, totalCot - antes - totalEste);
+  const pct = (totalEste / totalCot) * 100;
+  return { totalEste, totalCot, antes, pendiente, pct };
+}
+
+// Un anticipo factura solo una parte del precio de lista de cada línea (ver basePrecioUnit /
+// aplicarFactor en PedidoFacturacionForm): basePrecioUnit guarda el precio lleno (100%) y
+// precioUnit el que realmente se factura ahora. Si difieren, vale la pena mostrar las dos vistas
+// (precio de lista completo + lo que se factura ahora) en vez de solo la parcial.
+function tieneDetalleLista(p) {
+  return (p.lineas || []).some((l) => l.basePrecioUnit != null && Math.abs((Number(l.basePrecioUnit) || 0) - (Number(l.precioUnit) || 0)) > 0.004);
+}
+function lineasAPrecioLista(p) {
+  return (p.lineas || []).map((l) => ({ ...l, precioUnit: l.basePrecioUnit ?? l.precioUnit }));
+}
 
 // ---------- PDF ----------
 export async function generatePedidoFacturacionPdf(p) {
@@ -150,6 +177,25 @@ export async function generatePedidoFacturacionPdf(p) {
   celda(cx[1], y, cw[1] + cw[2], RH, p.obra, V);
   y -= RH + 14;
 
+  // Resumen de facturación: total de la cotización vinculada, lo ya facturado antes, lo que se
+  // factura ahora (con su %) y lo pendiente — solo si el pedido está vinculado a una cotización con
+  // total conocido (ver resumenFacturacion). Va primero, bien visible, antes del detalle.
+  const resumen = resumenFacturacion(p);
+  if (resumen.totalCot != null) {
+    const filas = [
+      `Total de la cotización: U$S ${fmtNum(resumen.totalCot)}`,
+      ...(resumen.antes > 0 ? [`Ya facturado antes de este pedido: U$S ${fmtNum(resumen.antes)}`] : []),
+      `Se factura ahora: U$S ${fmtNum(resumen.totalEste)}  (${fmtPct(resumen.pct)}% del total)`,
+      `Pendiente de facturar: U$S ${fmtNum(resumen.pendiente)}`,
+    ];
+    const H_TITULO = 14, H_LINEA = 12, PAD = 6;
+    const boxH = H_TITULO + filas.length * H_LINEA + PAD;
+    caja(cx[0], y, W, boxH, { fill: rgb(0xef / 255, 0xf3 / 255, 0xf6 / 255) });
+    text("RESUMEN DE FACTURACIÓN", cx[0] + 8, y - 11, { bold: true, size: 9.5, color: GRIS_TXT });
+    filas.forEach((f, i) => text(f, cx[0] + 8, y - H_TITULO - 9 - i * H_LINEA, { size: 9 }));
+    y -= boxH + 12;
+  }
+
   if (p.origenPrecios) {
     const lineasNota = wrapNota(`Nota: ${p.origenPrecios}`, W, 8);
     lineasNota.forEach((ln, i) => text(ln, M, y - i * 10, { size: 8, color: GRIS_TXT }));
@@ -162,7 +208,6 @@ export async function generatePedidoFacturacionPdf(p) {
     heads.forEach((h, i) => celda(cx[i], y, cw[i], 17, h, { bold: true, size: 8.5, fill: GRIS_ENC, grueso: false }));
     y -= 17;
   };
-  drawHeader();
   // Los códigos y nombres largos se parten en varias líneas (la fila crece) en vez de cortarse.
   const partir = (texto, size, maxW) => {
     const lineas = [];
@@ -193,32 +238,47 @@ export async function generatePedidoFacturacionPdf(p) {
       text(t, alignIzq ? x + 4 : x + (w - tw) / 2, yTop - (h - alto) / 2 - size - i * paso + 1.5, { size });
     });
   };
-  for (const l of p.lineas || []) {
-    const lCodigo = partir(l.codigo, 8, cw[2] - 8);
-    const lProducto = partir(l.producto, 8, cw[3] - 8);
-    const lFamilia = partir(l.familia, 8, cw[4] - 8);
-    const RL = Math.max(20, Math.max(lCodigo.length, lProducto.length, lFamilia.length) * 10 + 8);
-    if (y - RL < M + 120) {
-      page = pdf.addPage([PW, PH]);
-      y = PH - M;
-      drawHeader();
+  // Dibuja una tabla de detalle completa (encabezado + filas + barra TOTAL) — se llama una vez para
+  // el detalle que se factura ahora, y una segunda vez (antes, con subtítulo) para el precio de
+  // lista completo cuando el pedido es un anticipo parcial (ver tieneDetalleLista).
+  const dibujarBloqueDetalle = (lineasArr, opts = {}) => {
+    if (opts.subtitulo) {
+      text(opts.subtitulo, cx[0], y - 9, { bold: true, size: 10 });
+      y -= 16;
     }
-    celda(cx[0], y, cw[0], RL, l.cantidad, { size: 9.5 });
-    celda(cx[1], y, cw[1], RL, l.marca, { size: 9 });
-    celdaLineas(cx[2], y, cw[2], RL, lCodigo, 8, true);
-    celdaLineas(cx[3], y, cw[3], RL, lProducto, 8, false);
-    celdaLineas(cx[4], y, cw[4], RL, lFamilia, 8, false);
-    celda(cx[5], y, cw[5], RL, l.precioUnit === "" || l.precioUnit == null ? "" : fmtNum(l.precioUnit), { size: 9, color: GRIS_TXT });
-    celda(cx[6], y, cw[6], RL, fmtNum(totalLineaPedido(l)), { size: 9, color: GRIS_TXT });
-    y -= RL;
+    drawHeader();
+    for (const l of lineasArr) {
+      const lCodigo = partir(l.codigo, 8, cw[2] - 8);
+      const lProducto = partir(l.producto, 8, cw[3] - 8);
+      const lFamilia = partir(l.familia, 8, cw[4] - 8);
+      const RL = Math.max(20, Math.max(lCodigo.length, lProducto.length, lFamilia.length) * 10 + 8);
+      if (y - RL < M + 120) {
+        page = pdf.addPage([PW, PH]);
+        y = PH - M;
+        drawHeader();
+      }
+      celda(cx[0], y, cw[0], RL, l.cantidad, { size: 9.5 });
+      celda(cx[1], y, cw[1], RL, l.marca, { size: 9 });
+      celdaLineas(cx[2], y, cw[2], RL, lCodigo, 8, true);
+      celdaLineas(cx[3], y, cw[3], RL, lProducto, 8, false);
+      celdaLineas(cx[4], y, cw[4], RL, lFamilia, 8, false);
+      celda(cx[5], y, cw[5], RL, l.precioUnit === "" || l.precioUnit == null ? "" : fmtNum(l.precioUnit), { size: 9, color: GRIS_TXT });
+      celda(cx[6], y, cw[6], RL, fmtNum(totalLineaPedido(l)), { size: 9, color: GRIS_TXT });
+      y -= RL;
+    }
+    // Barra TOTAL
+    const RT = 20;
+    page.drawRectangle({ x: cx[0], y: y - RT, width: W, height: RT, color: GRIS_TOTAL });
+    text("TOTAL", cx[5] + 6, y - RT / 2 - 4, { bold: true, size: 11, color: rgb(1, 1, 1) });
+    const tot = fmtNum(totalPedido({ lineas: lineasArr }));
+    text(tot, cx[7] - 6 - ancho(tot, 11, true), y - RT / 2 - 4, { bold: true, size: 11, color: rgb(1, 1, 1) });
+    y -= RT + (opts.marginBottom ?? 36);
+  };
+  const hayLista = tieneDetalleLista(p);
+  if (hayLista) {
+    dibujarBloqueDetalle(lineasAPrecioLista(p), { subtitulo: "Detalle a precio de lista (100%, referencia)", marginBottom: 20 });
   }
-  // Barra TOTAL
-  const RT = 20;
-  page.drawRectangle({ x: cx[0], y: y - RT, width: W, height: RT, color: GRIS_TOTAL });
-  text("TOTAL", cx[5] + 6, y - RT / 2 - 4, { bold: true, size: 11, color: rgb(1, 1, 1) });
-  const tot = fmtNum(totalPedido(p));
-  text(tot, cx[7] - 6 - ancho(tot, 11, true), y - RT / 2 - 4, { bold: true, size: 11, color: rgb(1, 1, 1) });
-  y -= RT + 36;
+  dibujarBloqueDetalle(p.lineas || [], { subtitulo: hayLista ? "Detalle a facturar ahora" : null });
 
   // Firmas
   if (y < M + 90) {
@@ -298,21 +358,43 @@ export async function generatePedidoFacturacionExcel(p) {
   etiqueta("A15", "CENTRO DE COSTO:"); valor("B15", p.centroCostoCodigo || ""); valor("C15", p.centroCostoNombre || "", { size: 11 });
   etiqueta("A16", "OBRA:"); ws.mergeCells("B16:C16"); valor("B16", p.obra || ""); ws.getCell("C16").border = bordeG;
 
+  // Resumen de facturación: total de la cotización, lo ya facturado antes, lo que se factura ahora
+  // (con su %) y lo pendiente — solo si el pedido está vinculado a una cotización con total
+  // conocido (ver resumenFacturacion). Ocupa filas propias arriba de la nota, así que el resto de
+  // la tabla (encabezado en fila 19 por defecto) se corre hacia abajo cuando aparece.
+  const resumen = resumenFacturacion(p);
+  let filaSig = 17;
+  if (resumen.totalCot != null) {
+    const filasResumen = [
+      "Resumen de facturación:",
+      `Total de la cotización: U$S ${fmtNum(resumen.totalCot)}`,
+      ...(resumen.antes > 0 ? [`Ya facturado antes de este pedido: U$S ${fmtNum(resumen.antes)}`] : []),
+      `Se factura ahora: U$S ${fmtNum(resumen.totalEste)} (${fmtPct(resumen.pct)}% del total)`,
+      `Pendiente de facturar: U$S ${fmtNum(resumen.pendiente)}`,
+    ];
+    ws.mergeCells(`A${filaSig}:G${filaSig + filasResumen.length - 1}`);
+    ws.getCell(`A${filaSig}`).value = filasResumen.join("\n");
+    estilo(ws.getCell(`A${filaSig}`), { font: "Gotham", size: 10, bold: false, align: "left", wrap: true });
+    for (let i = 0; i < filasResumen.length; i++) ws.getRow(filaSig + i).height = 13;
+    filaSig += filasResumen.length + 1;
+  }
   if (p.origenPrecios) {
-    ws.mergeCells("A17:G18");
-    ws.getCell("A17").value = `Nota: ${p.origenPrecios}`;
-    estilo(ws.getCell("A17"), { font: "Gotham", size: 10, bold: false, align: "left", wrap: true });
-    ws.getRow(17).height = 30;
+    ws.mergeCells(`A${filaSig}:G${filaSig + 1}`);
+    ws.getCell(`A${filaSig}`).value = `Nota: ${p.origenPrecios}`;
+    estilo(ws.getCell(`A${filaSig}`), { font: "Gotham", size: 10, bold: false, align: "left", wrap: true });
+    ws.getRow(filaSig).height = 30;
+    filaSig += 2;
   }
 
   // Tabla
+  const filaHeader = Math.max(19, filaSig);
   const heads = ["Cantidad", "Marca", "CÓDIGO", "PRODUCTO", "Familia", "Precio UniT.", "Total USD"];
   heads.forEach((h, i) => {
-    const c = ws.getCell(19, i + 1);
+    const c = ws.getCell(filaHeader, i + 1);
     c.value = h;
     estilo(c, { font: "Aptos Narrow", size: 11, fill: "FFD9D9D9", border: bordeF });
   });
-  let r = 20;
+  let r = filaHeader + 1;
   const primera = r;
   for (const l of p.lineas || []) {
     const row = ws.getRow(r);
@@ -376,11 +458,38 @@ export function textoMailPedido(p) {
     `Centro de costo: ${p.centroCostoCodigo || ""}${p.centroCostoNombre || cc ? " — " + (p.centroCostoNombre || cc.nombre) : ""}`,
     `Condición: ${p.condicion || ""}${p.termino ? " — Término: " + p.termino : ""}`,
   ].filter((x) => x !== null);
-  const lineas = (p.lineas || []).map((l) => {
+
+  // Resumen de facturación: total de la cotización, lo ya facturado antes, lo que se factura ahora
+  // (con su %) y lo pendiente — solo si el pedido está vinculado a una cotización con total
+  // conocido (ver resumenFacturacion). Va primero, bien visible, antes del detalle de productos.
+  const resumen = resumenFacturacion(p);
+  const bloqueResumen = resumen.totalCot != null
+    ? [
+        "",
+        "Resumen de facturación:",
+        `- Total de la cotización: U$S ${fmtNum(resumen.totalCot)}`,
+        ...(resumen.antes > 0 ? [`- Ya facturado antes de este pedido: U$S ${fmtNum(resumen.antes)}`] : []),
+        `- Se factura ahora: U$S ${fmtNum(resumen.totalEste)} (${fmtPct(resumen.pct)}% del total)`,
+        `- Pendiente de facturar: U$S ${fmtNum(resumen.pendiente)}`,
+      ]
+    : [];
+
+  const textoLinea = (l) => {
     const pu = l.precioUnit === "" || l.precioUnit == null ? "s/precio" : `U$S ${fmtNum(l.precioUnit)}`;
     const familia = l.familia ? ` [${l.familia}]` : "";
     return `- ${l.cantidad} x ${l.codigo || "(sin código)"} — ${l.producto || ""}${familia} — ${pu} c/u = U$S ${fmtNum(totalLineaPedido(l))}`;
-  });
+  };
+  // Si es un anticipo parcial, primero va el detalle a precio de lista completo (para tener el
+  // panorama entero) y después el detalle de lo que realmente se factura ahora, ya con el % o
+  // monto aplicado — así el mail va "de la película completa" a lo puntual, como un remito normal
+  // (factura el 100%) solo tiene el segundo bloque, sin el de lista.
+  const hayLista = tieneDetalleLista(p);
+  const bloqueLista = hayLista
+    ? ["", "Detalle a precio de lista (100%, referencia — no es lo que se factura ahora):", ...lineasAPrecioLista(p).map(textoLinea)]
+    : [];
+  const tituloDetalle = hayLista ? "Detalle a facturar ahora:" : "Detalle:";
+  const detalle = (p.lineas || []).map(textoLinea);
+
   // p.origenPrecios ya trae, armado en armarPedidoDesdeGrupo, de qué cotización salió cada precio
   // y el % de descuento si lo hubo — acá solo se decide si hace falta además la aclaración
   // explícita de que el precio unitario del detalle ya lo tiene incluido.
@@ -389,8 +498,8 @@ export function textoMailPedido(p) {
   if (/descuento/i.test(p.origenPrecios || "")) {
     notas.push("El precio unitario de cada línea de abajo ya incluye ese descuento aplicado (no es el precio de lista).");
   }
-  const pie = ["", `Total a facturar: U$S ${fmtNum(totalPedido(p))}`, "", "Saludos,", "Gastón Gibernau", "Quantum Investments S.A."];
-  return [...cab, "", "Detalle:", ...lineas, ...(notas.length ? ["", ...notas] : []), ...pie].join("\n");
+  const pie = ["", `Total a facturar: U$S ${fmtNum(resumen.totalEste)}`, "", "Saludos,", "Gastón Gibernau", "Quantum Investments S.A."];
+  return [...cab, ...bloqueResumen, ...bloqueLista, "", tituloDetalle, ...detalle, ...(notas.length ? ["", ...notas] : []), ...pie].join("\n");
 }
 
 // El destinatario puede ser un mail, una lista separada por comas/punto y coma, o un array.

@@ -6800,8 +6800,13 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     setP((prev) => ({ ...prev, centroCostoCodigo: codigo, centroCostoNombre: c?.nombre || "" }));
   };
   const total = totalPedido(p);
-  const totalCotizacionAnticipo = cotizacionAnticipo ? calcularTotalCotizacion(cotizacionAnticipo) : 0;
-  const yaPedidoCotizacion = cotizacionAnticipo ? montoYaPedidoDeCotizacion(cotizacionAnticipo.id, pedidos, idDoc) : 0;
+  // La cotización vinculada puede venir del modo anticipo (cotizacionAnticipo) o, en un pedido
+  // armado desde un remito real, de p.cotizacionId (ver armarPedidoDesdeGrupo) — en ambos casos
+  // sirve para mostrar, en el mail/PDF/Excel, el total de la cotización y lo pendiente de facturar
+  // (ver resumenFacturacion en pedidoFacturacion.js).
+  const cotizacionVinculada = cotizacionAnticipo || (p.cotizacionId ? (cotizaciones || []).find((c) => c.id === p.cotizacionId) : null);
+  const totalCotizacionAnticipo = cotizacionVinculada ? calcularTotalCotizacion(cotizacionVinculada) : 0;
+  const yaPedidoCotizacion = cotizacionVinculada ? montoYaPedidoDeCotizacion(cotizacionVinculada.id, pedidos, idDoc) : 0;
   // Escala TODAS las líneas (cada una desde su basePrecioUnit, el precio lleno con el descuento de
   // la cotización ya aplicado) por el mismo factor — así una línea por producto sigue sumando
   // exactamente el % o monto fijo elegido, en vez de perder esa proporción.
@@ -6843,8 +6848,13 @@ function PedidoFacturacionForm({ grupo, cotizacionAnticipo, pedidoExistente, ped
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cotizacionAnticipo, montoAnticipoElegido, totalCotizacionAnticipo, modoAnticipo]);
   // El nombre de la empresa sale siempre normalizado (Octagon SA, CCI SA) en PDF, Excel y mail,
-  // aunque se haya escrito a mano de otra forma.
-  const pFinal = () => normalizarCamposEmpresa(p);
+  // aunque se haya escrito a mano de otra forma. Acá además se agregan el total de la cotización
+  // vinculada y lo ya facturado antes de este pedido (si corresponde), para que el PDF/Excel/mail
+  // puedan mostrar el resumen completo (total, se factura ahora, pendiente) sin recalcular nada.
+  const pFinal = () => normalizarCamposEmpresa({
+    ...p,
+    ...(cotizacionVinculada ? { totalCotizacionVinculada: totalCotizacionAnticipo, montoFacturadoAntes: yaPedidoCotizacion } : {}),
+  });
 
   const guardar = async (extra = {}) => {
     const datos = normalizarCamposEmpresa({ ...p, ...extra });

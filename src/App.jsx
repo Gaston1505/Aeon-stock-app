@@ -22423,6 +22423,16 @@ function VisitaPostventaForm({ edificio, unidades, onGuardar, onCancelar }) {
   );
 }
 
+// Precio sugerido (al cliente / a la instaladora) según el tipo de equipo, para no tener que
+// tipearlo a ojo cada vez — queda igual de editable, es solo el valor inicial. Termocalefón:
+// service a precio fijo Gs. 360.000 al cliente / Gs. 300.000 a la instaladora (ganancia AEON
+// Gs. 60.000), confirmado por Gastón el 2026-11-20. Los aires no tienen un precio fijo (varía
+// mucho según capacidad/dificultad) así que siguen arrancando en blanco, a cargar a mano.
+const DEFAULTS_COSTO_SERVICE = [{ match: /termocalef/i, montoCliente: 360000, montoInstalador: 300000 }];
+function defaultCostoServicePorEquipo(modelo) {
+  const regla = DEFAULTS_COSTO_SERVICE.find((r) => r.match.test(modelo || ""));
+  return regla ? { montoCliente: regla.montoCliente, montoInstalador: regla.montoInstalador } : { montoCliente: "", montoInstalador: "" };
+}
 // Costo al cliente / a la instaladora de cada service, desglosado por equipo (un depto puede
 // tener 2 o 3 aires, cada uno con su propio costo) — para poder facturarle al cliente el detalle
 // equipo por equipo y que el total salga de sumar esas líneas, no de un monto único a ojo.
@@ -22435,13 +22445,19 @@ function costosPorEquipoIniciales(entrada) {
       montoInstalador: c?.montoInstalador ? String(c.montoInstalador) : "",
     }));
   }
-  // Compatibilidad con visitas viejas (un solo monto para todo el depto, de antes de desglosar
-  // por equipo): el total ya cargado queda en la primera línea, para no perderlo — se puede
-  // reacomodar a mano entre los equipos si hace falta.
-  return equipos.map((_, i) => ({
-    montoCliente: i === 0 && entrada.montoCliente ? String(entrada.montoCliente) : "",
-    montoInstalador: i === 0 && entrada.montoInstalador ? String(entrada.montoInstalador) : "",
-  }));
+  return equipos.map((eq, i) => {
+    // Compatibilidad con visitas viejas (un solo monto para todo el depto, de antes de desglosar
+    // por equipo): el total ya cargado queda en la primera línea, para no perderlo — se puede
+    // reacomodar a mano entre los equipos si hace falta.
+    if (i === 0 && (entrada.montoCliente || entrada.montoInstalador)) {
+      return {
+        montoCliente: entrada.montoCliente ? String(entrada.montoCliente) : "",
+        montoInstalador: entrada.montoInstalador ? String(entrada.montoInstalador) : "",
+      };
+    }
+    const def = defaultCostoServicePorEquipo(eq.modelo);
+    return { montoCliente: def.montoCliente ? String(def.montoCliente) : "", montoInstalador: def.montoInstalador ? String(def.montoInstalador) : "" };
+  });
 }
 function CostosPorEquipoLineas({ equipos, costos, onChange }) {
   const set = (i, patch) => onChange(costos.map((c, j) => (j === i ? { ...c, ...patch } : c)));
@@ -22593,7 +22609,10 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   const [avisoOffset, setAvisoOffset] = useState("antes");
   const [avisoHora, setAvisoHora] = useState("08:00");
   const equipos = equiposDeUnidad(unidad);
-  const [costos, setCostos] = useState(() => equipos.map(() => ({ montoCliente: "", montoInstalador: "" })));
+  const [costos, setCostos] = useState(() => equipos.map((eq) => {
+    const def = defaultCostoServicePorEquipo(eq.modelo);
+    return { montoCliente: def.montoCliente ? String(def.montoCliente) : "", montoInstalador: def.montoInstalador ? String(def.montoInstalador) : "" };
+  }));
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState(null);
   const esFutura = fechaHecho > todayISO();

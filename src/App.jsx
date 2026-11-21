@@ -27,7 +27,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
-  downloadFacturaMantenimientoPdf,
+  downloadFacturaMantenimientoPdf, generateFacturaMantenimientoPdf, nombreArchivoFacturaMantenimiento,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
@@ -3844,6 +3844,23 @@ export default function App() {
     }
     setDescargandoId(null);
   };
+  // Compartir nativo (WhatsApp incluido junto con el resto de apps instaladas, ver
+  // compartirArchivo) — mismo documento que "Descargar", solo que ahí termina en el selector de
+  // compartir del dispositivo en vez de bajarse directo. Si el dispositivo no tiene panel de
+  // compartir (desktop sin soporte), cae a la descarga normal.
+  const handleCompartirFacturaMantenimiento = async (datos) => {
+    setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:factura-compartir`);
+    setPdfError("");
+    try {
+      const bytes = await generateFacturaMantenimientoPdf(datos);
+      const ok = await compartirArchivo(bytes, nombreArchivoFacturaMantenimiento(datos), `Detalle de mantenimiento — ${datos.cliente || ""}`);
+      if (!ok) await downloadFacturaMantenimientoPdf(datos);
+    } catch (e) {
+      console.error("Error compartiendo detalle de mantenimiento", e);
+      setPdfError("No se pudo compartir el detalle de mantenimiento. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
 
   const addPresupuestoReparacion = (data) => addItem(COLLECTIONS.presupuestosReparacion, data);
   const deletePresupuestoReparacion = (id) => deleteItem(COLLECTIONS.presupuestosReparacion, id);
@@ -5232,7 +5249,7 @@ export default function App() {
             pdfError={pdfError}
             onImportarClientes={handleImportarClientesPostventa} importandoClientes={importandoClientesPostventa}
             importResultadoClientes={importResultadoPostventa}
-            onDescargarFactura={handleDescargarFacturaMantenimiento} descargandoFactura={descargandoId}
+            onDescargarFactura={handleDescargarFacturaMantenimiento} onCompartirFactura={handleCompartirFacturaMantenimiento} descargandoFactura={descargandoId}
             onPedidoFacturacion={esAdmin ? ((entrada, edificioNombre) => { setPedidoServiceTarget({ entrada, edificioNombre }); setDrawer("pedido-facturacion"); }) : undefined}
             onMarcarPago={marcarPagoServicePostventa}
           />
@@ -22616,8 +22633,9 @@ function CostosPorEquipoLineas({ equipos, costos, onChange }) {
 // cargadas recién al abrir este bloque: la factura que le hace la instaladora a AEON (respaldo
 // interno de ese costo) y la factura real que se le termina haciendo al cliente final — dos cosas
 // distintas, cada una con su propia foto.
-function AdjuntosFacturaService({ clave }) {
-  const [abierto, setAbierto] = useState(false);
+// `abierto` lo controla UnidadVisitaRow (botón de cámara en la fila de acciones, junto al resto)
+// — antes era un link de texto aparte más abajo, bastante menos visible que los demás íconos.
+function AdjuntosFacturaService({ clave, abierto }) {
   const [adjuntos, setAdjuntos] = useState(null); // null = todavía no se pidió
   useEffect(() => {
     if (!abierto || adjuntos != null) return;
@@ -22646,20 +22664,16 @@ function AdjuntosFacturaService({ clave }) {
       )}
     </div>
   );
+  if (!abierto) return null;
   return (
     <div className="mt-1.5">
-      <button type="button" onClick={() => setAbierto((v) => !v)} className="text-[11px] flex items-center gap-1" style={{ color: ACCENT }}>
-        <Camera size={11} /> {abierto ? "Ocultar fotos de factura" : "Fotos de factura (instaladora / cliente)"}
-      </button>
-      {abierto && (
-        adjuntos == null ? (
-          <p className="text-[11px] mt-1" style={{ color: MUTED }}>Cargando...</p>
-        ) : (
-          <div className="mt-1.5 p-2 rounded border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
-            {bloque("facturaInstaladorFoto", "Factura de la instaladora (respaldo interno)", "Lo que te factura la empresa que hizo el trabajo — queda como respaldo entre vos y ella.")}
-            {bloque("facturaClienteFoto", "Factura al cliente final", "La factura real que se le termina haciendo al cliente por este service.")}
-          </div>
-        )
+      {adjuntos == null ? (
+        <p className="text-[11px]" style={{ color: MUTED }}>Cargando...</p>
+      ) : (
+        <div className="p-2 rounded border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+          {bloque("facturaInstaladorFoto", "Factura de la instaladora (respaldo interno)", "Lo que te factura la empresa que hizo el trabajo — queda como respaldo entre vos y ella.")}
+          {bloque("facturaClienteFoto", "Factura al cliente final", "La factura real que se le termina haciendo al cliente por este service.")}
+        </div>
       )}
     </div>
   );
@@ -22668,7 +22682,7 @@ function AdjuntosFacturaService({ clave }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
   const [informe, setInforme] = useState(entrada.informe || "");
@@ -22688,6 +22702,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
   const [coordinarProximo, setCoordinarProximo] = useState(!!entrada.proximoMantenimientoCoordinado);
   const [proximoMeses, setProximoMeses] = useState(entrada.proximoMeses || "12");
   const [ocupado, setOcupado] = useState(false);
+  const [mostrarFotos, setMostrarFotos] = useState(false);
   const equipos = equiposDeUnidad(entrada);
   // Al abrir para editar un hecho ya cargado, arranca de los valores guardados — abrir con un
   // formulario en blanco era lo que obligaba a "recargar de cero" en vez de corregir un dato.
@@ -22735,23 +22750,39 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
             <span className="px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#E9F7EF", color: "#15803D" }}>
               Hecho {fmtDate(entrada.fechaHecho)}
             </span>
-            {onDescargarFactura && (entrada.montoCliente > 0) && (
-              <button
-                type="button"
-                onClick={() => onDescargarFactura({
-                  edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
-                  equipos: equiposDeUnidad(entrada).map((eq) => ({ ...eq, categoria: categoriaDeEquipo(eq.modelo) })),
-                  fechaServicio: entrada.fechaHecho, informe: entrada.informe,
-                  costosPorEquipo: entrada.costosPorEquipo,
-                  garantiaTexto: entrada.garantiaTexto, proximoServicioTexto: entrada.proximoServicioTexto,
-                })}
-                disabled={descargandoFactura === idFactura}
-                title="Descargar detalle de mantenimiento (equipo, garantía y costo) para el cliente"
-                className="p-1 rounded hover:bg-gray-100"
-              >
-                <BadgeDollarSign size={12} style={{ color: ACCENT }} />
-              </button>
-            )}
+            {onDescargarFactura && (entrada.montoCliente > 0) && (() => {
+              const datosFactura = {
+                edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
+                equipos: equiposDeUnidad(entrada).map((eq) => ({ ...eq, categoria: categoriaDeEquipo(eq.modelo) })),
+                fechaServicio: entrada.fechaHecho, informe: entrada.informe,
+                costosPorEquipo: entrada.costosPorEquipo,
+                garantiaTexto: entrada.garantiaTexto, proximoServicioTexto: entrada.proximoServicioTexto,
+              };
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onDescargarFactura(datosFactura)}
+                    disabled={descargandoFactura === idFactura}
+                    title="Descargar detalle de mantenimiento (equipo, garantía y costo) para el cliente"
+                    className="p-1 rounded hover:bg-gray-100"
+                  >
+                    <BadgeDollarSign size={12} style={{ color: ACCENT }} />
+                  </button>
+                  {onCompartirFactura && (
+                    <button
+                      type="button"
+                      onClick={() => onCompartirFactura(datosFactura)}
+                      disabled={descargandoFactura === `${idFactura}-compartir`}
+                      title="Compartir detalle de mantenimiento (WhatsApp y otras apps)"
+                      className="p-1 rounded hover:bg-gray-100"
+                    >
+                      <Share2 size={12} style={{ color: ACCENT }} />
+                    </button>
+                  )}
+                </>
+              );
+            })()}
             {onPedidoFacturacion && (entrada.montoCliente > 0) && (
               <button
                 type="button"
@@ -22762,6 +22793,14 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
                 <Send size={12} style={{ color: ACCENT }} />
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setMostrarFotos((v) => !v)}
+              title="Fotos de factura: la de la instaladora (respaldo interno) y la real al cliente"
+              className="p-1 rounded hover:bg-gray-100"
+            >
+              <Camera size={12} style={{ color: mostrarFotos ? ACCENT : MUTED }} />
+            </button>
             <button type="button" onClick={abrir} title="Corregir este service" className="p-1 rounded hover:bg-gray-100"><Pencil size={12} style={{ color: MUTED }} /></button>
           </span>
         ) : (
@@ -22795,7 +22834,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
           {entrada.proximoMantenimientoCoordinado && <>Próximo mantenimiento coordinado: en {entrada.proximoMeses || 12} meses</>}
         </p>
       )}
-      {entrada.hecho && <AdjuntosFacturaService clave={claveAdjuntoServicePostventa(edificioNombre, entrada)} />}
+      {entrada.hecho && <AdjuntosFacturaService clave={claveAdjuntoServicePostventa(edificioNombre, entrada)} abierto={mostrarFotos} />}
       {abierto && (
         <div className="mt-2">
           <div className="flex gap-2 flex-wrap items-end">
@@ -22913,7 +22952,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -22991,7 +23030,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha,
             <UnidadVisitaRow
               key={u.unidadId} entrada={u} edificioNombre={edificioNombre} productos={productos}
               onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
-              onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
+              onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
               onPedidoFacturacion={onPedidoFacturacion ? (() => onPedidoFacturacion(u, edificioNombre)) : undefined}
               onMarcarPago={onMarcarPago ? ((pagado) => onMarcarPago(visita, i, pagado)) : undefined}
             />
@@ -23002,7 +23041,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha,
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -23129,7 +23168,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
           <VisitaPostventaCard
             key={v.id} visita={v} edificioNombre={edificio.nombre} productos={productos}
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
-            onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
+            onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
             onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
           />
         ))}
@@ -23138,7 +23177,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const fileInputRef = useRef(null);
@@ -23163,7 +23202,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
         onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
-        onDescargarFactura={onDescargarFactura} descargandoFactura={descargandoFactura}
+        onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
         onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
       />
     );

@@ -23184,7 +23184,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMa
   );
 }
 
-function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pdfError }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -23213,6 +23213,7 @@ function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, produc
   return (
     <div>
       <button onClick={onVolver} className="text-xs mb-3 flex items-center gap-1" style={{ color: ACCENT }}><ArrowLeft size={13} /> Volver a edificios</button>
+      {pdfError && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{pdfError}</p>}
       {editandoEdificio ? (
         <EdificioForm edificio={edificio} onGuardar={onGuardarEdificio} onCancelar={() => setEditandoEdificio(false)} />
       ) : (
@@ -23348,6 +23349,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
         onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
         onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
+        pdfError={pdfError}
       />
     );
   }

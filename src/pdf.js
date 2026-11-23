@@ -1379,7 +1379,7 @@ export async function downloadFacturaMantenimientoPdf(datos) {
 
 // ---------- Mail al cliente final (detalle del trabajo + factura recibida de Administración) ----------
 export function asuntoMailMantenimientoCliente(datos) {
-  return `AEON — Mantenimiento realizado — ${datos.edificioNombre || ""}${datos.apartamento ? " Depto " + datos.apartamento : ""}`;
+  return `Servicio de mantenimiento de equipos AEON — ${datos.edificioNombre || ""}${datos.apartamento ? " Depto " + datos.apartamento : ""}`;
 }
 // El cuerpo lleva siempre el detalle (equipos, trabajo realizado, garantía) en texto, igual que el
 // mail de Pedido de facturación a Administración — así el cliente tiene la info aunque no abra los

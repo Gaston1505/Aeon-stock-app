@@ -1276,6 +1276,12 @@ export async function generateFacturaMantenimientoPdf(datos) {
   text("Cliente:", MARGIN + 4, y - 11, { bold: true, size: 8 });
   text(datos.cliente || "", MARGIN + 60, y - 11, { size: 8 });
   y -= rowH;
+  if (datos.ruc) {
+    rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
+    text("RUC:", MARGIN + 4, y - 11, { bold: true, size: 8 });
+    text(datos.ruc, MARGIN + 60, y - 11, { size: 8 });
+    y -= rowH;
+  }
   rect(MARGIN, y - rowH, CONTENT_W, rowH, { border: BORDER });
   text("Edificio / Unidad:", MARGIN + 4, y - 11, { bold: true, size: 8 });
   text(`${datos.edificioNombre || ""}${datos.apartamento ? ` — Depto ${datos.apartamento}` : ""}`, MARGIN + 100, y - 11, { size: 8 });

@@ -22429,9 +22429,20 @@ function EdificioForm({ edificio, onGuardar, onCancelar }) {
   );
 }
 
-function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
+// Si el cliente de esta unidad es una empresa de administración que ya maneja otra unidad (ej.
+// Generación Empresariales S.A., igual que Quantum administra lo de AEON), no hay que volver a
+// tipear su RUC cada vez — se busca por nombre exacto (normalizado, sin importar mayúsculas/
+// acentos) entre TODAS las unidades de TODOS los edificios, no solo las de este edificio.
+function rucPorClienteEnUnidades(cliente, todasLasUnidades, excluirId) {
+  const clave = normClave(cliente);
+  if (!clave) return "";
+  const match = (todasLasUnidades || []).find((u) => u.id !== excluirId && u.ruc && normClave(u.cliente) === clave);
+  return match?.ruc || "";
+}
+function UnidadPostventaForm({ unidad, productos, todasLasUnidades, onGuardar, onCancelar }) {
   const [apartamento, setApartamento] = useState(unidad?.apartamento || "");
   const [cliente, setCliente] = useState(unidad?.cliente || "");
+  const [ruc, setRuc] = useState(unidad?.ruc || "");
   const [telefono, setTelefono] = useState(unidad?.telefono || "");
   const [equipos, setEquipos] = useState(() => {
     const existentes = equiposDeUnidad(unidad);
@@ -22452,7 +22463,7 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
     try {
       await onGuardar({
         ...(unidad?.id ? { id: unidad.id } : {}),
-        apartamento: apartamento.trim(), cliente: cliente.trim(), telefono: telefono.trim(),
+        apartamento: apartamento.trim(), cliente: cliente.trim(), ruc: ruc.trim(), telefono: telefono.trim(),
         equipos: equiposValidos, equipo: null, capacidad: null, tipoObra,
         fechaVenta: tipoObra === "ventaCero" ? fechaVenta : "",
         activo: true,
@@ -22461,13 +22472,22 @@ function UnidadPostventaForm({ unidad, productos, onGuardar, onCancelar }) {
     } catch (e) { setMsg(textoErrorFirestore(e, "unidadesPostventa")); }
     setOcupado(false);
   };
+  // Si el nombre coincide con el cliente de otra unidad que ya tiene RUC cargado (misma empresa de
+  // administración manejando varios deptos/edificios), lo trae solo — nunca pisa un RUC que ya se
+  // haya escrito a mano.
+  const completarRucSiCoincide = () => {
+    if (ruc.trim()) return;
+    const encontrado = rucPorClienteEnUnidades(cliente, todasLasUnidades, unidad?.id);
+    if (encontrado) setRuc(encontrado);
+  };
   return (
     <div className="p-3 rounded-lg border mb-2" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
       <p className="text-sm font-semibold mb-2" style={{ color: INK }}>{unidad?.id ? "Editar unidad" : "Nueva unidad"}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
         <Field label="N° de apartamento"><TextInput value={apartamento} onChange={(e) => setApartamento(e.target.value)} placeholder="Ej: 302" /></Field>
-        <Field label="Cliente (inquilino/propietario)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} /></Field>
+        <Field label="Cliente (inquilino/propietario, o empresa si administra el edificio)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} onBlur={completarRucSiCoincide} /></Field>
       </div>
+      <Field label="RUC (opcional — se completa solo si esta empresa ya administra otra unidad)"><TextInput value={ruc} onChange={(e) => setRuc(e.target.value)} placeholder="Ej: 80012345-6" /></Field>
       <Field label="Teléfono (opcional)"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
       <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Equipos instalados</p>
       <EquiposUnidadLineas equipos={equipos} productos={productos} onChange={setEquipos} />
@@ -22692,7 +22712,15 @@ function AdjuntosFacturaService({ clave, abierto }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarcarHecha, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+  // El cliente/RUC vienen copiados en la visita al momento de agendarla (entrada.cliente) — si
+  // después se corrige el nombre o se carga el RUC en la ficha de la unidad, esa copia vieja no se
+  // actualiza sola. Para el documento/pedido de facturación siempre hay que tomar el dato VIVO de
+  // la ficha (unidadViva), no la copia congelada — así corregir la ficha una vez alcanza para
+  // todos los services de esa unidad, pasados y futuros.
+  const unidadViva = (unidades || []).find((u) => u.id === entrada.unidadId);
+  const clienteVivo = unidadViva?.cliente || entrada.cliente;
+  const rucVivo = unidadViva?.ruc || "";
   const [abierto, setAbierto] = useState(false);
   const [fechaHecho, setFechaHecho] = useState(entrada.fechaHecho || todayISO());
   const [informe, setInforme] = useState(entrada.informe || "");
@@ -22752,7 +22780,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
     <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span style={{ color: INK }}>
-          <b>Depto {entrada.apartamento}</b> · {entrada.cliente} · {textoEquiposUnidad(entrada)}
+          <b>Depto {entrada.apartamento}</b> · {clienteVivo} · {textoEquiposUnidad(entrada)}
           {entrada.hito && <span style={{ color: MUTED }}> · service {entrada.hito}</span>}
         </span>
         {entrada.hecho ? (
@@ -22761,8 +22789,13 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
               Hecho {fmtDate(entrada.fechaHecho)}
             </span>
             {onDescargarFactura && (entrada.montoCliente > 0) && (() => {
+              // facturarA/facturarNombre/facturarRuc (del formulario de "Marcar hecho") pisan el
+              // dato vivo de la ficha cuando este service puntual se factura a otra empresa — ver
+              // la misma prioridad en armarPedidoDesdeServicePostventa.
+              const clienteFactura = entrada.facturarA === "otro" ? (entrada.facturarNombre || "") : clienteVivo;
+              const rucFactura = entrada.facturarRuc || rucVivo || "";
               const datosFactura = {
-                edificioNombre, apartamento: entrada.apartamento, cliente: entrada.cliente,
+                edificioNombre, apartamento: entrada.apartamento, cliente: clienteFactura, ruc: rucFactura,
                 equipos: equiposDeUnidad(entrada).map((eq) => ({ ...eq, categoria: categoriaDeEquipo(eq.modelo) })),
                 fechaServicio: entrada.fechaHecho, informe: entrada.informe,
                 costosPorEquipo: entrada.costosPorEquipo,
@@ -22796,7 +22829,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, onMarcarHecha, on
             {onPedidoFacturacion && (entrada.montoCliente > 0) && (
               <button
                 type="button"
-                onClick={onPedidoFacturacion}
+                onClick={() => onPedidoFacturacion({ ...entrada, cliente: clienteVivo, facturarRuc: entrada.facturarRuc || rucVivo || "" })}
                 title="Pedir que Administración facture este service"
                 className="p-1 rounded hover:bg-gray-100"
               >
@@ -22962,7 +22995,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -23038,10 +23071,10 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha,
           )}
           {visita.unidades.map((u, i) => (
             <UnidadVisitaRow
-              key={u.unidadId} entrada={u} edificioNombre={edificioNombre} productos={productos}
+              key={u.unidadId} entrada={u} edificioNombre={edificioNombre} productos={productos} unidades={unidades}
               onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
               onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
-              onPedidoFacturacion={onPedidoFacturacion ? (() => onPedidoFacturacion(u, edificioNombre)) : undefined}
+              onPedidoFacturacion={onPedidoFacturacion ? ((entradaResuelta) => onPedidoFacturacion(entradaResuelta, edificioNombre)) : undefined}
               onMarcarPago={onMarcarPago ? ((pagado) => onMarcarPago(visita, i, pagado)) : undefined}
             />
           ))}
@@ -23051,7 +23084,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, onMarcarHecha,
   );
 }
 
-function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -23121,7 +23154,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
       </div>
       {formUnidad && (
         <UnidadPostventaForm
-          unidad={formUnidad.id ? formUnidad : null} productos={productos}
+          unidad={formUnidad.id ? formUnidad : null} productos={productos} todasLasUnidades={todasLasUnidades}
           onGuardar={(u) => onGuardarUnidad({ ...u, edificioId: edificio.id })}
           onCancelar={() => setFormUnidad(null)}
         />
@@ -23176,7 +23209,7 @@ function EdificioDetalle({ edificio, unidades, visitas, productos, onVolver, onG
         {visitasOrdenadas.length === 0 && <p className="text-xs" style={{ color: MUTED }}>Todavía no hay visitas programadas.</p>}
         {visitasOrdenadas.map((v) => (
           <VisitaPostventaCard
-            key={v.id} visita={v} edificioNombre={edificio.nombre} productos={productos}
+            key={v.id} visita={v} edificioNombre={edificio.nombre} productos={productos} unidades={unidades}
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
             onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
             onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
@@ -23205,6 +23238,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
       <EdificioDetalle
         edificio={edificioSel}
         unidades={unidades.filter((u) => u.edificioId === edificioSel.id)}
+        todasLasUnidades={unidades}
         visitas={visitas.filter((v) => v.edificioId === edificioSel.id)}
         productos={productos}
         onVolver={() => setEdificioSelId(null)}

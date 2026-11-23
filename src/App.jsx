@@ -310,6 +310,32 @@ function sheetAoaConAnchoAuto(filas) {
 function capitalizarPalabras(s) {
   return (s || "").replace(/(^|\s)(\S)/g, (_, sep, letra) => sep + letra.toUpperCase());
 }
+// navigator.clipboard.writeText no está soportado/permitido en todos lados (algunos PWA/webview,
+// o si el documento perdió el foco justo antes del click) y falla tirando una excepción en vez de
+// avisar — por eso además de la API moderna se intenta el método viejo (textarea oculto +
+// execCommand) como red de contención, y recién si las dos fallan se considera que no se copió.
+async function copiarAlPortapapeles(texto) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    }
+  } catch (e) { /* sigue al método viejo de abajo */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = texto;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
 // Compartir nativo (botón "Compartir" del celular): incluye mail y cualquier app instalada,
 // con el PDF ya adjunto — a diferencia de WhatsApp, sí lo soportan la mayoría de apps de mail.
 function tipoMimePorNombre(filename) {
@@ -3877,10 +3903,11 @@ export default function App() {
     // email al portapapeles para pegarlo en "Para". Tiene que ser la PRIMERA línea del handler, sin
     // ningún await antes: el navegador solo deja escribir al portapapeles mientras dura el gesto
     // del click (unos milisegundos) — si se llama después de esperar Firestore o de armar el PDF,
-    // ese permiso ya venció y navigator.clipboard.writeText falla en silencio (lo que pasaba antes).
-    try { await navigator.clipboard.writeText(datos.clienteEmail); } catch (e) { /* sin permiso de portapapeles: no es bloqueante */ }
+    // ese permiso ya venció. Si ni así se pudo copiar (ver copiarAlPortapapeles), se avisa el email
+    // en el mensaje en vez de asumir que se copió y dejar al usuario buscándolo en silencio.
+    const copiado = await copiarAlPortapapeles(datos.clienteEmail);
     setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:factura-mail-cliente`);
-    setPdfError("");
+    setPdfError(copiado ? "" : `No se pudo copiar el email automáticamente — el del cliente es ${datos.clienteEmail}`);
     try {
       const clave = claveAdjuntoServicePostventa(datos.edificioNombre, { apartamento: datos.apartamento, fechaHecho: datos.fechaServicio });
       const adjuntos = await obtenerAdjuntoServicePostventa(clave);

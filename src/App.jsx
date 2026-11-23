@@ -22603,6 +22603,16 @@ function costosPorEquipoIniciales(entrada) {
     return { montoCliente: def.montoCliente ? String(def.montoCliente) : "", montoInstalador: def.montoInstalador ? String(def.montoInstalador) : "" };
   });
 }
+// Un <input type="number"> interpreta "660.000" (como se escriben los guaraníes, "." de miles)
+// como seiscientos sesenta COMA cero cero cero = 660 — tira 1000 el monto cargado, en silencio, sin
+// ningún error. Los guaraníes acá son siempre enteros (sin decimales), así que basta con aceptar
+// cualquier tecleo, quedarse solo con los dígitos, y mostrar siempre el número ya formateado con
+// puntos de miles (en vez de dejar que el navegador intente interpretarlo como decimal).
+const soloDigitos = (s) => String(s ?? "").replace(/\D/g, "");
+const fmtGsInput = (v) => {
+  const n = Number(soloDigitos(v));
+  return n ? n.toLocaleString("es-PY") : "";
+};
 function CostosPorEquipoLineas({ equipos, costos, onChange }) {
   const set = (i, patch) => onChange(costos.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const totalCliente = costos.reduce((acc, c) => acc + (Number(c.montoCliente) || 0), 0);
@@ -22616,8 +22626,8 @@ function CostosPorEquipoLineas({ equipos, costos, onChange }) {
             <span className="text-xs min-w-0" style={{ color: INK, flexBasis: 160, flexGrow: 1 }}>
               {eq.modelo || "Equipo sin modelo"}{eq.capacidad ? ` (${eq.capacidad})` : ""}
             </span>
-            <div style={{ width: 130 }}><Field label="Al cliente"><TextInput type="number" value={costos[i]?.montoCliente ?? ""} onChange={(e) => set(i, { montoCliente: e.target.value })} placeholder="Ej: 330000" /></Field></div>
-            <div style={{ width: 130 }}><Field label="Instaladora"><TextInput type="number" value={costos[i]?.montoInstalador ?? ""} onChange={(e) => set(i, { montoInstalador: e.target.value })} placeholder="Ej: 165000" /></Field></div>
+            <div style={{ width: 130 }}><Field label="Al cliente"><TextInput inputMode="numeric" value={fmtGsInput(costos[i]?.montoCliente)} onChange={(e) => set(i, { montoCliente: soloDigitos(e.target.value) })} placeholder="Ej: 330.000" /></Field></div>
+            <div style={{ width: 130 }}><Field label="Instaladora"><TextInput inputMode="numeric" value={fmtGsInput(costos[i]?.montoInstalador)} onChange={(e) => set(i, { montoInstalador: soloDigitos(e.target.value) })} placeholder="Ej: 165.000" /></Field></div>
             <span className="text-[11px] shrink-0" style={{ color: MUTED }}>Ganancia AEON: {fmtGs(gananciaAeonService(costos[i]?.montoCliente, costos[i]?.montoInstalador))}</span>
           </div>
         ))}

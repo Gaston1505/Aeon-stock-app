@@ -1377,6 +1377,44 @@ export async function downloadFacturaMantenimientoPdf(datos) {
   downloadBlob(bytes, nombreArchivoFacturaMantenimiento(datos), "application/pdf");
 }
 
+// ---------- Mail al cliente final (detalle del trabajo + factura recibida de Administración) ----------
+export function asuntoMailMantenimientoCliente(datos) {
+  return `AEON — Mantenimiento realizado — ${datos.edificioNombre || ""}${datos.apartamento ? " Depto " + datos.apartamento : ""}`;
+}
+// El cuerpo lleva siempre el detalle (equipos, trabajo realizado, garantía) en texto, igual que el
+// mail de Pedido de facturación a Administración — así el cliente tiene la info aunque no abra los
+// adjuntos. `tieneFacturaAdjunta` distingue "te paso el detalle" de "te paso el detalle y la
+// factura" según si ya se cargó la foto de la factura real en "Fotos de factura".
+export function textoMailMantenimientoCliente(datos) {
+  const equipos = datos.equipos || [];
+  const lineas = [
+    `Hola${datos.cliente ? " " + datos.cliente : ""},`,
+    "",
+    `Te confirmamos el mantenimiento realizado el ${fmtFecha(datos.fechaServicio)} en ${datos.edificioNombre || ""}${datos.apartamento ? `, Depto ${datos.apartamento}` : ""}.`,
+    "",
+    "Equipos atendidos:",
+    ...equipos.map((eq) => `- ${eq.modelo || "Equipo"}${eq.categoria ? ` (${eq.categoria})` : ""}${eq.capacidad ? ` · ${eq.capacidad}` : ""}`),
+    "",
+    "Trabajo realizado:",
+    datos.informe || "Mantenimiento preventivo según protocolo AEON.",
+  ];
+  if (datos.garantiaTexto) lineas.push("", "Garantía:", datos.garantiaTexto);
+  if (datos.proximoServicioTexto) lineas.push("", "Próximo mantenimiento:", datos.proximoServicioTexto);
+  lineas.push(
+    "",
+    datos.tieneFacturaAdjunta
+      ? "Te adjuntamos el detalle del trabajo y la factura correspondiente."
+      : "Te adjuntamos el detalle del trabajo realizado.",
+    "",
+    "Cualquier consulta, quedamos a disposición.",
+    "",
+    "Saludos,",
+    COMPANY.firmante,
+    COMPANY.razonSocial,
+  );
+  return lineas.join("\n");
+}
+
 // ---------- Certificado de garantía completo (para obras con contrato) ----------
 // Mismo contenido que Certificado_Garantia_AEON_v4.docx: ficha para completar a mano en la
 // entrega + los 10 artículos de términos y condiciones. El certificado corto (arriba) alcanza

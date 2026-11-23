@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell, BellRing,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy, Users,
+  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy, Users, Mail,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth, storage } from "./firebase";
@@ -28,6 +28,7 @@ import {
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
   downloadFacturaMantenimientoPdf, generateFacturaMantenimientoPdf, nombreArchivoFacturaMantenimiento,
+  asuntoMailMantenimientoCliente, textoMailMantenimientoCliente,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
@@ -3861,6 +3862,47 @@ export default function App() {
     }
     setDescargandoId(null);
   };
+  // Mail al cliente final con el detalle del trabajo (PDF) y, si ya se cargó, la factura real que
+  // Administración le hizo llegar ("Fotos de factura" → factura al cliente final) — mismo patrón
+  // que compartir, pero con dos adjuntos y el email del cliente (ficha de la unidad) como
+  // destinatario en vez de Administración.
+  const handleEnviarMailCliente = async (datos) => {
+    if (!datos.clienteEmail) {
+      setPdfError("Para mandarle el mail, primero cargá el email del cliente en la ficha de la unidad.");
+      return;
+    }
+    setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:factura-mail-cliente`);
+    setPdfError("");
+    try {
+      const clave = claveAdjuntoServicePostventa(datos.edificioNombre, { apartamento: datos.apartamento, fechaHecho: datos.fechaServicio });
+      const adjuntos = await obtenerAdjuntoServicePostventa(clave);
+      const facturaDataUrl = adjuntos?.facturaClienteFoto || "";
+      const asunto = asuntoMailMantenimientoCliente(datos);
+      const cuerpo = textoMailMantenimientoCliente({ ...datos, tieneFacturaAdjunta: !!facturaDataUrl });
+      const pdfBytes = await generateFacturaMantenimientoPdf(datos);
+      const archivos = [new File([pdfBytes], nombreArchivoFacturaMantenimiento(datos), { type: "application/pdf" })];
+      if (facturaDataUrl) {
+        const mimeFactura = mimeDeDataUrl(facturaDataUrl);
+        archivos.push(new File([dataUrlToBytes(facturaDataUrl)], `Factura_recibida.${extensionDeMime(mimeFactura)}`, { type: mimeFactura }));
+      }
+      let enviado = false;
+      if (navigator.canShare && navigator.canShare({ files: archivos })) {
+        try {
+          await navigator.share({ files: archivos, title: asunto, text: cuerpo });
+          enviado = true;
+        } catch (e) {
+          if (e && e.name === "AbortError") { setDescargandoId(null); return; }
+        }
+      }
+      if (!enviado) {
+        window.location.href = `mailto:${encodeURIComponent(datos.clienteEmail)}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
+      }
+    } catch (e) {
+      console.error("Error enviando mail al cliente", e);
+      setPdfError("No se pudo armar el mail para el cliente. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
 
   const addPresupuestoReparacion = (data) => addItem(COLLECTIONS.presupuestosReparacion, data);
   const deletePresupuestoReparacion = (id) => deleteItem(COLLECTIONS.presupuestosReparacion, id);
@@ -5249,7 +5291,7 @@ export default function App() {
             pdfError={pdfError}
             onImportarClientes={handleImportarClientesPostventa} importandoClientes={importandoClientesPostventa}
             importResultadoClientes={importResultadoPostventa}
-            onDescargarFactura={handleDescargarFacturaMantenimiento} onCompartirFactura={handleCompartirFacturaMantenimiento} descargandoFactura={descargandoId}
+            onDescargarFactura={handleDescargarFacturaMantenimiento} onCompartirFactura={handleCompartirFacturaMantenimiento} onEnviarMailCliente={handleEnviarMailCliente} descargandoFactura={descargandoId}
             onPedidoFacturacion={esAdmin ? ((entrada, edificioNombre) => { setPedidoServiceTarget({ entrada, edificioNombre }); setDrawer("pedido-facturacion"); }) : undefined}
             onMarcarPago={marcarPagoServicePostventa}
           />
@@ -22444,6 +22486,7 @@ function UnidadPostventaForm({ unidad, productos, todasLasUnidades, onGuardar, o
   const [cliente, setCliente] = useState(unidad?.cliente || "");
   const [ruc, setRuc] = useState(unidad?.ruc || "");
   const [telefono, setTelefono] = useState(unidad?.telefono || "");
+  const [email, setEmail] = useState(unidad?.email || "");
   const [equipos, setEquipos] = useState(() => {
     const existentes = equiposDeUnidad(unidad);
     return existentes.length ? existentes : [{ modelo: "", capacidad: "", cantidad: 1 }];
@@ -22463,7 +22506,7 @@ function UnidadPostventaForm({ unidad, productos, todasLasUnidades, onGuardar, o
     try {
       await onGuardar({
         ...(unidad?.id ? { id: unidad.id } : {}),
-        apartamento: apartamento.trim(), cliente: cliente.trim(), ruc: ruc.trim(), telefono: telefono.trim(),
+        apartamento: apartamento.trim(), cliente: cliente.trim(), ruc: ruc.trim(), telefono: telefono.trim(), email: email.trim(),
         equipos: equiposValidos, equipo: null, capacidad: null, tipoObra,
         fechaVenta: tipoObra === "ventaCero" ? fechaVenta : "",
         activo: true,
@@ -22488,7 +22531,10 @@ function UnidadPostventaForm({ unidad, productos, todasLasUnidades, onGuardar, o
         <Field label="Cliente (inquilino/propietario, o empresa si administra el edificio)"><TextInput value={cliente} onChange={(e) => setCliente(e.target.value)} onBlur={completarRucSiCoincide} /></Field>
       </div>
       <Field label="RUC (opcional — se completa solo si esta empresa ya administra otra unidad)"><TextInput value={ruc} onChange={(e) => setRuc(e.target.value)} placeholder="Ej: 80012345-6" /></Field>
-      <Field label="Teléfono (opcional)"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        <Field label="Teléfono (opcional)"><TextInput value={telefono} onChange={(e) => setTelefono(e.target.value)} /></Field>
+        <Field label="Email (opcional — para mandarle el detalle y la factura)"><TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@mail.com" /></Field>
+      </div>
       <p className="text-[11px] font-semibold uppercase tracking-wide mt-2 mb-1" style={{ color: MUTED }}>Equipos instalados</p>
       <EquiposUnidadLineas equipos={equipos} productos={productos} onChange={setEquipos} />
       <Field label="Situación">
@@ -22712,7 +22758,7 @@ function AdjuntosFacturaService({ clave, abierto }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarcarHecha, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarcarHecha, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   // El cliente/RUC vienen copiados en la visita al momento de agendarla (entrada.cliente) — si
   // después se corrige el nombre o se carga el RUC en la ficha de la unidad, esa copia vieja no se
   // actualiza sola. Para el documento/pedido de facturación siempre hay que tomar el dato VIVO de
@@ -22796,6 +22842,7 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarca
               const rucFactura = entrada.facturarRuc || rucVivo || "";
               const datosFactura = {
                 edificioNombre, apartamento: entrada.apartamento, cliente: clienteFactura, ruc: rucFactura,
+                clienteEmail: unidadViva?.email || "",
                 equipos: equiposDeUnidad(entrada).map((eq) => ({ ...eq, categoria: categoriaDeEquipo(eq.modelo) })),
                 fechaServicio: entrada.fechaHecho, informe: entrada.informe,
                 costosPorEquipo: entrada.costosPorEquipo,
@@ -22821,6 +22868,17 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarca
                       className="p-1 rounded hover:bg-gray-100"
                     >
                       <Share2 size={12} style={{ color: ACCENT }} />
+                    </button>
+                  )}
+                  {onEnviarMailCliente && (
+                    <button
+                      type="button"
+                      onClick={() => onEnviarMailCliente(datosFactura)}
+                      disabled={descargandoFactura === `${idFactura}-mail-cliente`}
+                      title={unidadViva?.email ? `Mandarle el mail al cliente (${unidadViva.email}) con el detalle y la factura` : "Cargá el email del cliente en la ficha para poder mandarle el mail"}
+                      className="p-1 rounded hover:bg-gray-100"
+                    >
+                      <Mail size={12} style={{ color: unidadViva?.email ? ACCENT : MUTED }} />
                     </button>
                   )}
                 </>
@@ -22995,7 +23053,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -23073,7 +23131,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMa
             <UnidadVisitaRow
               key={u.unidadId} entrada={u} edificioNombre={edificioNombre} productos={productos} unidades={unidades}
               onMarcarHecha={(datos) => onMarcarHecha(visita, i, datos)}
-              onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
+              onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
               onPedidoFacturacion={onPedidoFacturacion ? ((entradaResuelta) => onPedidoFacturacion(entradaResuelta, edificioNombre)) : undefined}
               onMarcarPago={onMarcarPago ? ((pagado) => onMarcarPago(visita, i, pagado)) : undefined}
             />
@@ -23084,7 +23142,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMa
   );
 }
 
-function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -23211,7 +23269,7 @@ function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, produc
           <VisitaPostventaCard
             key={v.id} visita={v} edificioNombre={edificio.nombre} productos={productos} unidades={unidades}
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
-            onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
+            onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
             onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
           />
         ))}
@@ -23220,7 +23278,7 @@ function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, produc
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, onCompartirFactura, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const fileInputRef = useRef(null);
@@ -23246,7 +23304,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onGuardarUnidad={onGuardarUnidad} onBorrarUnidad={onBorrarUnidad}
         onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita} onMarcarUnidadHecha={onMarcarUnidadHecha}
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
-        onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} descargandoFactura={descargandoFactura}
+        onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
         onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
       />
     );

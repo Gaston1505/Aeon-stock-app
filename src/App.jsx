@@ -3871,6 +3871,14 @@ export default function App() {
       setPdfError("Para mandarle el mail, primero cargá el email del cliente en la ficha de la unidad.");
       return;
     }
+    // El selector nativo de compartir (navigator.share) no tiene forma de precargar un
+    // destinatario — solo título/texto/archivos, nunca un "para" — así que la app elegida (Outlook,
+    // Mail...) abre un mensaje nuevo sin nadie puesto. Como la ficha SÍ sabe a quién es, se copia el
+    // email al portapapeles para pegarlo en "Para". Tiene que ser la PRIMERA línea del handler, sin
+    // ningún await antes: el navegador solo deja escribir al portapapeles mientras dura el gesto
+    // del click (unos milisegundos) — si se llama después de esperar Firestore o de armar el PDF,
+    // ese permiso ya venció y navigator.clipboard.writeText falla en silencio (lo que pasaba antes).
+    try { await navigator.clipboard.writeText(datos.clienteEmail); } catch (e) { /* sin permiso de portapapeles: no es bloqueante */ }
     setDescargandoId(`${datos.apartamento}:${datos.fechaServicio}:factura-mail-cliente`);
     setPdfError("");
     try {
@@ -3885,14 +3893,8 @@ export default function App() {
         const mimeFactura = mimeDeDataUrl(facturaDataUrl);
         archivos.push(new File([dataUrlToBytes(facturaDataUrl)], `Factura_recibida.${extensionDeMime(mimeFactura)}`, { type: mimeFactura }));
       }
-      // El selector nativo de compartir (navigator.share) no tiene forma de precargar un
-      // destinatario — solo título/texto/archivos, nunca un "para" — así que la app elegida (Mail,
-      // Outlook...) abre un mensaje nuevo sin nadie puesto. Como la ficha SÍ sabe a quién es, se
-      // copia el email al portapapeles justo antes de compartir para que alcance con pegarlo en
-      // "Para", en vez de tener que volver a la ficha a buscarlo.
       let enviado = false;
       if (navigator.canShare && navigator.canShare({ files: archivos })) {
-        try { await navigator.clipboard.writeText(datos.clienteEmail); } catch (e) { /* sin permiso de portapapeles: no es bloqueante */ }
         try {
           await navigator.share({ files: archivos, title: asunto, text: cuerpo });
           enviado = true;

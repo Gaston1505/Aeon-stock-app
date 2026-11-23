@@ -3929,7 +3929,14 @@ export default function App() {
           if (e && e.name === "AbortError") { setDescargandoId(null); return; }
         }
       }
-      if (!enviado) {
+      if (enviado) {
+        // Igual que el destinatario, el asunto tampoco se garantiza: el share con archivos pasa
+        // "title" a la app elegida, pero algunas (Outlook de escritorio vía Compartir de Windows,
+        // por ejemplo) lo ignoran y dejan el campo Asunto vacío — se avisa el asunto sugerido para
+        // pegarlo a mano si hace falta, igual que se avisa el email cuando no se pudo copiar.
+        const avisoEmail = copiado ? "" : `No se pudo copiar el email automáticamente — el del cliente es ${datos.clienteEmail}. `;
+        setPdfError(`${avisoEmail}Si el asunto no se cargó solo, pegalo a mano: "${asunto}"`);
+      } else {
         window.location.href = `mailto:${encodeURIComponent(datos.clienteEmail)}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
       }
     } catch (e) {

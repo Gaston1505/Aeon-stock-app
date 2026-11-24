@@ -23186,6 +23186,22 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMa
   );
 }
 
+// Aviso puntual de Mantenimiento postventa (asunto sugerido para pegar a mano, email no copiado,
+// etc.) — fijo abajo de la pantalla en vez de arriba del todo, porque el botón que lo dispara (el
+// sobre de "Mail al cliente") está adentro de la fila de un depto, bien abajo si hay varias
+// unidades o visitas cargadas; arriba del todo quedaba fuera de la vista sin hacer scroll manual.
+function AvisoPostventaFijo({ mensaje }) {
+  if (!mensaje) return null;
+  return (
+    <div
+      className="fixed left-0 right-0 bottom-0 z-40 px-4 py-2 text-xs text-center"
+      style={{ backgroundColor: "#FBEAEA", color: "#B91C1C", borderTop: "1px solid #F3C6C6" }}
+    >
+      {mensaje}
+    </div>
+  );
+}
+
 function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pdfError }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
@@ -23215,7 +23231,7 @@ function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, produc
   return (
     <div>
       <button onClick={onVolver} className="text-xs mb-3 flex items-center gap-1" style={{ color: ACCENT }}><ArrowLeft size={13} /> Volver a edificios</button>
-      {pdfError && <p className="text-xs mb-3" style={{ color: "#B91C1C" }}>{pdfError}</p>}
+      <AvisoPostventaFijo mensaje={pdfError} />
       {editandoEdificio ? (
         <EdificioForm edificio={edificio} onGuardar={onGuardarEdificio} onCancelar={() => setEditandoEdificio(false)} />
       ) : (
@@ -23376,7 +23392,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         </>
       )}
     >
-      {pdfError && <p className="text-xs mb-2" style={{ color: "#B91C1C" }}>{pdfError}</p>}
+      <AvisoPostventaFijo mensaje={pdfError} />
       {importResultadoClientes && (
         <div className="mb-4 px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{importResultadoClientes}</div>
       )}

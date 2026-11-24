@@ -27,6 +27,7 @@ import {
   downloadReporteMuestrasPdf, downloadReporteFisicoPdf, downloadReporteJoelPdf,
   generateReporteJoelPdf, nombreArchivoReporteJoel,
   downloadListaPdf, generateListaPdf, nombreArchivoLista, downloadGarantiaPdf, downloadGarantiaCompletaPdf,
+  generateGarantiaPdf, nombreArchivoGarantia, generateGarantiaCompletaPdf, nombreArchivoGarantiaCompleta,
   downloadFacturaMantenimientoPdf, generateFacturaMantenimientoPdf, nombreArchivoFacturaMantenimiento,
   asuntoMailMantenimientoCliente, textoMailMantenimientoCliente,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
@@ -3856,6 +3857,37 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  // Compartir nativo de los certificados (WhatsApp incluido junto con el resto de apps
+  // instaladas) — mismo documento que "Descargar", solo que termina en el selector de compartir
+  // del dispositivo en vez de bajarse directo, igual que compartir una factura de mantenimiento.
+  const handleCompartirGarantiaPdf = async (venta) => {
+    setDescargandoId(venta.id + ":garantia-compartir");
+    setPdfError("");
+    try {
+      const bytes = await generateGarantiaPdf(venta);
+      const ok = await compartirArchivo(bytes, nombreArchivoGarantia(venta), `Certificado de garantía — ${venta.cliente || ""}`);
+      if (!ok) await downloadGarantiaPdf(venta);
+    } catch (e) {
+      console.error("Error compartiendo certificado de garantía", e);
+      setPdfError("No se pudo compartir el certificado de garantía. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleCompartirGarantiaCompletaPdf = async (venta) => {
+    setDescargandoId(venta.id + ":garantia-completa-compartir");
+    setPdfError("");
+    try {
+      const bytes = await generateGarantiaCompletaPdf(venta);
+      const ok = await compartirArchivo(bytes, nombreArchivoGarantiaCompleta(venta), `Certificado de garantía — ${venta.cliente || ""}`);
+      if (!ok) await downloadGarantiaCompletaPdf(venta);
+    } catch (e) {
+      console.error("Error compartiendo certificado de garantía completo", e);
+      setPdfError("No se pudo compartir el certificado de garantía completo. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
 
   // A diferencia del recibo de servicio (que nunca lleva montos), esta es la que se manda para
   // cobrarle al cliente: mismo desglose por equipo que se cargó al marcar el service hecho, con
@@ -5314,6 +5346,8 @@ export default function App() {
             onVerFoto={setFotoView}
             onDescargarGarantia={handleDescargarGarantiaPdf}
             onDescargarGarantiaCompleta={handleDescargarGarantiaCompletaPdf}
+            onCompartirGarantia={handleCompartirGarantiaPdf}
+            onCompartirGarantiaCompleta={handleCompartirGarantiaCompletaPdf}
             onCargarReclamo={(v) => {
               setReclamoPrefill({ cliente: v.cliente, obra: v.obra, modelo: (v.lineas || [])[0]?.modelo || "", ventaId: v.id });
               setDrawer("reclamo");
@@ -9265,7 +9299,7 @@ const COMPROMETIDA_BADGE = {
   Retirada: { color: "#15803D", bg: "#E9F7EF" },
 };
 
-function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, onCargarReclamo, descargandoId, pdfError }) {
+function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCotizacion, onDelete, onUpdateField, onGestionar, onVerFoto, onDescargarGarantia, onDescargarGarantiaCompleta, onCompartirGarantia, onCompartirGarantiaCompleta, onCargarReclamo, descargandoId, pdfError }) {
   // Garantías es solo lo que hace a la garantía en sí: datos de la venta, contrato firmado y
   // seguimiento de service — remito y factura viven en Salidas (ver RemitoGrupoCard), que es de
   // donde salen de verdad (el pedido de facturación nace ahí, y la factura es la respuesta a ese
@@ -9320,6 +9354,8 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
             const remitos = v.cotizacionId ? movimientos.filter((m) => m.cotizacionId === v.cotizacionId) : [];
             const descargando = descargandoId === v.id + ":garantia";
             const descargandoCompleto = descargandoId === v.id + ":garantia-completa";
+            const compartiendo = descargandoId === v.id + ":garantia-compartir";
+            const compartiendoCompleto = descargandoId === v.id + ":garantia-completa-compartir";
             return (
               <div key={v.id} className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
                 <div className="flex items-start justify-between mb-1">
@@ -9400,6 +9436,18 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                   >
                     <ShieldCheck size={13} /> {descargando ? "Generando..." : "Certificado corto"}
                   </button>
+                  {onCompartirGarantia && (
+                    <button
+                      type="button"
+                      onClick={() => onCompartirGarantia(v)}
+                      disabled={compartiendo}
+                      className="p-1.5 rounded hover:bg-gray-100"
+                      style={{ opacity: compartiendo ? 0.6 : 1 }}
+                      title="Compartir certificado corto (WhatsApp y otras apps) sin descargarlo"
+                    >
+                      <Share2 size={13} style={{ color: ACCENT }} />
+                    </button>
+                  )}
                   <button
                     onClick={() => onDescargarGarantiaCompleta(v)}
                     disabled={descargandoCompleto}
@@ -9409,6 +9457,18 @@ function VentasView({ ventas, movimientos, query, onQuery, onNew, onNewDesdeCoti
                   >
                     <ShieldCheck size={13} /> {descargandoCompleto ? "Generando..." : "Certificado completo"}
                   </button>
+                  {onCompartirGarantiaCompleta && (
+                    <button
+                      type="button"
+                      onClick={() => onCompartirGarantiaCompleta(v)}
+                      disabled={compartiendoCompleto}
+                      className="p-1.5 rounded hover:bg-gray-100"
+                      style={{ opacity: compartiendoCompleto ? 0.6 : 1 }}
+                      title="Compartir certificado completo (WhatsApp y otras apps) sin descargarlo"
+                    >
+                      <Share2 size={13} style={{ color: ACCENT }} />
+                    </button>
+                  )}
                   {v.contratoData ? (
                     <button
                       type="button"

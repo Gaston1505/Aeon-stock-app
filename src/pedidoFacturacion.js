@@ -446,7 +446,7 @@ export async function downloadPedidoExcel(p) {
 
 // ---------- Mail a Administración ----------
 export function asuntoMailPedido(p) {
-  return `Pedido de facturación — ${p.cliente || "Cliente"}${p.obra ? " — " + p.obra : ""}${p.remito ? " — Remito " + p.remito : ""}`;
+  return `Pedido de facturación — ${p.cliente || "Cliente"}${p.obra ? " — " + p.obra : ""}${p.apartamento ? " Depto " + p.apartamento : ""}${p.remito ? " — Remito " + p.remito : ""}`;
 }
 
 // El cuerpo del mail lleva SIEMPRE el detalle completo, línea por línea — no depende de que el

@@ -6741,7 +6741,7 @@ function armarPedidoDesdeServicePostventa(entrada, edificioNombre, { pedidos, gr
     cliente, ruc: (entrada.facturarRuc || rucDeRazonSocial(cliente, grupos) || previo?.ruc || "").trim(),
     condicion: previo?.condicion || "Contado", termino: "",
     centroCostoCodigo: centro.codigo, centroCostoNombre: centro.nombre,
-    obra: edificioNombre || "",
+    obra: edificioNombre || "", apartamento: entrada.apartamento || "",
     lineas: equipos.map((eq, i) => ({
       cantidad: Number(eq.cantidad) || 1, marca: "AEON", codigo: eq.modelo || "",
       producto: `${eq.modelo || "Equipo"}${eq.capacidad ? ` (${eq.capacidad})` : ""}`, familia: "Mantenimiento",

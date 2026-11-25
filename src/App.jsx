@@ -1725,6 +1725,7 @@ const CAMPOS_IMPORT_CATALOGO = [
   { campo: "contenedorCantidad", alias: ["contenedor cantidad", "cantidad por contenedor"] },
   { campo: "stockDisponible", alias: ["stock disponible", "stock", "cantidad en stock"] },
   { campo: "fabrica", alias: ["fabrica", "fabrica / proveedor", "fabrica (interno)"] },
+  { campo: "pendientes", alias: ["pendientes", "pendientes / a confirmar", "falta / a confirmar"] },
 ];
 function parseCatalogoExcel(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
@@ -1762,6 +1763,7 @@ function parseCatalogoExcel(arrayBuffer) {
       contenedorCantidad: Number(item.contenedorCantidad) || 0,
       stockDisponible: item.stockDisponible === "" || item.stockDisponible == null ? null : Number(item.stockDisponible) || 0,
       fabrica: String(item.fabrica || "").trim(),
+      pendientes: String(item.pendientes || "").trim(),
       foto: "", fichaTecnicaNombre: "",
     });
   });
@@ -1799,6 +1801,7 @@ function descargarPlantillaCatalogo() {
     "Precio de lista U$S": 99, "Costo de origen U$S": 55, "Costo puesto en PY U$S": 70,
     "Contenedor tipo": "40HQ", "Contenedor cantidad": 420, "Stock disponible": 5,
     "Fábrica": "Midea", // dato interno (nunca aparece en la cotización) — vacío = Midea
+    "Pendientes": "", // texto libre — si no está vacío, el producto queda marcado en rojo en el catálogo
   }];
   const ws = XLSX.utils.json_to_sheet(filas);
   ws["!cols"] = autoAnchoColumnas(filas);
@@ -12195,6 +12198,11 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
   const [generandoFicha, setGenerandoFicha] = useState(false);
   const [errorFicha, setErrorFicha] = useState("");
   const [noDisponible, setNoDisponible] = useState(!!producto?.noDisponible);
+  // Texto libre interno: qué le falta a este producto (precio sin confirmar, ficha técnica
+  // incompleta, dato asumido de otro equivalente, etc.) — cuando no está vacío, ProductoCard lo
+  // pinta con recuadro rojo para que no se confunda con un producto ya cerrado (ver pedido de
+  // Gastón: "que quede el recuadro de ese modelo subrayado en rojo y que indiques qué falta").
+  const [pendientes, setPendientes] = useState(producto?.pendientes || "");
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fichaFile, setFichaFile] = useState(null);
   const [avisoFicha, setAvisoFicha] = useState("");
@@ -12307,6 +12315,7 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
         stockDisponible: stockDisponible === "" ? null : Number(stockDisponible) || 0,
         stockMinimo: stockMinimo === "" ? null : Number(stockMinimo) || 0,
         foto, fotoExterior, especsFicha, noDisponible, fichaTecnicaNombre,
+        pendientes: pendientes.trim(),
       });
       if (fichaDataUrl && id) await guardarFichaTecnica(id, fichaDataUrl);
     } catch (err) {
@@ -12407,6 +12416,13 @@ function ProductoForm({ producto, defaults, matrizCostos, productos, onSave }) {
         </div>
       )}
 
+      <Field label="Pendientes / a confirmar (interno — no aparece en la cotización)">
+        <Textarea
+          value={pendientes}
+          onChange={(e) => setPendientes(e.target.value)}
+          placeholder="Ej: Ficha técnica incompleta (falta consumo/dimensiones) · Unidades por contenedor asumidas de un equivalente, no es dato real de fábrica"
+        />
+      </Field>
       <Field label="Stock disponible (unidades en depósito)"><TextInput type="number" value={stockDisponible} onChange={(e) => setStockDisponible(e.target.value)} /></Field>
       <Field label="Stock mínimo (para avisarte cuando esté bajo)">
         <TextInput type="number" min="0" value={stockMinimo} onChange={(e) => setStockMinimo(e.target.value)} placeholder="Dejalo vacío para no recibir alerta" />
@@ -12567,8 +12583,14 @@ function DesgloseCostoProducto({ costos, matriz, contenedorCantidad }) {
 function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, comprometidoEquipo, matrizCostos, seleccionable, seleccionado, onToggleSeleccion }) {
   const tieneCosto = p.costoOrigen || p.costoPy;
   const costosVivos = useMemo(() => calcularCostosProducto(p, matrizCostos || MATRIZ_COSTOS_DEFAULT), [p, matrizCostos]);
+  const incompleto = !!(p.pendientes && p.pendientes.trim());
   return (
-    <div className="rounded-lg p-3.5" style={{ backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}>
+    <div
+      className="rounded-lg p-3.5"
+      style={incompleto
+        ? { backgroundColor: "#FFFFFF", border: `1.5px solid #DC2626` }
+        : { backgroundColor: "#FFFFFF", border: `0.5px solid ${BORDER}` }}
+    >
       <div className="flex items-start gap-3 mb-2">
         {p.foto ? (
           <img src={p.foto} alt={p.nombre} className="rounded border shrink-0" style={{ width: 56, height: 56, objectFit: "contain", borderColor: BORDER, backgroundColor: "#FAFBFC" }} />
@@ -12652,6 +12674,13 @@ function ProductoCard({ p, onEdit, onDelete, onQuitarFicha, stockEquipo, comprom
               Contenedor {p.contenedorTipo}{p.contenedorCantidad ? ` · ${p.contenedorCantidad} un.` : ""}
             </p>
           )}
+        </div>
+      )}
+
+      {incompleto && (
+        <div className="mt-2 p-2 rounded" style={{ backgroundColor: "#FBEAEA", border: "0.5px solid #F3C6C6" }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: "#B91C1C" }}>Falta / a confirmar</p>
+          <p className="text-xs" style={{ color: "#B91C1C" }}>{p.pendientes}</p>
         </div>
       )}
 

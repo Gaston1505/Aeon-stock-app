@@ -1726,6 +1726,7 @@ const CAMPOS_IMPORT_CATALOGO = [
   { campo: "stockDisponible", alias: ["stock disponible", "stock", "cantidad en stock"] },
   { campo: "fabrica", alias: ["fabrica", "fabrica / proveedor", "fabrica (interno)"] },
   { campo: "pendientes", alias: ["pendientes", "pendientes / a confirmar", "falta / a confirmar"] },
+  { campo: "noDisponible", alias: ["no disponible", "no disponible para la venta"] },
 ];
 function parseCatalogoExcel(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
@@ -1764,6 +1765,7 @@ function parseCatalogoExcel(arrayBuffer) {
       stockDisponible: item.stockDisponible === "" || item.stockDisponible == null ? null : Number(item.stockDisponible) || 0,
       fabrica: String(item.fabrica || "").trim(),
       pendientes: String(item.pendientes || "").trim(),
+      noDisponible: /^(si|sí|true|1|x)$/i.test(String(item.noDisponible || "").trim()),
       foto: "", fichaTecnicaNombre: "",
     });
   });
@@ -1802,6 +1804,7 @@ function descargarPlantillaCatalogo() {
     "Contenedor tipo": "40HQ", "Contenedor cantidad": 420, "Stock disponible": 5,
     "Fábrica": "Midea", // dato interno (nunca aparece en la cotización) — vacío = Midea
     "Pendientes": "", // texto libre — si no está vacío, el producto queda marcado en rojo en el catálogo
+    "No disponible": "", // "Sí" = no aparece como opción en Cotizaciones ni Panel de simulación (ej: sin precio de fábrica todavía)
   }];
   const ws = XLSX.utils.json_to_sheet(filas);
   ws["!cols"] = autoAnchoColumnas(filas);

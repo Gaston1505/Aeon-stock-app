@@ -1170,6 +1170,11 @@ function calcularRentabilidadCotizacion(c, productos, matrizCostos) {
     return {
       codigo: l.codigo, descripcion: l.descripcion, cantidad, precioUnit, ventaNeta, costoUnit, costoTotal, margen, margenPct,
       comisionVentaLinea, costoFinancieroLinea, margenNeto, margenNetoPct, sinCosto, bandaCostoReal, puntoEquilibrioUnit,
+      // Desglose completo de costo (mismo motor y mismos campos que el catálogo: Comisión agente,
+      // Flete, Despacho, Costo PY, Comisión venta, Costo financiero, Costo Real) para mostrar el
+      // detalle por modelo/por unidad en la cotización, no solo el total — null si falta algún
+      // dato de entrada (costo de origen o unidades por contenedor sin cargar en el producto).
+      costosVivos, contenedorCantidadProducto: producto?.contenedorCantidad ?? null,
     };
   });
 
@@ -17640,8 +17645,12 @@ const SALIDA_COTIZACION_BADGE = {
 
 function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf, descargandoId }) {
   const r = useMemo(() => calcularRentabilidadCotizacion(c, productos, matrizCostos), [c, productos, matrizCostos]);
+  const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
   const colorMargen = (m) => (m >= 0 ? "#15803D" : "#B91C1C");
   const fmt = (n) => n.toLocaleString("es-PY", { maximumFractionDigits: 2 });
+  // Detalle de costo por línea (desglose completo tipo catálogo) — colapsado por default, uno
+  // se abre por código de producto para no duplicar si el mismo modelo aparece en más de una línea.
+  const [detalleAbierto, setDetalleAbierto] = useState({});
   return (
     <div className="mt-2 p-2.5 rounded" style={{ backgroundColor: "#F7F8FA" }}>
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -17730,6 +17739,26 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
                 {f.bandaCostoReal ? `Vs. Costo Real: ${f.bandaCostoReal.label}` : "Punto de equilibrio"}
                 {f.puntoEquilibrioUnit != null && ` · mín. U$S ${f.puntoEquilibrioUnit.toLocaleString("es-PY", { maximumFractionDigits: 2 })} c/u`}
               </span>
+            )}
+            {f.costosVivos && (
+              <button
+                type="button"
+                onClick={() => setDetalleAbierto((prev) => ({ ...prev, [f.codigo]: !prev[f.codigo] }))}
+                className="block mt-1 text-[10px] font-medium underline"
+                style={{ color: ACCENT }}
+              >
+                {detalleAbierto[f.codigo] ? "Ocultar desglose de costo" : "Ver desglose de costo (por unidad)"}
+              </button>
+            )}
+            {detalleAbierto[f.codigo] && f.costosVivos && (
+              <div className="mt-1.5 p-2 rounded" style={{ backgroundColor: "#FAFBFC", border: `0.5px solid ${BORDER}` }}>
+                <DesgloseCostoProducto costos={f.costosVivos} matriz={matriz} contenedorCantidad={f.contenedorCantidadProducto} />
+                {f.cantidad > 1 && (
+                  <p className="text-[10px] pt-1.5 mt-1.5 border-t" style={{ borderColor: BORDER, color: MUTED }}>
+                    Para las {f.cantidad} unidades cotizadas: Costo PY total U$S {fmt(f.costosVivos.costoPy * f.cantidad)} · Costo Real total U$S {fmt(f.costosVivos.costoReal * f.cantidad)}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         ))}

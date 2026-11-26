@@ -32,6 +32,7 @@ import {
   asuntoMailMantenimientoCliente, textoMailMantenimientoCliente,
   downloadArmadoCombinacionPdf, nombreArchivoArmadoCombinacion,
   downloadRentabilidadPdf,
+  downloadRentabilidadPorProductoPdf,
   downloadListaPreciosPdf, generateListaPreciosPdf, nombreArchivoListaPrecios,
   downloadListadoProductosPdf, generateListadoProductosPdf, nombreArchivoListadoProductos,
   downloadContratoPdf, nombreArchivoContrato, downloadContratoWord, parseContratoWordDocx, ETIQUETAS_CAMPOS_CONTRATO,
@@ -3698,6 +3699,18 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const handleDescargarRentabilidadPorProductoPdf = async (cotizacion, r) => {
+    setDescargandoId(cotizacion.id + ":rentabilidad-producto-pdf");
+    setPdfError("");
+    try {
+      await downloadRentabilidadPorProductoPdf(cotizacion, r);
+    } catch (e) {
+      console.error("Error generando PDF de rentabilidad por producto", e);
+      setPdfError("No se pudo generar el PDF de rentabilidad por producto. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const handleDescargarArmadoPdf = async (armado) => {
     setDescargandoId(armado.id + ":pdf");
     setPdfError("");
@@ -5458,6 +5471,7 @@ export default function App() {
             onCompartir={handleCompartirCotizacion}
             onCompartirFichas={handleCompartirFichas}
             onDescargarRentabilidadPdf={handleDescargarRentabilidadPdf}
+            onDescargarRentabilidadPorProductoPdf={handleDescargarRentabilidadPorProductoPdf}
             onPedidoAnticipo={esAdmin ? ((c) => { setPedidoAnticipoTarget(c); setDrawer("pedido-facturacion"); }) : undefined}
             onGenerarContrato={esAdmin ? ((c) => { setContratoTarget(c); setDrawer("contrato"); }) : undefined}
             onCargarFactura={esAdmin ? ((c) => { setFacturaCotizacionTarget(c); setDrawer("factura-cotizacion"); }) : undefined}
@@ -17643,7 +17657,7 @@ const SALIDA_COTIZACION_BADGE = {
   pendiente: { label: "Sin salida", bg: "#F2F3F4", color: "#686D73" },
 };
 
-function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf, descargandoId }) {
+function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf, onDescargarPdfPorProducto, descargandoId }) {
   const r = useMemo(() => calcularRentabilidadCotizacion(c, productos, matrizCostos), [c, productos, matrizCostos]);
   const matriz = matrizCostos || MATRIZ_COSTOS_DEFAULT;
   const colorMargen = (m) => (m >= 0 ? "#15803D" : "#B91C1C");
@@ -17667,11 +17681,18 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
           <p>Margen bruto menos esos dos costos — es lo que de verdad queda, y el punto de equilibrio para negociar un descuento.</p>
           </InfoTip>
         </div>
-        {onDescargarPdf && (
-          <SecondaryButton onClick={() => onDescargarPdf(c, r)} disabled={descargandoId === c.id + ":rentabilidad-pdf"}>
-            <Download size={13} /> {descargandoId === c.id + ":rentabilidad-pdf" ? "Generando..." : "Descargar Rentabilidad (PDF)"}
-          </SecondaryButton>
-        )}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {onDescargarPdf && (
+            <SecondaryButton onClick={() => onDescargarPdf(c, r)} disabled={descargandoId === c.id + ":rentabilidad-pdf"}>
+              <Download size={13} /> {descargandoId === c.id + ":rentabilidad-pdf" ? "Generando..." : "Rentabilidad total (PDF)"}
+            </SecondaryButton>
+          )}
+          {onDescargarPdfPorProducto && (
+            <SecondaryButton onClick={() => onDescargarPdfPorProducto(c, r)} disabled={descargandoId === c.id + ":rentabilidad-producto-pdf"}>
+              <Download size={13} /> {descargandoId === c.id + ":rentabilidad-producto-pdf" ? "Generando..." : "Rentabilidad por producto (PDF)"}
+            </SecondaryButton>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2">
         <div><p style={{ color: MUTED }}>Venta</p><p className="font-semibold" style={{ color: INK }}>U$S {fmt(r.ventaTotal)}</p></div>
@@ -17767,7 +17788,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta, movimientoPropio }) {
+function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta, movimientoPropio }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
   // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
@@ -18002,7 +18023,9 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
       {verRentabilidad && (
         <RentabilidadCotizacionView
           c={c} productos={productos} matrizCostos={matrizCostos}
-          onDescargarPdf={onDescargarRentabilidadPdf} descargandoId={descargandoId}
+          onDescargarPdf={onDescargarRentabilidadPdf}
+          onDescargarPdfPorProducto={onDescargarRentabilidadPorProductoPdf}
+          descargandoId={descargandoId}
         />
       )}
     </div>
@@ -18018,7 +18041,7 @@ const CUENTA_OBRA_BADGE = {
   suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
   historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
-function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
@@ -18058,7 +18081,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
         historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
         onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
         onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
         onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
         descargandoId={descargandoId} cuenta={cuentaPorCotizacionId?.get(hilo.activa.id)} movimientoPropio={movimientoPropioPorCotizacionId?.get(hilo.activa.id)}
       />
@@ -18069,7 +18092,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
               key={v.id} c={v} esActiva={false} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
         descargandoId={descargandoId}
             />
           ))}
@@ -18082,7 +18105,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
 // Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
 // todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
 // una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
-function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
@@ -18172,7 +18195,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
                     productos={productos} matrizCostos={matrizCostos}
                     onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                     onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-                    onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+                    onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
                     onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
                     descargandoId={descargandoId} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
                   />
@@ -18189,7 +18212,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
 // Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
 // el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
 // minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
-function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([grupo], cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupo, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
@@ -18218,7 +18241,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
               key={o.obra} grupo={o} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
               onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-              onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+              onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
               onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
               descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
             />
@@ -18229,7 +18252,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
@@ -18265,7 +18288,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
                 key={g.cliente} grupo={g} productos={productos} matrizCostos={matrizCostos}
                 onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
                 onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
-        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf}
+        onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
         onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
         descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
               />

@@ -3198,6 +3198,123 @@ export async function downloadRentabilidadPdf(cotizacion, r) {
   downloadBlob(bytes, nombreArchivoRentabilidad(cotizacion), "application/pdf");
 }
 
+// ---------- Rentabilidad individual (por producto) ----------
+// Mismo origen de datos que generateRentabilidadPdf (el total/resumen, con la tabla simple por
+// línea), pero en un PDF aparte: una tarjeta por línea con el desglose de costo completo (Origen,
+// Comisión agente, Flete, Despacho, Costo PY, Comisión venta, Costo financiero, Costo Real — igual
+// que el catálogo), más el total ya multiplicado por la cantidad cotizada. Se mandan por separado
+// para que el PDF total quede liviano y éste tenga lugar para el detalle modelo por modelo.
+export async function generateRentabilidadPorProductoPdf(cotizacion, r) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const base = import.meta.env.BASE_URL;
+  const logoBytes = await fetchBytes(`${base}aeon-logo.jpg`);
+  const logoImg = logoBytes ? await pdf.embedJpg(logoBytes) : null;
+
+  let page = pdf.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() { page = pdf.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN; }
+  function ensureSpace(h) { if (y - h < MARGIN) newPage(); }
+  function text(t, x, yy, opts = {}) {
+    page.drawText(String(t ?? ""), { x, y: yy, size: opts.size || 8, font: opts.bold ? bold : font, color: opts.color || INK });
+  }
+  function rect(x, yy, w, h, opts = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, color: opts.fill, borderColor: opts.border, borderWidth: opts.border ? 0.5 : 0 });
+  }
+  const money = (n) => `U$S ${fmtNum(n)}`;
+
+  if (logoImg) {
+    const w = 85;
+    const h = (logoImg.height / logoImg.width) * w;
+    page.drawImage(logoImg, { x: MARGIN, y: y - h, width: w, height: h });
+  }
+  text(COMPANY.razonSocial, MARGIN + 95, y - 10, { bold: true, size: 9 });
+  text(`Cliente: ${cotizacion.cliente || "—"}`, MARGIN + 95, y - 22, { size: 8 });
+  text(`Obra: ${cotizacion.obra || "—"}`, MARGIN + 95, y - 33, { size: 8 });
+  const fechaStr = `Fecha: ${fmtFecha(cotizacion.fecha)}`;
+  text(fechaStr, PAGE_W - MARGIN - bold.widthOfTextAtSize(fechaStr, 8), y - 10, { size: 8 });
+  y -= 48;
+
+  rect(MARGIN, y - 18, CONTENT_W, 18, { fill: ACCENT });
+  const titulo = `RENTABILIDAD POR PRODUCTO${cotizacion.categoria ? " — " + cotizacion.categoria : ""}`;
+  const titleW = bold.widthOfTextAtSize(titulo, 10);
+  text(titulo, MARGIN + CONTENT_W / 2 - titleW / 2, y - 13, { bold: true, size: 10, color: WHITE });
+  y -= 28;
+
+  const colW = CONTENT_W / 2;
+  function filaCosto(label, valor, destacado) {
+    const h = destacado ? 15 : 11;
+    ensureSpace(h + 4);
+    if (destacado) rect(MARGIN, y - 1, CONTENT_W, 0.6, { fill: ACCENT });
+    text(label, MARGIN, y - h + 3, { size: destacado ? 7.5 : 7, bold: destacado, color: destacado ? ACCENT : INK });
+    const valStr = money(valor);
+    const vw = bold.widthOfTextAtSize(valStr, destacado ? 8 : 7);
+    text(valStr, MARGIN + CONTENT_W - vw, y - h + 3, { size: destacado ? 8 : 7, bold: true, color: destacado ? ACCENT : INK });
+    y -= h;
+  }
+
+  for (const f of r.filas) {
+    ensureSpace(30);
+    rect(MARGIN, y - 16, CONTENT_W, 16, { fill: ACCENT_LIGHT });
+    text(f.codigo || "", MARGIN + 4, y - 11, { bold: true, size: 7.5, color: ACCENT });
+    const descW = colW - 10;
+    const descLines = wrapText(font, f.descripcion || "", 7, descW);
+    text(descLines[0] || "", MARGIN + 95, y - 11, { size: 7, color: MUTED });
+    const resumenLinea = `${f.cantidad} × ${money(f.precioUnit)} = ${money(f.ventaNeta)}`;
+    const rw = bold.widthOfTextAtSize(resumenLinea, 7);
+    text(resumenLinea, MARGIN + CONTENT_W - rw - 4, y - 11, { size: 7, bold: true });
+    y -= 16;
+    y -= 4;
+
+    if (!f.costosVivos) {
+      ensureSpace(14);
+      text("Sin costo de origen / unidades por contenedor cargadas en el catálogo — no se puede armar el desglose.", MARGIN, y - 9, { size: 7, color: AMBAR });
+      y -= 18;
+      continue;
+    }
+
+    const k = f.costosVivos;
+    filaCosto("Origen", k.origen);
+    filaCosto("Comisión agente", k.comisionAgente);
+    filaCosto("Flete", k.flete);
+    filaCosto("Despacho", k.despacho);
+    filaCosto("Costo puesto en PY", k.costoPy, true);
+    filaCosto("Comisión venta", k.comisionVenta);
+    filaCosto("Costo financiero", k.costoFinanciero);
+    filaCosto("Costo Real (precio mínimo / punto de equilibrio)", k.costoReal, true);
+    y -= 2;
+    ensureSpace(12);
+    text(
+      `Margen bruto U$S ${fmtNum(f.margen)} (${fmtNum(f.margenPct)}% sobre Costo PY, por unidad)`,
+      MARGIN, y - 9, { size: 7, color: f.margen < 0 ? ROJO : VERDE }
+    );
+    y -= 13;
+    if (f.cantidad > 1) {
+      ensureSpace(12);
+      text(
+        `Para las ${f.cantidad} unidades cotizadas: Costo PY total U$S ${fmtNum(k.costoPy * f.cantidad)} · Costo Real total U$S ${fmtNum(k.costoReal * f.cantidad)}`,
+        MARGIN, y - 9, { size: 7, color: MUTED }
+      );
+      y -= 13;
+    }
+    y -= 10;
+  }
+
+  return pdf.save();
+}
+
+export function nombreArchivoRentabilidadPorProducto(cotizacion) {
+  return `Rentabilidad_por_producto_${limpiarNombreArchivo(cotizacion.cliente) || "cliente"}_${limpiarNombreArchivo(cotizacion.obra) || "obra"}_${limpiarNombreArchivo(cotizacion.categoria) || cotizacion.fecha || ""}.pdf`;
+}
+
+export async function downloadRentabilidadPorProductoPdf(cotizacion, r) {
+  const bytes = await generateRentabilidadPorProductoPdf(cotizacion, r);
+  downloadBlob(bytes, nombreArchivoRentabilidadPorProducto(cotizacion), "application/pdf");
+}
+
 // ---------- Reporte para Joel: solo plata, sin modelos ni cantidades ----------
 // `filasFisicoPorCategoria`: [{ categoria, valorTotal }] — físico en Paraguay agrupado por categoría.
 // `costosTransito`: { filas: [{ concepto, monto }], total } — costos compartidos de los envíos.

@@ -22897,26 +22897,51 @@ function CostosPorEquipoLineas({ equipos, costos, onChange }) {
 // cargadas recién al abrir este bloque: la factura que le hace la instaladora a AEON (respaldo
 // interno de ese costo) y la factura real que se le termina haciendo al cliente final — dos cosas
 // distintas, cada una con su propia foto.
-// `abierto` lo controla UnidadVisitaRow (botón de cámara en la fila de acciones, junto al resto)
-// — antes era un link de texto aparte más abajo, bastante menos visible que los demás íconos.
+// Semáforo por documento: Verde (ya está la foto) / Negro (se le reclamó a la instaladora o al
+// cliente y se está esperando) / Rojo (todavía ni se pidió). El negro es un estado intermedio que
+// carga el usuario a mano (no hay forma de saberlo solo); al subir la foto se pasa a verde solo,
+// sin que haga falta "deshacer" el pedido primero.
+function BadgeEstadoDocumento({ label, estado }) {
+  const estilo = estado === "listo"
+    ? { bg: "#E9F7EF", color: "#15803D", texto: "Lista" }
+    : estado === "pedido"
+    ? { bg: BORDER, color: INK, texto: "Pedida" }
+    : { bg: "#FBEAEA", color: "#B91C1C", texto: "Falta" };
+  return (
+    <span className="px-2 py-0.5 rounded-full font-medium text-[10px]" style={{ backgroundColor: estilo.bg, color: estilo.color }}>
+      {label}: {estilo.texto}
+    </span>
+  );
+}
+
+// El semáforo (BadgeEstadoDocumento) se muestra siempre que el service está hecho, se haya abierto
+// o no el detalle — así se ve de un vistazo qué falta sin tener que tocar el ícono de cámara.
+// `abierto` ahora solo controla el bloque pesado de subir/ver fotos, no la carga de datos.
 function AdjuntosFacturaService({ clave, abierto }) {
   const [adjuntos, setAdjuntos] = useState(null); // null = todavía no se pidió
   useEffect(() => {
-    if (!abierto || adjuntos != null) return;
+    if (adjuntos != null) return;
     let cancelado = false;
     obtenerAdjuntoServicePostventa(clave).then((d) => { if (!cancelado) setAdjuntos(d || {}); });
     return () => { cancelado = true; };
-  }, [abierto, clave]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clave]); // eslint-disable-line react-hooks/exhaustive-deps
   const subir = async (campo, file) => {
     if (!file) return;
     const dataUrl = await compressImage(file);
-    setAdjuntos((prev) => ({ ...(prev || {}), [campo]: dataUrl }));
-    await guardarAdjuntoServicePostventa(clave, { [campo]: dataUrl });
+    const patch = { [campo]: dataUrl, [`${campo}Pedida`]: false };
+    setAdjuntos((prev) => ({ ...(prev || {}), ...patch }));
+    await guardarAdjuntoServicePostventa(clave, patch);
   };
   const quitar = async (campo) => {
     setAdjuntos((prev) => ({ ...(prev || {}), [campo]: "" }));
     await guardarAdjuntoServicePostventa(clave, { [campo]: "" });
   };
+  const marcarPedido = async (campo, pedida) => {
+    const patch = { [`${campo}Pedida`]: pedida };
+    setAdjuntos((prev) => ({ ...(prev || {}), ...patch }));
+    await guardarAdjuntoServicePostventa(clave, patch);
+  };
+  const estadoDe = (campo) => (adjuntos?.[campo] ? "listo" : adjuntos?.[`${campo}Pedida`] ? "pedido" : "falta");
   const bloque = (campo, titulo, ayuda) => (
     <div className="mb-2 last:mb-0">
       <p className="text-[11px] font-semibold" style={{ color: INK }}>{titulo}</p>
@@ -22924,17 +22949,30 @@ function AdjuntosFacturaService({ clave, abierto }) {
       {adjuntos?.[campo] ? (
         <FotoCargadaPreview src={adjuntos[campo]} onQuitar={() => quitar(campo)} alt={titulo} />
       ) : (
-        <FotoPicker onChange={(e) => subir(campo, e.target.files?.[0])} />
+        <>
+          <FotoPicker onChange={(e) => subir(campo, e.target.files?.[0])} />
+          {estadoDe(campo) === "pedido" ? (
+            <button type="button" onClick={() => marcarPedido(campo, false)} className="block mt-1 text-[10px] underline" style={{ color: MUTED }}>
+              Deshacer pedido
+            </button>
+          ) : (
+            <button type="button" onClick={() => marcarPedido(campo, true)} className="block mt-1 text-[10px] underline" style={{ color: ACCENT }}>
+              Marcar como pedida (ya se reclamó, falta que la manden)
+            </button>
+          )}
+        </>
       )}
     </div>
   );
-  if (!abierto) return null;
+  if (adjuntos == null) return abierto ? <p className="text-[11px] mt-1.5" style={{ color: MUTED }}>Cargando...</p> : null;
   return (
     <div className="mt-1.5">
-      {adjuntos == null ? (
-        <p className="text-[11px]" style={{ color: MUTED }}>Cargando...</p>
-      ) : (
-        <div className="p-2 rounded border" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <BadgeEstadoDocumento label="Fact. instaladora" estado={estadoDe("facturaInstaladorFoto")} />
+        <BadgeEstadoDocumento label="Fact. cliente" estado={estadoDe("facturaClienteFoto")} />
+      </div>
+      {abierto && (
+        <div className="p-2 rounded border mt-1.5" style={{ borderColor: BORDER, backgroundColor: "#FFFFFF" }}>
           {bloque("facturaInstaladorFoto", "Factura de la instaladora (respaldo interno)", "Lo que te factura la empresa que hizo el trabajo — queda como respaldo entre vos y ella.")}
           {bloque("facturaClienteFoto", "Factura al cliente final", "La factura real que se le termina haciendo al cliente por este service.")}
         </div>

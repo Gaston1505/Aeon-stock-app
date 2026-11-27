@@ -5396,6 +5396,7 @@ export default function App() {
             onDescargarFactura={handleDescargarFacturaMantenimiento} onCompartirFactura={handleCompartirFacturaMantenimiento} onEnviarMailCliente={handleEnviarMailCliente} descargandoFactura={descargandoId}
             onPedidoFacturacion={esAdmin ? ((entrada, edificioNombre) => { setPedidoServiceTarget({ entrada, edificioNombre }); setDrawer("pedido-facturacion"); }) : undefined}
             onMarcarPago={marcarPagoServicePostventa}
+            pedidos={pedidosFacturacion}
           />
         )}
 
@@ -22984,7 +22985,7 @@ function AdjuntosFacturaService({ clave, abierto }) {
 // Una línea de unidad dentro de una visita ya programada: si no está hecha, un botón abre el
 // formulario de cierre (fecha real + informe del técnico); puede pasar un día distinto por cada
 // depto porque la visita completa a veces lleva varias idas al edificio.
-function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarcarHecha, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarcarHecha, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pedidos }) {
   // El cliente/RUC vienen copiados en la visita al momento de agendarla (entrada.cliente) — si
   // después se corrige el nombre o se carga el RUC en la ficha de la unidad, esa copia vieja no se
   // actualiza sola. Para el documento/pedido de facturación siempre hay que tomar el dato VIVO de
@@ -23048,6 +23049,10 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarca
   // Categoría de equipo (Split Pared, Cassette, Termocalefón...) para el documento único de
   // mantenimiento — se resuelve del catálogo por el código/modelo guardado en el equipo.
   const categoriaDeEquipo = (modelo) => (productos || []).find((p) => p.nombre === modelo)?.subcategoria || "";
+  // Mismo pedido que abre "Pedido de facturación" (remitoKeyServicePostventa) — se usa acá solo
+  // para pintar el ícono de enviar en verde cuando ya se le mandó el mail a Administración, mismo
+  // criterio que el botón de Salidas (pedido?.estado === "Enviado").
+  const pedidoExistente = (pedidos || []).find((p) => p.remitoKey === remitoKeyServicePostventa(edificioNombre, entrada));
   return (
     <div className="p-2 rounded border text-xs" style={{ borderColor: BORDER, backgroundColor: entrada.hecho ? "#E9F7EF" : "#FFFFFF" }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -23114,10 +23119,16 @@ function UnidadVisitaRow({ entrada, edificioNombre, productos, unidades, onMarca
               <button
                 type="button"
                 onClick={() => onPedidoFacturacion({ ...entrada, cliente: clienteVivo, facturarRuc: entrada.facturarRuc || rucVivo || "" })}
-                title="Pedir que Administración facture este service"
+                title={
+                  pedidoExistente?.estado === "Enviado"
+                    ? `Pedido de facturación ya enviado${pedidoExistente.enviadoEn ? ` el ${new Date(pedidoExistente.enviadoEn).toLocaleDateString("es-PY")}` : ""} — tocá para verlo/editarlo`
+                    : pedidoExistente
+                    ? "Pedido de facturación guardado como borrador, todavía no se envió"
+                    : "Pedir que Administración facture este service"
+                }
                 className="p-1 rounded hover:bg-gray-100"
               >
-                <Send size={12} style={{ color: ACCENT }} />
+                <Send size={12} style={{ color: pedidoExistente?.estado === "Enviado" ? "#15803D" : ACCENT }} />
               </button>
             )}
             <button
@@ -23279,7 +23290,7 @@ function ServiceRealizadoDirectoForm({ unidad, onGuardar, onCancelar }) {
   );
 }
 
-function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMarcarHecha, onGuardarVisita, onBorrarVisita, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pedidos }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [fechaProgramada, setFechaProgramada] = useState(visita.fechaProgramada || todayISO());
@@ -23360,6 +23371,7 @@ function VisitaPostventaCard({ visita, edificioNombre, productos, unidades, onMa
               onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
               onPedidoFacturacion={onPedidoFacturacion ? ((entradaResuelta) => onPedidoFacturacion(entradaResuelta, edificioNombre)) : undefined}
               onMarcarPago={onMarcarPago ? ((pagado) => onMarcarPago(visita, i, pagado)) : undefined}
+              pedidos={pedidos}
             />
           ))}
         </div>
@@ -23384,7 +23396,7 @@ function AvisoPostventaFijo({ mensaje }) {
   );
 }
 
-function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pdfError }) {
+function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, productos, onVolver, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pedidos, pdfError }) {
   const [editandoEdificio, setEditandoEdificio] = useState(false);
   const [formUnidad, setFormUnidad] = useState(null); // unidad a editar, o {} para nueva, o null
   const [programandoVisita, setProgramandoVisita] = useState(false);
@@ -23514,6 +23526,7 @@ function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, produc
             onMarcarHecha={onMarcarUnidadHecha} onGuardarVisita={onGuardarVisita} onBorrarVisita={onBorrarVisita}
             onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
             onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
+            pedidos={pedidos}
           />
         ))}
       </div>
@@ -23521,7 +23534,7 @@ function EdificioDetalle({ edificio, unidades, todasLasUnidades, visitas, produc
   );
 }
 
-function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago }) {
+function MantenimientoPostventaView({ edificios, unidades, visitas, productos, query, onQuery, onGuardarEdificio, onBorrarEdificio, onGuardarUnidad, onBorrarUnidad, onGuardarVisita, onBorrarVisita, onMarcarUnidadHecha, onRegistrarServiceRealizado, onExportarExcel, exportando, pdfError, onImportarClientes, importandoClientes, importResultadoClientes, onDescargarFactura, onCompartirFactura, onEnviarMailCliente, descargandoFactura, onPedidoFacturacion, onMarcarPago, pedidos }) {
   const [edificioSelId, setEdificioSelId] = useState(null);
   const [nuevoEdificio, setNuevoEdificio] = useState(false);
   const fileInputRef = useRef(null);
@@ -23549,6 +23562,7 @@ function MantenimientoPostventaView({ edificios, unidades, visitas, productos, q
         onRegistrarServiceRealizado={onRegistrarServiceRealizado}
         onDescargarFactura={onDescargarFactura} onCompartirFactura={onCompartirFactura} onEnviarMailCliente={onEnviarMailCliente} descargandoFactura={descargandoFactura}
         onPedidoFacturacion={onPedidoFacturacion} onMarcarPago={onMarcarPago}
+        pedidos={pedidos}
         pdfError={pdfError}
       />
     );

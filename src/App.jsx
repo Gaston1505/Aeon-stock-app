@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, ChevronRight, ChevronDown, ChevronUp, Boxes, Inbox, ArrowRight, Star, Lock, TrendingUp, Camera,
   Tag, FileText, FileSignature, Pencil, Menu, Hammer, PackageCheck, ScanLine, Info, Phone, Share2, Bell, BellRing,
   Ship, ClipboardList, Send, FlaskConical, LogOut, Warehouse, ArrowLeft, Building2,
-  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy, Users, Mail,
+  Calculator, ShoppingCart, Layers, Eye, List, Building, CalendarCheck, BadgeDollarSign, Receipt, Target, Trophy, Users, Mail, Printer,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { db, auth, storage } from "./firebase";
@@ -21,6 +21,7 @@ import { normalizarEmpresa, normalizarCamposEmpresa } from "./nombres";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   downloadCotizacionPdf, downloadFichasTecnicasPdf, downloadPresupuestoReparacionPdf,
+  imprimirCotizacionPdf, imprimirPresupuestoReparacionPdf,
   generateCotizacionPdf, generateFichasTecnicasPdf, generatePresupuestoReparacionPdf,
   generateFichasTecnicasPdfDeProductos, nombreArchivoFichasTecnicasProductos, downloadFichasTecnicasPdfDeProductos,
   nombreArchivoCotizacion, nombreArchivoFichasTecnicas, nombreArchivoPresupuesto,
@@ -3659,6 +3660,18 @@ export default function App() {
     setDescargandoId(null);
   };
 
+  const handleImprimirPdf = async (cotizacion) => {
+    setDescargandoId(cotizacion.id + ":imprimir");
+    setPdfError("");
+    try {
+      await imprimirCotizacionPdf(cotizacion, productos);
+    } catch (e) {
+      console.error("Error generando PDF para imprimir", e);
+      setPdfError("No se pudo abrir el PDF para imprimir. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
   const handleDescargarCotizacionExcel = async (cotizacion) => {
     setDescargandoId(cotizacion.id + ":excel");
     setPdfError("");
@@ -4015,6 +4028,18 @@ export default function App() {
     } catch (e) {
       console.error("Error generando PDF de presupuesto de reparación", e);
       setPdfError("No se pudo generar el PDF del presupuesto. Probá de nuevo.");
+    }
+    setDescargandoId(null);
+  };
+
+  const handleImprimirPresupuestoPdf = async (presupuesto) => {
+    setDescargandoId(presupuesto.id + ":imprimir");
+    setPdfError("");
+    try {
+      await imprimirPresupuestoReparacionPdf(presupuesto);
+    } catch (e) {
+      console.error("Error generando PDF de presupuesto para imprimir", e);
+      setPdfError("No se pudo abrir el PDF para imprimir. Probá de nuevo.");
     }
     setDescargandoId(null);
   };
@@ -5467,6 +5492,7 @@ export default function App() {
             onUpdate={updateCotizacion}
             onEditar={(c) => { setCotizacionEditando(c); setDrawer("cotizacion"); }}
             onDescargarPdf={handleDescargarPdf}
+            onImprimirPdf={handleImprimirPdf}
             onDescargarExcel={handleDescargarCotizacionExcel}
             onDescargarFichas={handleDescargarFichas}
             onCompartir={handleCompartirCotizacion}
@@ -5521,6 +5547,7 @@ export default function App() {
             onNew={() => setDrawer("presupuesto-reparacion")}
             onDelete={deletePresupuestoReparacion}
             onDescargarPdf={handleDescargarPresupuestoPdf}
+            onImprimirPdf={handleImprimirPresupuestoPdf}
             onCompartir={handleCompartirPresupuesto}
             descargandoId={descargandoId}
             pdfError={pdfError}
@@ -17789,7 +17816,7 @@ function RentabilidadCotizacionView({ c, productos, matrizCostos, onDescargarPdf
   );
 }
 
-function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta, movimientoPropio }) {
+function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onImprimirPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, historialCount, expandidoHistorial, onToggleHistorial, cuenta, movimientoPropio }) {
   const d = desglosarTotalCotizacion(c);
   const total = d.total;
   // La ficha técnica vive en el producto del catálogo, no copiada en la línea de la cotización
@@ -17940,6 +17967,17 @@ function CotizacionCard({ c, esActiva, productos, matrizCostos, onDelete, onUpda
         >
           <Download size={13} /> {descargandoId === `${c.id}:pdf` ? "Generando..." : "Descargar PDF"}
         </button>
+        {onImprimirPdf && (
+          <button
+            onClick={() => onImprimirPdf(c)}
+            disabled={descargandoId === `${c.id}:imprimir`}
+            title="Abre el diálogo de imprimir del navegador con el PDF ya cargado"
+            className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+            style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${c.id}:imprimir` ? 0.6 : 1 }}
+          >
+            <Printer size={13} /> {descargandoId === `${c.id}:imprimir` ? "Abriendo..." : "Imprimir"}
+          </button>
+        )}
         <button
           onClick={() => onDescargarExcel(c)}
           disabled={descargandoId === `${c.id}:excel`}
@@ -18042,7 +18080,7 @@ const CUENTA_OBRA_BADGE = {
   suma: { label: (rubro) => `Se suma a la Principal de ${rubro} — también suma al total`, color: "#15803D", bg: "#E9F7EF" },
   historial: { label: () => "Historial — NO suma al total de la obra", color: "#B91C1C", bg: "#FBEAEA" },
 };
-function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onImprimirPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const historial = hilo.versiones.slice(1);
   const badge = CUENTA_OBRA_BADGE[cuentaObra];
@@ -18081,7 +18119,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
         c={hilo.activa} esActiva productos={productos} matrizCostos={matrizCostos}
         historialCount={historial.length} expandidoHistorial={expandido} onToggleHistorial={() => setExpandido(!expandido)}
         onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-        onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+        onDescargarPdf={onDescargarPdf} onImprimirPdf={onImprimirPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
         onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
         descargandoId={descargandoId} cuenta={cuentaPorCotizacionId?.get(hilo.activa.id)} movimientoPropio={movimientoPropioPorCotizacionId?.get(hilo.activa.id)}
@@ -18092,7 +18130,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
             <CotizacionCard
               key={v.id} c={v} esActiva={false} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+              onDescargarPdf={onDescargarPdf} onImprimirPdf={onImprimirPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
         descargandoId={descargandoId}
             />
@@ -18106,7 +18144,7 @@ function HiloCategoriaGrupo({ hilo, cuentaObra, productos, matrizCostos, onDelet
 // Minimizada por default (ver ClienteGrupo) — así entrar a Cotizaciones no es un chorizo de
 // todas las obras de todos los clientes a la vez. `forzarExpandido` la abre igual mientras haya
 // una búsqueda activa, para que filtrar no deje los resultados escondidos adentro de una obra cerrada.
-function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onImprimirPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([{ obras: [grupo] }]), [grupo]);
@@ -18195,7 +18233,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
                     cuentaObra={grupo.principales.includes(h) ? "principal" : grupo.sumandose.includes(h) ? "suma" : "historial"}
                     productos={productos} matrizCostos={matrizCostos}
                     onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-                    onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+                    onDescargarPdf={onDescargarPdf} onImprimirPdf={onImprimirPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
                     onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
                     onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
                     descargandoId={descargandoId} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
@@ -18213,7 +18251,7 @@ function ObraGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEdita
 // Minimizada por default: al entrar a Cotizaciones se ve la lista de clientes cerrada, con solo
 // el resumen (total + cantidad por estado) — un clic la abre y muestra sus obras, también
 // minimizadas (ver ObraGrupo), y recién adentro de una obra se ven las cotizaciones en sí.
-function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
+function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEditar, onDescargarPdf, onImprimirPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, forzarExpandido, cuentaPorCotizacionId, movimientoPropioPorCotizacionId }) {
   const [expandido, setExpandido] = useState(false);
   const abierto = expandido || forzarExpandido;
   const resumen = useMemo(() => resumirCotizaciones([grupo], cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupo, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
@@ -18241,7 +18279,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
             <ObraGrupo
               key={o.obra} grupo={o} productos={productos} matrizCostos={matrizCostos}
               onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-              onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+              onDescargarPdf={onDescargarPdf} onImprimirPdf={onImprimirPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
               onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
               onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
               descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
@@ -18253,7 +18291,7 @@ function ClienteGrupo({ grupo, productos, matrizCostos, onDelete, onUpdate, onEd
   );
 }
 
-function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras }) {
+function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuery, onNew, onDelete, onUpdate, onEditar, onDescargarPdf, onImprimirPdf, onDescargarExcel, onDescargarFichas, onCompartir, onCompartirFichas, onDescargarRentabilidadPdf, onDescargarRentabilidadPorProductoPdf, onPedidoAnticipo, onGenerarContrato, onCargarFactura, descargandoId, pdfError, cuentaPorCotizacionId, movimientoPropioPorCotizacionId, cuentasObras }) {
   const grupos = useMemo(() => agruparCotizaciones(cotizaciones), [cotizaciones]);
   const resumen = useMemo(() => resumirCotizaciones(grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId), [grupos, cuentaPorCotizacionId, movimientoPropioPorCotizacionId]);
   // Con una búsqueda activa, los resultados ya vienen filtrados (`cotizaciones` los recorta) —
@@ -18288,7 +18326,7 @@ function CotizacionesView({ cotizaciones, productos, matrizCostos, query, onQuer
               <ClienteGrupo
                 key={g.cliente} grupo={g} productos={productos} matrizCostos={matrizCostos}
                 onDelete={onDelete} onUpdate={onUpdate} onEditar={onEditar}
-                onDescargarPdf={onDescargarPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
+                onDescargarPdf={onDescargarPdf} onImprimirPdf={onImprimirPdf} onDescargarExcel={onDescargarExcel} onDescargarFichas={onDescargarFichas}
         onCompartir={onCompartir} onCompartirFichas={onCompartirFichas} onDescargarRentabilidadPdf={onDescargarRentabilidadPdf} onDescargarRentabilidadPorProductoPdf={onDescargarRentabilidadPorProductoPdf}
         onPedidoAnticipo={onPedidoAnticipo} onGenerarContrato={onGenerarContrato} onCargarFactura={onCargarFactura}
         descargandoId={descargandoId} forzarExpandido={forzarExpandido} cuentaPorCotizacionId={cuentaPorCotizacionId} movimientoPropioPorCotizacionId={movimientoPropioPorCotizacionId}
@@ -19183,7 +19221,7 @@ function PresupuestoReparacionForm({ productos, clientes, onGuardarCliente, onSa
   );
 }
 
-function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, onCompartir, descargandoId, pdfError }) {
+function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDelete, onDescargarPdf, onImprimirPdf, onCompartir, descargandoId, pdfError }) {
   return (
     <div>
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
@@ -19247,6 +19285,17 @@ function PresupuestosReparacionView({ presupuestos, query, onQuery, onNew, onDel
                   >
                     <Download size={13} /> {descargandoId === `${p.id}:reparacion` ? "Generando..." : "Descargar PDF"}
                   </button>
+                  {onImprimirPdf && (
+                    <button
+                      onClick={() => onImprimirPdf(p)}
+                      disabled={descargandoId === `${p.id}:imprimir`}
+                      title="Abre el diálogo de imprimir del navegador con el PDF ya cargado"
+                      className="text-xs px-2.5 py-1.5 rounded border flex items-center gap-1"
+                      style={{ borderColor: BORDER, color: INK, opacity: descargandoId === `${p.id}:imprimir` ? 0.6 : 1 }}
+                    >
+                      <Printer size={13} /> {descargandoId === `${p.id}:imprimir` ? "Abriendo..." : "Imprimir"}
+                    </button>
+                  )}
                   <button
                     onClick={() => onCompartir(p)}
                     disabled={descargandoId === `${p.id}:compartir`}

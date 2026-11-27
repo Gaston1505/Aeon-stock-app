@@ -191,6 +191,38 @@ function downloadBlob(bytes, filename, type) {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// Abre directo el diálogo de imprimir del navegador con el PDF ya cargado, sin que el usuario
+// tenga que descargarlo primero y abrirlo aparte — un iframe oculto carga el PDF y dispara su
+// propio print() al terminar de cargar. El iframe se deja un rato antes de sacarlo: en Chrome/
+// Firefox el diálogo de impresión sigue leyendo del mismo documento mientras está abierto, así
+// que sacarlo apenas se llama a print() cortaría la vista previa a mitad de camino.
+function imprimirBlob(bytes, type) {
+  const blob = new Blob([bytes], { type });
+  const url = URL.createObjectURL(blob);
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    } catch (e) {
+      console.error("No se pudo abrir el diálogo de impresión, se abre el PDF en una pestaña aparte", e);
+      window.open(url, "_blank");
+    }
+  };
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  setTimeout(() => {
+    iframe.remove();
+    URL.revokeObjectURL(url);
+  }, 60000);
+}
+
 // ---------- Cotización PDF ----------
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
@@ -575,6 +607,11 @@ export function nombreArchivoCotizacion(cotizacion) {
 export async function downloadCotizacionPdf(cotizacion, productos = []) {
   const bytes = await generateCotizacionPdf(cotizacion, productos);
   downloadBlob(bytes, nombreArchivoCotizacion(cotizacion), "application/pdf");
+}
+
+export async function imprimirCotizacionPdf(cotizacion, productos = []) {
+  const bytes = await generateCotizacionPdf(cotizacion, productos);
+  imprimirBlob(bytes, "application/pdf");
 }
 
 // ---------- Fichas técnicas combinadas ----------
@@ -982,6 +1019,11 @@ export function nombreArchivoPresupuesto(presupuesto) {
   const prefijo = presupuesto.tipo === "mantenimiento" ? "Presupuesto_Mantenimiento" : "Presupuesto_Reparacion";
   const partes = [prefijo, presupuesto.fecha || "", limpiarNombreArchivo(presupuesto.cliente) || "cliente", limpiarNombreArchivo(presupuesto.obra)].filter(Boolean);
   return `${partes.join("_")}.pdf`;
+}
+
+export async function imprimirPresupuestoReparacionPdf(presupuesto) {
+  const bytes = await generatePresupuestoReparacionPdf(presupuesto);
+  imprimirBlob(bytes, "application/pdf");
 }
 
 export async function downloadPresupuestoReparacionPdf(presupuesto) {
